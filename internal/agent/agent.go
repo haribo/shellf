@@ -9,23 +9,36 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
+	"strings"
 	"sync"
 
 	"shellf/internal/engine"
 )
 
-// Step is either a single instruction call or a parallel block (Parallel set).
+// Step is either a single instruction call (Instruction + Args) or a parallel
+// block (Parallel set). Args are instruction-specific: {"pkg": …} for
+// apt-install, {"src": …, "dst": …} for file-copy.
 type Step struct {
-	Instruction string `json:"instruction,omitempty"`
-	Pkg         string `json:"pkg,omitempty"`
-	Parallel    []Step `json:"parallel,omitempty"`
+	Instruction string            `json:"instruction,omitempty"`
+	Args        map[string]string `json:"args,omitempty"`
+	Parallel    []Step            `json:"parallel,omitempty"`
 }
 
 func (s Step) label() string {
 	if len(s.Parallel) > 0 {
 		return "parallel"
 	}
-	return s.Instruction + "(" + s.Pkg + ")"
+	keys := make([]string, 0, len(s.Args))
+	for k := range s.Args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	vals := make([]string, len(keys))
+	for i, k := range keys {
+		vals[i] = s.Args[k]
+	}
+	return s.Instruction + "(" + strings.Join(vals, ", ") + ")"
 }
 
 type Request struct {
@@ -97,7 +110,9 @@ func runStep(step Step, ex engine.Executor, m engine.Mode) StepResult {
 func dispatch(step Step) (engine.Instruction, error) {
 	switch step.Instruction {
 	case "apt-install":
-		return engine.AptInstall{Pkg: step.Pkg}, nil
+		return engine.AptInstall{Pkg: step.Args["pkg"]}, nil
+	case "file-copy":
+		return engine.FileCopy{Src: step.Args["src"], Dst: step.Args["dst"]}, nil
 	default:
 		return nil, fmt.Errorf("unknown instruction: %q", step.Instruction)
 	}

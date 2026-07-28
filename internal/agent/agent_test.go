@@ -48,6 +48,10 @@ func (f *fakeExec) called(script, pkg string) bool {
 	return f.calls[key(script, pkg)]
 }
 
+func apt(pkg string) Step {
+	return Step{Instruction: "apt-install", Args: map[string]string{"pkg": pkg}}
+}
+
 func serve(t *testing.T, f *fakeExec, req Request) Response {
 	t.Helper()
 	body, _ := json.Marshal(req)
@@ -67,10 +71,7 @@ func TestServe_Sequential_HaltsOnErr(t *testing.T) {
 	f.set(guardScript, "a", 1)   // a not installed
 	f.set(applyScript, "a", 100) // a install fails
 
-	resp := serve(t, f, Request{Mode: "apply", Steps: []Step{
-		{Instruction: "apt-install", Pkg: "a"},
-		{Instruction: "apt-install", Pkg: "b"},
-	}})
+	resp := serve(t, f, Request{Mode: "apply", Steps: []Step{apt("a"), apt("b")}})
 
 	if len(resp.Results) != 1 || resp.Results[0].Category != "err" {
 		t.Fatalf("want single err result, got %+v", resp.Results)
@@ -91,10 +92,7 @@ func TestServe_Parallel_AggregatesAndRunsBoth(t *testing.T) {
 	f.set(applyScript, "b", 100) // b fails
 
 	resp := serve(t, f, Request{Mode: "apply", Steps: []Step{
-		{Parallel: []Step{
-			{Instruction: "apt-install", Pkg: "a"},
-			{Instruction: "apt-install", Pkg: "b"},
-		}},
+		{Parallel: []Step{apt("a"), apt("b")}},
 	}})
 
 	if len(resp.Results) != 1 || resp.Results[0].Category != "err" {
@@ -112,9 +110,7 @@ func TestServe_Check_NoMutation(t *testing.T) {
 	f := newFake()
 	f.set(guardScript, "nginx", 1) // not installed
 
-	resp := serve(t, f, Request{Mode: "check", Steps: []Step{
-		{Instruction: "apt-install", Pkg: "nginx"},
-	}})
+	resp := serve(t, f, Request{Mode: "check", Steps: []Step{apt("nginx")}})
 
 	if resp.Results[0].Category != "would" || resp.Results[0].Tag != "installed" {
 		t.Fatalf("want would.installed, got %+v", resp.Results[0])

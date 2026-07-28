@@ -31,11 +31,12 @@ func main() {
 	knownHosts := flag.String("known-hosts", "", "known_hosts path (default ~/.ssh/known_hosts)")
 	insecure := flag.Bool("insecure", false, "skip host-key verification (dev only)")
 	par := flag.String("par", "", "extra packages to install in a parallel block")
+	cp := flag.String("copy", "", "append a file-copy step, as src:dst")
 	check := flag.Bool("check", false, "dry-run: decide without mutating")
 	flag.Parse()
 
 	// Build the step sequence: positional pkgs sequential, --par as one parallel block.
-	steps := buildSteps(flag.Args(), *par)
+	steps := buildSteps(flag.Args(), *par, *cp)
 	if len(steps) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: shellf [--targets u@h1,u@h2] [--par p1,p2] [--check] <pkg>...")
 		os.Exit(2)
@@ -86,19 +87,30 @@ func main() {
 	printReports(reports)
 }
 
-func buildSteps(pkgs []string, par string) []agent.Step {
+func buildSteps(pkgs []string, par, copy string) []agent.Step {
 	var steps []agent.Step
 	for _, p := range pkgs {
-		steps = append(steps, agent.Step{Instruction: "apt-install", Pkg: p})
+		steps = append(steps, aptStep(p))
 	}
 	if branches := splitList(par); len(branches) > 0 {
 		var block []agent.Step
 		for _, p := range branches {
-			block = append(block, agent.Step{Instruction: "apt-install", Pkg: p})
+			block = append(block, aptStep(p))
 		}
 		steps = append(steps, agent.Step{Parallel: block})
 	}
+	if copy != "" {
+		src, dst, _ := strings.Cut(copy, ":")
+		steps = append(steps, agent.Step{
+			Instruction: "file-copy",
+			Args:        map[string]string{"src": src, "dst": dst},
+		})
+	}
 	return steps
+}
+
+func aptStep(pkg string) agent.Step {
+	return agent.Step{Instruction: "apt-install", Args: map[string]string{"pkg": pkg}}
 }
 
 func inventoryFrom(list []string, port, key string) inventory.Inventory {
@@ -143,6 +155,12 @@ func printStep(s agent.StepResult, indent string) {
 		label += "." + s.Tag
 	}
 	fmt.Printf("%s%-24s %s\n", indent, s.Label, label)
+	// Show the preview/error payload (e.g. a file-copy diff in check mode).
+	if s.Shell != nil && s.Shell.Stdout != "" {
+		for _, line := range strings.Split(strings.TrimRight(s.Shell.Stdout, "\n"), "\n") {
+			fmt.Printf("%s    | %s\n", indent, line)
+		}
+	}
 	for _, sub := range s.Sub {
 		printStep(sub, indent+"  ")
 	}
