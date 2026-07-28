@@ -33,3 +33,6 @@ func (a AptInstall) Apply(ex Executor) Result {
 	}
 	return Ok(a.ChangedTag())
 }
+
+// Preview: a binary install has nothing to diff — would.installed carries no payload.
+func (a AptInstall) Preview(ex Executor) *ShellResult { return nil }
