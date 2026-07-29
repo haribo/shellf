@@ -64,12 +64,13 @@ func catch(dst *error) {
 }
 
 type parser struct {
-	lex *lexer
-	tok token
+	lex  *lexer
+	tok  token
+	vars map[string]string // plan-level bindings, resolved at parse time
 }
 
 func newParser(src string) *parser {
-	p := &parser{lex: newLexer(src)}
+	p := &parser{lex: newLexer(src), vars: map[string]string{}}
 	p.adv()
 	return p
 }
@@ -178,8 +179,12 @@ func (p *parser) identList() []string {
 func (p *parser) plan() orchestrator.Plan {
 	var plan orchestrator.Plan
 	for p.tok.kind != tEOF {
-		if kw := p.expect(tIdent, "'on'").val; kw != "on" {
-			p.fail("expected 'on', got %q", kw)
+		kw := p.expect(tIdent, "'on' or a binding").val
+		if kw != "on" {
+			// Top-level binding: `name = value` (value is a string, bool, or var ref).
+			p.expect(tEq, "=")
+			p.vars[kw] = p.arg()
+			continue
 		}
 		target := p.expect(tIdent, "group or host").val
 		plan = append(plan, orchestrator.Block{Target: target, Steps: p.block()})
@@ -263,8 +268,9 @@ func (p *parser) call(name string) proto.Step {
 	return proto.Step{Instruction: name, Args: args}
 }
 
-// arg accepts a quoted string or a bare bool literal (true/false), both kept
-// as their string form.
+// arg accepts a quoted string, a bare bool literal (true/false), or a variable
+// reference (a bare identifier resolved against the plan's bindings). All are
+// kept as their string form.
 func (p *parser) arg() string {
 	switch {
 	case p.tok.kind == tString:
@@ -275,8 +281,16 @@ func (p *parser) arg() string {
 		v := p.tok.val
 		p.adv()
 		return v
+	case p.tok.kind == tIdent:
+		name := p.tok.val
+		p.adv()
+		v, ok := p.vars[name]
+		if !ok {
+			p.fail("undefined variable %q", name)
+		}
+		return v
 	default:
-		p.fail("expected a string or bool argument, got %q", p.tok.val)
+		p.fail("expected a string, bool, or variable argument, got %q", p.tok.val)
 		return "" // unreachable
 	}
 }

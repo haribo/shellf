@@ -66,3 +66,34 @@ s.ok == want -> ...
 // one line, explicit tag
 shell { … } -> err.runtime when err
 ```
+
+## Variables
+
+Immutable bindings, **no keyword** — same syntax in plans, vars files, and `def` bodies:
+
+```
+owner = "haribo"
+r = shell { usermod -aG docker "$owner" }
+```
+
+- **Immutable**: no reassignment (which is why no `let`/`const` is needed).
+- **Reference**: a bare identifier in argument position resolves to its value — `user-group(owner, "docker")`.
+- **Interpolation** `${name}` in **simple strings only**:
+
+```
+dir-owner("/opt/hosting", "${owner}:${owner}")   // → "haribo:haribo"
+```
+
+- **Triple-quoted strings are RAW** — `${…}` is left verbatim (it is shell/compose syntax the target resolves):
+
+```
+file-write("/app/compose.yaml", """
+    environment:
+      - DB=${DATABASE_URL}      // stays literal: ${DATABASE_URL}
+    """)
+```
+
+- **Scope**: lexical, with lexical shadowing (a file may shadow a global, confined to that file — no dynamic scoping).
+- **Precedence**: `--vars` global `<` inventory (per-host) `<` CLI `--set k=v`.
+
+See [ADR-0003](adr/0003-variable-scoping.md).

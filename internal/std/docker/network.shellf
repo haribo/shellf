@@ -2,7 +2,7 @@ def network(name: str) {
     guard: shell { docker network inspect "$name" } -> ok.already when ok
 
     apply {
-        let r = shell { docker network create "$name" }
+        r = shell { docker network create "$name" }
         when r.exit != 0 -> err.runtime(r)
     }
 

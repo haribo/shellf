@@ -2,7 +2,7 @@ def user-group(user: str, group: str) {
     guard: shell { id -nG "$user" | tr ' ' '\n' | grep -qx "$group" } -> ok.already when ok
 
     apply {
-        let r = shell { usermod -aG "$group" "$user" }
+        r = shell { usermod -aG "$group" "$user" }
         when r.exit != 0 -> err.runtime(r)
     }
 

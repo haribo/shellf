@@ -2,7 +2,7 @@ def install() {
     guard: shell { command -v docker } -> ok.already when ok
 
     apply {
-        let r = shell { curl -fsSL https://get.docker.com | sh }
+        r = shell { curl -fsSL https://get.docker.com | sh }
         when r.exit != 0 -> err.runtime(r)
     }
 

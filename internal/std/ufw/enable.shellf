@@ -2,7 +2,7 @@ def enable() {
     guard: shell { ufw status | grep -q "Status: active" } -> ok.already when ok
 
     apply {
-        let r = shell { ufw --force enable }
+        r = shell { ufw --force enable }
         when r.exit != 0 -> err.runtime(r)
     }
 

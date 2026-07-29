@@ -4,7 +4,7 @@ def apt-install(pkg: str) {
     guard: shell { dpkg -s "$pkg" } -> ok.alreadyInstalled when ok
 
     apply {
-        let r = shell { apt-get install -y "$pkg" }
+        r = shell { apt-get install -y "$pkg" }
         when r.exit != 0 -> err.runtime(r)
     }
 
