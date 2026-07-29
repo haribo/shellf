@@ -11,6 +11,7 @@ import (
 	"shellf/internal/agent"
 	"shellf/internal/engine"
 	"shellf/internal/inventory"
+	"shellf/internal/lang"
 	"shellf/internal/orchestrator"
 	"shellf/internal/transport"
 )
@@ -22,6 +23,12 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
+		return
+	}
+
+	// Run a plan file against an inventory file.
+	if len(os.Args) > 1 && os.Args[1] == "run" {
+		runCmd(os.Args[2:])
 		return
 	}
 
@@ -85,6 +92,64 @@ func main() {
 	plan := orchestrator.Plan{{Target: "targets", Steps: steps}}
 	reports := orchestrator.Run(plan, inv, self, modeStr, dial)
 	printReports(reports)
+}
+
+// runCmd: shellf run <plan.shellf> --inventory <hosts.shellf> [--check] [flags].
+func runCmd(args []string) {
+	fs := flag.NewFlagSet("run", flag.ExitOnError)
+	invPath := fs.String("inventory", "", "inventory file (required)")
+	check := fs.Bool("check", false, "dry-run: decide without mutating")
+	insecure := fs.Bool("insecure", false, "skip host-key verification (dev only)")
+	knownHosts := fs.String("known-hosts", "", "known_hosts path (default ~/.ssh/known_hosts)")
+	fs.Parse(args)
+
+	if fs.NArg() < 1 || *invPath == "" {
+		fmt.Fprintln(os.Stderr, "usage: shellf run --inventory <hosts.shellf> [--check] [--insecure] <plan.shellf>")
+		os.Exit(2)
+	}
+
+	planSrc, err := os.ReadFile(fs.Arg(0))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	invSrc, err := os.ReadFile(*invPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	plan, err := lang.ParsePlan(string(planSrc))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", fs.Arg(0), err)
+		os.Exit(1)
+	}
+	inv, err := lang.ParseInventory(string(invSrc))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", *invPath, err)
+		os.Exit(1)
+	}
+
+	mode := "apply"
+	if *check {
+		mode = "check"
+	}
+
+	self, err := os.Executable()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	dial := func(alias string) transport.Transport {
+		h, _ := inv.Resolve(alias)
+		return transport.SSH{
+			User: h.User, Host: h.Address, Port: h.Port, Key: h.Key,
+			KnownHosts: *knownHosts, Insecure: *insecure,
+		}
+	}
+
+	printReports(orchestrator.Run(plan, inv, self, mode, dial))
 }
 
 func buildSteps(pkgs []string, par, copy string) []agent.Step {
