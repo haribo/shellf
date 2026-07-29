@@ -3,9 +3,9 @@ package lang
 import (
 	"fmt"
 
-	"shellf/internal/agent"
 	"shellf/internal/inventory"
 	"shellf/internal/orchestrator"
+	"shellf/internal/proto"
 )
 
 // builtinArgs maps a builtin instruction to its positional argument names.
@@ -170,9 +170,9 @@ func (p *parser) plan() orchestrator.Plan {
 	return plan
 }
 
-func (p *parser) block() []agent.Step {
+func (p *parser) block() []proto.Step {
 	p.expect(tLBrace, "{")
-	var steps []agent.Step
+	var steps []proto.Step
 	for p.tok.kind != tRBrace {
 		steps = append(steps, p.step())
 	}
@@ -180,14 +180,14 @@ func (p *parser) block() []agent.Step {
 	return steps
 }
 
-func (p *parser) step() agent.Step {
+func (p *parser) step() proto.Step {
 	// `shell` is a special form (raw capture), handled before the call() path.
 	if p.tok.kind == tIdent && p.tok.val == "shell" {
 		return p.shellStep()
 	}
 	name := p.expect(tIdent, "instruction or 'parallel'").val
 	if name == "parallel" {
-		return agent.Step{Parallel: p.block()}
+		return proto.Step{Parallel: p.block()}
 	}
 	return p.call(name)
 }
@@ -195,7 +195,7 @@ func (p *parser) step() agent.Step {
 // shellStep parses `shell <line>` or `shell { … }` with an optional
 // `unless { … }` guard. When p.tok is the `shell`/`unless` keyword, the lexer
 // sits right after it, so raw capture reads from there.
-func (p *parser) shellStep() agent.Step {
+func (p *parser) shellStep() proto.Step {
 	body, err := p.lex.rawShellBody()
 	if err != nil {
 		panic(parseErr{err})
@@ -211,10 +211,10 @@ func (p *parser) shellStep() agent.Step {
 		p.adv()
 		args["unless"] = guard
 	}
-	return agent.Step{Instruction: "shell", Args: args}
+	return proto.Step{Instruction: "shell", Args: args}
 }
 
-func (p *parser) call(name string) agent.Step {
+func (p *parser) call(name string) proto.Step {
 	argNames, ok := builtinArgs[name]
 	if !ok {
 		p.fail("unknown instruction %q", name)
@@ -238,7 +238,7 @@ func (p *parser) call(name string) agent.Step {
 	for i, n := range argNames {
 		args[n] = vals[i]
 	}
-	return agent.Step{Instruction: name, Args: args}
+	return proto.Step{Instruction: name, Args: args}
 }
 
 // arg accepts a quoted string or a bare bool literal (true/false), both kept
