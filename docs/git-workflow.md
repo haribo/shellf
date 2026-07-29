@@ -65,6 +65,7 @@ diffs); there is no manual skip.
 ## Rules
 
 - Never push directly to `main` or `develop` — always via PR.
+- **Merging `develop`→`main` and pushing a release tag require explicit human approval, every time — never autonomous.** A standing "be autonomous" instruction applies to `feature`→`develop` only; it never extends to `main` or to cutting a release.
 - One logical change per PR — split unrelated work.
 - Keep feature branches short-lived (days, not weeks).
 - Rebase on `develop` before opening a PR.
