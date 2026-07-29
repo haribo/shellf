@@ -1,0 +1,10 @@
+def open(port: str) {
+    guard: shell { ufw status | grep -q "$port" } -> ok.already when ok
+
+    apply {
+        let r = shell { ufw allow "$port" }
+        when r.exit != 0 -> err.runtime(r)
+    }
+
+    ok.opened
+}

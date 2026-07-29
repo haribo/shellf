@@ -24,8 +24,10 @@ var instructionArgs = map[string][]string{
 	"file-write":      {"path", "content"},
 	"file-line":       {"path", "line"},
 	"file-delete":     {"path"},
-	"docker.install":  {},
-	"docker.network":  {"name"},
+	"docker.install":    {},
+	"docker.network":    {"name"},
+	"docker.compose-up": {"dir"},
+	"ufw.open":          {"port"},
 }
 
 // ParseInventory parses an inventory file into an Inventory.
