@@ -8,10 +8,10 @@ dry-run shows what *would* change, without touching anything), and **fast**. It
 is agentless: a single static binary pushes an **ephemeral agent** over SSH that
 evaluates the plan **on the target**, then vanishes. Nothing stays installed.
 
-> Status: experimental (0.1.0 in progress). Ships **builtin instructions**
-> (`apt-install`, `file-copy`, `service`); you write the plan and inventory.
-> Custom instructions, cross-distro, and cross-arch agents are not there yet.
-> Debian/systemd targets, `linux/amd64` control host.
+> Status: experimental (0.1.0). Ships **builtin instructions** (`apt-install`,
+> `file-copy`, `service`) plus a raw **`shell`** form for everything else; you
+> write the plan and inventory. Custom instructions, cross-distro, and cross-arch
+> agents are not there yet. Debian/systemd targets, `linux/amd64` control host.
 
 ## Install
 
@@ -87,6 +87,33 @@ later blocks.
 | `apt-install` | `apt-install("nginx")` | package already installed |
 | `file-copy` | `file-copy("src", "dst")` | contents already match (check shows the diff) |
 | `service` | `service("nginx", true, true)` | already running / enabled as desired |
+
+## Raw shell
+
+The first-class citizen: run anything the builtins don't cover. `shell` is a
+special form, not a `name(args)` call.
+
+```
+on server {
+  shell docker compose up -d              # one-line: ends at the newline
+
+  shell {                                 # block: raw, verbatim (heredocs work)
+    curl -fsSL https://get.docker.com | sh
+  }
+
+  shell {                                 # with a guard → idempotent + previewable
+    docker network create web
+  } unless {
+    docker network inspect web
+  }
+}
+```
+
+- No `unless` → the command always runs (raw, like bash; not previewable).
+- With `unless` → guard exits 0 = `ok.already` (skip); otherwise it runs; `--check`
+  runs only the guard, never the command.
+- A block ends at its balanced `}`. A lone unbalanced `}` in a string ends it
+  early — use a heredoc or the one-line form.
 
 ## CLI
 
