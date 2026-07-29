@@ -181,11 +181,37 @@ func (p *parser) block() []agent.Step {
 }
 
 func (p *parser) step() agent.Step {
+	// `shell` is a special form (raw capture), handled before the call() path.
+	if p.tok.kind == tIdent && p.tok.val == "shell" {
+		return p.shellStep()
+	}
 	name := p.expect(tIdent, "instruction or 'parallel'").val
 	if name == "parallel" {
 		return agent.Step{Parallel: p.block()}
 	}
 	return p.call(name)
+}
+
+// shellStep parses `shell <line>` or `shell { … }` with an optional
+// `unless { … }` guard. When p.tok is the `shell`/`unless` keyword, the lexer
+// sits right after it, so raw capture reads from there.
+func (p *parser) shellStep() agent.Step {
+	body, err := p.lex.rawShellBody()
+	if err != nil {
+		panic(parseErr{err})
+	}
+	p.adv() // resync to the token after the shell body
+
+	args := map[string]string{"cmd": body}
+	if p.tok.kind == tIdent && p.tok.val == "unless" {
+		guard, err := p.lex.rawBracesRequired()
+		if err != nil {
+			panic(parseErr{err})
+		}
+		p.adv()
+		args["unless"] = guard
+	}
+	return agent.Step{Instruction: "shell", Args: args}
 }
 
 func (p *parser) call(name string) agent.Step {

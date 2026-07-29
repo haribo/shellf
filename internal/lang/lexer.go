@@ -135,6 +135,68 @@ func (l *lexer) lexIdent(line, col int) token {
 	return token{tIdent, l.src[start:l.pos], line, col}
 }
 
+// --- raw capture, for the `shell` special form ---
+//
+// These read source verbatim (no tokenizing) from the current lexer position,
+// which the parser calls right after consuming the `shell` / `unless` keyword.
+
+// skipInline skips spaces and tabs but not newlines.
+func (l *lexer) skipInline() {
+	for l.pos < len(l.src) && (l.src[l.pos] == ' ' || l.src[l.pos] == '\t') {
+		l.adv()
+	}
+}
+
+// rawShellBody reads a `{ … }` block (balanced braces) if the next non-space
+// char is `{`, otherwise the rest of the current line.
+func (l *lexer) rawShellBody() (string, error) {
+	l.skipInline()
+	if l.pos < len(l.src) && l.src[l.pos] == '{' {
+		return l.rawBraces()
+	}
+	return l.rawLine(), nil
+}
+
+// rawBracesRequired reads a `{ … }` block; used for the `unless` guard.
+func (l *lexer) rawBracesRequired() (string, error) {
+	l.skipInline()
+	if l.pos >= len(l.src) || l.src[l.pos] != '{' {
+		return "", fmt.Errorf("%d:%d: expected '{' after unless", l.line, l.col)
+	}
+	return l.rawBraces()
+}
+
+func (l *lexer) rawLine() string {
+	start := l.pos
+	for l.pos < len(l.src) && l.src[l.pos] != '\n' {
+		l.adv()
+	}
+	return strings.TrimSpace(l.src[start:l.pos])
+}
+
+// rawBraces captures up to the balanced closing brace. Braces inside shell
+// strings are NOT understood — a lone unbalanced brace ends the block early.
+func (l *lexer) rawBraces() (string, error) {
+	l.adv() // consume '{'
+	start := l.pos
+	depth := 1
+	for l.pos < len(l.src) {
+		switch l.src[l.pos] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				body := l.src[start:l.pos]
+				l.adv() // consume '}'
+				return strings.TrimSpace(body), nil
+			}
+		}
+		l.adv()
+	}
+	return "", fmt.Errorf("unterminated shell block")
+}
+
 func isIdentStart(c byte) bool {
 	return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
