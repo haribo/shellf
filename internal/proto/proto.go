@@ -33,7 +33,7 @@ func (s Step) Label() string {
 	sort.Strings(keys)
 	vals := make([]string, len(keys))
 	for i, k := range keys {
-		vals[i] = s.Args[k]
+		vals[i] = firstLine(s.Args[k]) // truncate long/multi-line values (e.g. file-write content)
 	}
 	return s.Instruction + "(" + strings.Join(vals, ", ") + ")"
 }
