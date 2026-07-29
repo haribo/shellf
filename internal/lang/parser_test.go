@@ -1,0 +1,77 @@
+package lang
+
+import "testing"
+
+func TestParseInventory(t *testing.T) {
+	src := `
+# staging hosts
+defaults = { user: "deploy", port: "22", key: "~/.ssh/id" }
+host web1 = { address: "10.0.0.1" }
+host db1  = { address: "10.0.0.9", user: "root" }
+group web = [web1]
+group all = [web1, db1]
+`
+	inv, err := ParseInventory(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inv.Defaults.User != "deploy" || inv.Defaults.Port != "22" {
+		t.Fatalf("defaults not applied: %+v", inv.Defaults)
+	}
+	// db1 overrides user, inherits the rest via Resolve.
+	h, ok := inv.Resolve("db1")
+	if !ok || h.Address != "10.0.0.9" || h.User != "root" || h.Port != "22" {
+		t.Fatalf("resolve db1: %+v (ok=%v)", h, ok)
+	}
+	if got := inv.Members("all"); len(got) != 2 || got[0] != "web1" || got[1] != "db1" {
+		t.Fatalf("group all: %v", got)
+	}
+}
+
+func TestParsePlan(t *testing.T) {
+	src := `
+on db { apt-install("postgres") }
+on web {
+  file-copy("/tmp/nginx.conf", "/etc/nginx.conf")
+  parallel {
+    apt-install("nginx")
+    apt-install("redis")
+  }
+}
+`
+	plan, err := ParsePlan(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan) != 2 {
+		t.Fatalf("want 2 blocks, got %d", len(plan))
+	}
+	if plan[0].Target != "db" || plan[0].Steps[0].Args["pkg"] != "postgres" {
+		t.Fatalf("block 0: %+v", plan[0])
+	}
+	web := plan[1]
+	if web.Target != "web" || len(web.Steps) != 2 {
+		t.Fatalf("block web: %+v", web)
+	}
+	fc := web.Steps[0]
+	if fc.Instruction != "file-copy" || fc.Args["src"] != "/tmp/nginx.conf" || fc.Args["dst"] != "/etc/nginx.conf" {
+		t.Fatalf("file-copy step: %+v", fc)
+	}
+	if par := web.Steps[1]; len(par.Parallel) != 2 {
+		t.Fatalf("parallel step: %+v", par)
+	}
+}
+
+func TestParseErrors(t *testing.T) {
+	cases := map[string]func(string) error{
+		`host x = { bogus: "y" }`:        func(s string) error { _, e := ParseInventory(s); return e },
+		`on web { unknown-instr("x") }`:  func(s string) error { _, e := ParsePlan(s); return e },
+		`on web { apt-install("a","b") }`: func(s string) error { _, e := ParsePlan(s); return e },
+		`host x = { address: "unterm`:    func(s string) error { _, e := ParseInventory(s); return e },
+	}
+	for src, run := range cases {
+		if err := run(src); err == nil {
+			t.Fatalf("expected error for: %s", src)
+		}
+	}
+}
