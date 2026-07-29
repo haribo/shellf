@@ -13,6 +13,7 @@ import (
 var builtinArgs = map[string][]string{
 	"apt-install": {"pkg"},
 	"file-copy":   {"src", "dst"},
+	"service":     {"name", "running", "enabled"},
 }
 
 // ParseInventory parses an inventory file into an Inventory.
@@ -195,7 +196,7 @@ func (p *parser) call(name string) agent.Step {
 	p.expect(tLParen, "(")
 	var vals []string
 	for p.tok.kind != tRParen {
-		vals = append(vals, p.expect(tString, "string argument").val)
+		vals = append(vals, p.arg())
 		if p.tok.kind == tComma {
 			p.adv()
 		} else {
@@ -212,4 +213,22 @@ func (p *parser) call(name string) agent.Step {
 		args[n] = vals[i]
 	}
 	return agent.Step{Instruction: name, Args: args}
+}
+
+// arg accepts a quoted string or a bare bool literal (true/false), both kept
+// as their string form.
+func (p *parser) arg() string {
+	switch {
+	case p.tok.kind == tString:
+		v := p.tok.val
+		p.adv()
+		return v
+	case p.tok.kind == tIdent && (p.tok.val == "true" || p.tok.val == "false"):
+		v := p.tok.val
+		p.adv()
+		return v
+	default:
+		p.fail("expected a string or bool argument, got %q", p.tok.val)
+		return "" // unreachable
+	}
 }
