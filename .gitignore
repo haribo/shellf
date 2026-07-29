@@ -1,3 +1,4 @@
 /shellf
 /dist/
 *.test
+/tmp/
