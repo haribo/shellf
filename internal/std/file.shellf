@@ -1,4 +1,4 @@
-def download-file(url: str, dst: str, sha256: str) {
+def file-download(url: str, dst: str, sha256: str) {
     guard: shell {
         test -f "$dst" && echo "$sha256  $dst" | sha256sum -c --status
     } -> ok.already when ok
