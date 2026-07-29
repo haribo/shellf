@@ -75,6 +75,9 @@ func (l *lexer) next() (token, error) {
 		return token{punct, string(c), line, col}, nil
 	}
 	if c == '"' {
+		if l.pos+2 < len(l.src) && l.src[l.pos+1] == '"' && l.src[l.pos+2] == '"' {
+			return l.lexTripleString(line, col)
+		}
 		return l.lexString(line, col)
 	}
 	if c >= '0' && c <= '9' {
@@ -145,6 +148,24 @@ func (l *lexer) lexString(line, col int) (token, error) {
 		}
 	}
 	return token{}, fmt.Errorf("%d:%d: unterminated string", line, col)
+}
+
+// lexTripleString reads a raw triple-quoted string: everything between """ and
+// the next """, verbatim (newlines preserved, no escape processing).
+func (l *lexer) lexTripleString(line, col int) (token, error) {
+	l.adv()
+	l.adv()
+	l.adv() // opening """
+	rest := l.src[l.pos:]
+	end := strings.Index(rest, `"""`)
+	if end < 0 {
+		return token{}, fmt.Errorf("%d:%d: unterminated triple-quoted string", line, col)
+	}
+	s := rest[:end]
+	for i := 0; i < end+3; i++ {
+		l.adv() // content + closing """
+	}
+	return token{tString, s, line, col}, nil
 }
 
 func unescape(c byte) byte {

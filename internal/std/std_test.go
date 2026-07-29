@@ -1,28 +1,28 @@
 package std
 
 import (
-	"strings"
 	"testing"
 
 	"shellf/internal/engine"
 	"shellf/internal/lang"
 )
 
-// fakeExec returns applyExit for effectful commands (curl/tar/git clone),
-// guardExit otherwise (the read-only guard).
+// fakeExec returns guardExit for the first shell (the read-only guard, pass 1)
+// and applyExit for any later shell (the apply, pass 2). Robust for the simple
+// one-guard-one-apply defs here, no script pattern-matching.
 type fakeExec struct {
 	guardExit, applyExit int
+	n                    int
 	calls                []string
 }
 
 func (f *fakeExec) Shell(script string, _ engine.Env) engine.ShellResult {
 	f.calls = append(f.calls, script)
-	for _, effect := range []string{"curl", "tar xzf", "git clone", "network create"} {
-		if strings.Contains(script, effect) {
-			return engine.ShellResult{Exit: f.applyExit}
-		}
+	f.n++
+	if f.n == 1 {
+		return engine.ShellResult{Exit: f.guardExit}
 	}
-	return engine.ShellResult{Exit: f.guardExit}
+	return engine.ShellResult{Exit: f.applyExit}
 }
 
 func eval(t *testing.T, name string, args map[string]string, f *fakeExec, mode engine.Mode) engine.Result {
@@ -40,8 +40,9 @@ func eval(t *testing.T, name string, args map[string]string, f *fakeExec, mode e
 
 func TestStdlib_AllPresent(t *testing.T) {
 	for _, name := range []string{
-		"apt-install", "file-download", "archive-extract", "git-clone", // std (unqualified)
-		"docker.install", "docker.network", // docker package (qualified)
+		"apt-install", "file-download", "archive-extract", "git-clone",
+		"dir-ensure", "file-write", "file-line", "file-delete",
+		"docker.install", "docker.network",
 	} {
 		if _, ok := Lookup(name); !ok {
 			t.Errorf("missing def %q", name)
@@ -49,50 +50,60 @@ func TestStdlib_AllPresent(t *testing.T) {
 	}
 }
 
-func TestDockerPackage(t *testing.T) {
-	// docker.install: docker already present → skip
-	if got := eval(t, "docker.install", nil, &fakeExec{guardExit: 0}, engine.Apply).String(); got != "ok.already" {
-		t.Fatalf("docker.install guard-ok: got %s, want ok.already", got)
-	}
-	// docker.network: absent → create
-	got := eval(t, "docker.network", map[string]string{"name": "web"}, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String()
-	if got != "ok.created" {
-		t.Fatalf("docker.network apply: got %s, want ok.created", got)
-	}
-}
-
 func TestDownloadFile(t *testing.T) {
 	args := map[string]string{"url": "http://x/a.tgz", "dst": "/tmp/a.tgz", "sha256": "abc"}
 
-	// hash already matches → skip
 	if got := eval(t, "file-download", args, &fakeExec{guardExit: 0}, engine.Apply).String(); got != "ok.already" {
 		t.Fatalf("guard-ok: got %s, want ok.already", got)
 	}
-	// not present → download
 	if got := eval(t, "file-download", args, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.downloaded" {
 		t.Fatalf("apply: got %s, want ok.downloaded", got)
 	}
-	// download fails → err.runtime
 	if got := eval(t, "file-download", args, &fakeExec{guardExit: 1, applyExit: 22}, engine.Apply).String(); got != "err.runtime" {
 		t.Fatalf("apply-fail: got %s, want err.runtime", got)
 	}
-	// check mode never runs curl
 	f := &fakeExec{guardExit: 1}
 	if got := eval(t, "file-download", args, f, engine.Check).String(); got != "would.downloaded" {
 		t.Fatalf("check: got %s, want would.downloaded", got)
 	}
-	for _, c := range f.calls {
-		if strings.Contains(c, "curl") {
-			t.Fatal("check mode ran curl")
-		}
+	if len(f.calls) != 1 { // only the guard ran; apply skipped in check
+		t.Fatalf("check mode ran %d shells, want 1 (guard only)", len(f.calls))
 	}
 }
 
-func TestUntarAndClone(t *testing.T) {
+func TestArchiveAndClone(t *testing.T) {
 	if got := eval(t, "archive-extract", map[string]string{"src": "/a.tgz", "dst": "/opt"}, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.extracted" {
-		t.Fatalf("untar: got %s, want ok.extracted", got)
+		t.Fatalf("archive-extract: got %s, want ok.extracted", got)
 	}
 	if got := eval(t, "git-clone", map[string]string{"url": "http://x/r", "dst": "/opt/r"}, &fakeExec{guardExit: 0}, engine.Apply).String(); got != "ok.already" {
 		t.Fatalf("git-clone guard: got %s, want ok.already", got)
+	}
+}
+
+func TestFileWriteDirDelete(t *testing.T) {
+	// file-write: content already matches → skip
+	if got := eval(t, "file-write", map[string]string{"path": "/etc/x", "content": "a\nb\n"}, &fakeExec{guardExit: 0}, engine.Apply).String(); got != "ok.already" {
+		t.Fatalf("file-write guard-ok: got %s, want ok.already", got)
+	}
+	// file-write: differs → write
+	if got := eval(t, "file-write", map[string]string{"path": "/etc/x", "content": "a\nb\n"}, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.written" {
+		t.Fatalf("file-write apply: got %s, want ok.written", got)
+	}
+	// dir-ensure: absent → create
+	if got := eval(t, "dir-ensure", map[string]string{"path": "/opt/x"}, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.created" {
+		t.Fatalf("dir-ensure: got %s, want ok.created", got)
+	}
+	// file-delete: already gone → skip
+	if got := eval(t, "file-delete", map[string]string{"path": "/tmp/gone"}, &fakeExec{guardExit: 0}, engine.Apply).String(); got != "ok.already" {
+		t.Fatalf("file-delete guard-ok: got %s, want ok.already", got)
+	}
+}
+
+func TestDockerPackage(t *testing.T) {
+	if got := eval(t, "docker.install", nil, &fakeExec{guardExit: 0}, engine.Apply).String(); got != "ok.already" {
+		t.Fatalf("docker.install: got %s, want ok.already", got)
+	}
+	if got := eval(t, "docker.network", map[string]string{"name": "web"}, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.created" {
+		t.Fatalf("docker.network: got %s, want ok.created", got)
 	}
 }

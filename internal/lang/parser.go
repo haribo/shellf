@@ -20,6 +20,10 @@ var instructionArgs = map[string][]string{
 	"file-download":   {"url", "dst", "sha256"},
 	"archive-extract": {"src", "dst"},
 	"git-clone":       {"url", "dst"},
+	"dir-ensure":      {"path"},
+	"file-write":      {"path", "content"},
+	"file-line":       {"path", "line"},
+	"file-delete":     {"path"},
 	"docker.install":  {},
 	"docker.network":  {"name"},
 }

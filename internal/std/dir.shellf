@@ -1,0 +1,10 @@
+def dir-ensure(path: str) {
+    guard: shell { test -d "$path" } -> ok.already when ok
+
+    apply {
+        let r = shell { mkdir -p "$path" }
+        when r.exit != 0 -> err.runtime(r)
+    }
+
+    ok.created
+}
