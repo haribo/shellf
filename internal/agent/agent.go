@@ -113,6 +113,12 @@ func dispatch(step Step) (engine.Instruction, error) {
 		return engine.AptInstall{Pkg: step.Args["pkg"]}, nil
 	case "file-copy":
 		return engine.FileCopy{Src: step.Args["src"], Dst: step.Args["dst"]}, nil
+	case "service":
+		return engine.Service{
+			Unit:    step.Args["name"],
+			Running: step.Args["running"] == "true",
+			Enabled: step.Args["enabled"] == "true",
+		}, nil
 	default:
 		return nil, fmt.Errorf("unknown instruction: %q", step.Instruction)
 	}
