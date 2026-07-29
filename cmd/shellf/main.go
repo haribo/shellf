@@ -13,6 +13,7 @@ import (
 	"shellf/internal/inventory"
 	"shellf/internal/lang"
 	"shellf/internal/orchestrator"
+	"shellf/internal/proto"
 	"shellf/internal/transport"
 )
 
@@ -56,13 +57,13 @@ func main() {
 
 	// Local path: run the sequence here via the same agent code.
 	if *targets == "" {
-		req, _ := json.Marshal(agent.Request{Mode: modeStr, Steps: steps})
+		req, _ := json.Marshal(proto.Request{Mode: modeStr, Steps: steps})
 		var out bytes.Buffer
 		if err := agent.Serve(bytes.NewReader(req), &out, engine.ShellExecutor{}); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		var resp agent.Response
+		var resp proto.Response
 		json.Unmarshal(out.Bytes(), &resp)
 		anyErr := false
 		for _, s := range resp.Results {
@@ -152,21 +153,21 @@ func runCmd(args []string) {
 	printReports(orchestrator.Run(plan, inv, self, mode, dial))
 }
 
-func buildSteps(pkgs []string, par, copy string) []agent.Step {
-	var steps []agent.Step
+func buildSteps(pkgs []string, par, copy string) []proto.Step {
+	var steps []proto.Step
 	for _, p := range pkgs {
 		steps = append(steps, aptStep(p))
 	}
 	if branches := splitList(par); len(branches) > 0 {
-		var block []agent.Step
+		var block []proto.Step
 		for _, p := range branches {
 			block = append(block, aptStep(p))
 		}
-		steps = append(steps, agent.Step{Parallel: block})
+		steps = append(steps, proto.Step{Parallel: block})
 	}
 	if copy != "" {
 		src, dst, _ := strings.Cut(copy, ":")
-		steps = append(steps, agent.Step{
+		steps = append(steps, proto.Step{
 			Instruction: "file-copy",
 			Args:        map[string]string{"src": src, "dst": dst},
 		})
@@ -174,8 +175,8 @@ func buildSteps(pkgs []string, par, copy string) []agent.Step {
 	return steps
 }
 
-func aptStep(pkg string) agent.Step {
-	return agent.Step{Instruction: "apt-install", Args: map[string]string{"pkg": pkg}}
+func aptStep(pkg string) proto.Step {
+	return proto.Step{Instruction: "apt-install", Args: map[string]string{"pkg": pkg}}
 }
 
 func inventoryFrom(list []string, port, key string) inventory.Inventory {
@@ -214,7 +215,7 @@ func printReports(reports []orchestrator.BlockReport) {
 	exitFor(anyErr)
 }
 
-func printStep(s agent.StepResult, indent string) {
+func printStep(s proto.StepResult, indent string) {
 	label := s.Category
 	if s.Tag != "" {
 		label += "." + s.Tag

@@ -6,7 +6,7 @@ package orchestrator
 import (
 	"encoding/json"
 
-	"shellf/internal/agent"
+	"shellf/internal/proto"
 	"shellf/internal/fleet"
 	"shellf/internal/inventory"
 )
@@ -14,7 +14,7 @@ import (
 // Block assigns a step sequence to a target (group name or host alias).
 type Block struct {
 	Target string
-	Steps  []agent.Step
+	Steps  []proto.Step
 }
 
 type Plan []Block
@@ -22,7 +22,7 @@ type Plan []Block
 // HostOutcome is one host's result for one block.
 type HostOutcome struct {
 	Host     string
-	Response agent.Response
+	Response proto.Response
 	Err      error
 }
 
@@ -47,7 +47,7 @@ func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.D
 			}
 		}
 
-		req, _ := json.Marshal(agent.Request{Mode: mode, Steps: block.Steps})
+		req, _ := json.Marshal(proto.Request{Mode: mode, Steps: block.Steps})
 		results := fleet.Run(live, agentBin, req, dial)
 
 		report := BlockReport{Target: block.Target}
@@ -62,7 +62,7 @@ func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.D
 	return reports
 }
 
-func failed(r agent.Response) bool {
+func failed(r proto.Response) bool {
 	if r.Error != "" {
 		return true
 	}

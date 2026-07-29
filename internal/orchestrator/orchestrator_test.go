@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"testing"
 
-	"shellf/internal/agent"
+	"shellf/internal/proto"
 	"shellf/internal/inventory"
 	"shellf/internal/transport"
 )
 
-// fakeTr returns a canned agent.Response, baked per alias by the dial closure.
-type fakeTr struct{ resp agent.Response }
+// fakeTr returns a canned proto.Response, baked per alias by the dial closure.
+type fakeTr struct{ resp proto.Response }
 
 func (f fakeTr) Run(_ string, _ []byte) ([]byte, error) {
 	return json.Marshal(f.resp)
@@ -26,15 +26,15 @@ func TestRun_DeadHostDroppedFromLaterBlock(t *testing.T) {
 		},
 		Groups: map[string][]string{"all": {"h1", "h2"}},
 	}
-	resp := map[string]agent.Response{
-		"h1": {Results: []agent.StepResult{{Category: "err", Tag: "runtime"}}, Halted: true},
-		"h2": {Results: []agent.StepResult{{Category: "ok", Tag: "installed"}}},
+	resp := map[string]proto.Response{
+		"h1": {Results: []proto.StepResult{{Category: "err", Tag: "runtime"}}, Halted: true},
+		"h2": {Results: []proto.StepResult{{Category: "ok", Tag: "installed"}}},
 	}
 	dial := func(alias string) transport.Transport { return fakeTr{resp: resp[alias]} }
 
 	plan := Plan{
-		{Target: "all", Steps: []agent.Step{{Instruction: "apt-install", Args: map[string]string{"pkg": "nginx"}}}},
-		{Target: "all", Steps: []agent.Step{{Instruction: "apt-install", Args: map[string]string{"pkg": "redis"}}}},
+		{Target: "all", Steps: []proto.Step{{Instruction: "apt-install", Args: map[string]string{"pkg": "nginx"}}}},
+		{Target: "all", Steps: []proto.Step{{Instruction: "apt-install", Args: map[string]string{"pkg": "redis"}}}},
 	}
 	reports := Run(plan, inv, "/bin/agent", "apply", dial)
 

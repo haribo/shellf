@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"sync"
 
-	"shellf/internal/agent"
+	"shellf/internal/proto"
 	"shellf/internal/transport"
 )
 
@@ -21,7 +21,7 @@ type Dial func(target string) transport.Transport
 // HostResult is the outcome for a single target.
 type HostResult struct {
 	Target   string
-	Response agent.Response
+	Response proto.Response
 	Err      error // transport/decode failure (host unreachable, etc.)
 }
 
