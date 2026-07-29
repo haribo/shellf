@@ -17,7 +17,7 @@ type fakeExec struct {
 
 func (f *fakeExec) Shell(script string, _ engine.Env) engine.ShellResult {
 	f.calls = append(f.calls, script)
-	for _, effect := range []string{"curl", "tar xzf", "git clone"} {
+	for _, effect := range []string{"curl", "tar xzf", "git clone", "network create"} {
 		if strings.Contains(script, effect) {
 			return engine.ShellResult{Exit: f.applyExit}
 		}
@@ -39,10 +39,25 @@ func eval(t *testing.T, name string, args map[string]string, f *fakeExec, mode e
 }
 
 func TestStdlib_AllPresent(t *testing.T) {
-	for _, name := range []string{"apt-install", "file-download", "archive-extract", "git-clone"} {
+	for _, name := range []string{
+		"apt-install", "file-download", "archive-extract", "git-clone", // std (unqualified)
+		"docker.install", "docker.network", // docker package (qualified)
+	} {
 		if _, ok := Lookup(name); !ok {
-			t.Errorf("missing stdlib def %q", name)
+			t.Errorf("missing def %q", name)
 		}
+	}
+}
+
+func TestDockerPackage(t *testing.T) {
+	// docker.install: docker already present → skip
+	if got := eval(t, "docker.install", nil, &fakeExec{guardExit: 0}, engine.Apply).String(); got != "ok.already" {
+		t.Fatalf("docker.install guard-ok: got %s, want ok.already", got)
+	}
+	// docker.network: absent → create
+	got := eval(t, "docker.network", map[string]string{"name": "web"}, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String()
+	if got != "ok.created" {
+		t.Fatalf("docker.network apply: got %s, want ok.created", got)
 	}
 }
 

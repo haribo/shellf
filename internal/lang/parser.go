@@ -8,15 +8,20 @@ import (
 	"shellf/internal/proto"
 )
 
-// builtinArgs maps a builtin instruction to its positional argument names.
-// Call `apt-install("nginx")` → Step{Instruction:"apt-install", Args:{"pkg":"nginx"}}.
-var builtinArgs = map[string][]string{
+// instructionArgs maps an instruction (bare or qualified) to its positional
+// argument names, so the parser can turn `apt-install("nginx")` into
+// Step{Instruction:"apt-install", Args:{"pkg":"nginx"}}. A known smell: this
+// duplicates each def's params; resolving positional args at eval time (where
+// the def is known) is the cleaner future.
+var instructionArgs = map[string][]string{
 	"apt-install":     {"pkg"},
 	"file-copy":       {"src", "dst"},
 	"service":         {"name", "running", "enabled"},
 	"file-download":   {"url", "dst", "sha256"},
 	"archive-extract": {"src", "dst"},
 	"git-clone":       {"url", "dst"},
+	"docker.install":  {},
+	"docker.network":  {"name"},
 }
 
 // ParseInventory parses an inventory file into an Inventory.
@@ -189,6 +194,11 @@ func (p *parser) step() proto.Step {
 		return p.shellStep()
 	}
 	name := p.expect(tIdent, "instruction or 'parallel'").val
+	if p.tok.kind == tDot { // qualified call: module.instruction
+		p.adv()
+		name = name + "." + p.expect(tIdent, "instruction name").val
+		return p.call(name)
+	}
 	if name == "parallel" {
 		return proto.Step{Parallel: p.block()}
 	}
@@ -218,7 +228,7 @@ func (p *parser) shellStep() proto.Step {
 }
 
 func (p *parser) call(name string) proto.Step {
-	argNames, ok := builtinArgs[name]
+	argNames, ok := instructionArgs[name]
 	if !ok {
 		p.fail("unknown instruction %q", name)
 	}
