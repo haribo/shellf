@@ -2,7 +2,7 @@ def open(port: str, proto: str) {
     guard: shell { ufw status | grep -q "$port/$proto" } -> ok.already when ok
 
     apply {
-        let r = shell { ufw allow "$port/$proto" }
+        r = shell { ufw allow "$port/$proto" }
         when r.exit != 0 -> err.runtime(r)
     }
 

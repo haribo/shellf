@@ -2,7 +2,7 @@ def dir-ensure(path: str) {
     guard: shell { test -d "$path" } -> ok.already when ok
 
     apply {
-        let r = shell { mkdir -p "$path" }
+        r = shell { mkdir -p "$path" }
         when r.exit != 0 -> err.runtime(r)
     }
 
@@ -13,7 +13,7 @@ def dir-owner(path: str, owner: str) {
     guard: shell { test "$(stat -c '%U:%G' "$path")" = "$owner" } -> ok.already when ok
 
     apply {
-        let r = shell { chown -R "$owner" "$path" }
+        r = shell { chown -R "$owner" "$path" }
         when r.exit != 0 -> err.runtime(r)
     }
 

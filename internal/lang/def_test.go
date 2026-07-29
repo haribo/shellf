@@ -67,7 +67,7 @@ func TestParseDef_BoolFieldBinaryPayload(t *testing.T) {
 def svc(name: str, want: bool) {
     guard: shell { systemctl is-active --quiet "$name" }.ok == want -> ok.already
     apply {
-        let r = shell { systemctl start "$name" }
+        r = shell { systemctl start "$name" }
         when r.exit != 0 -> err.runtime(r)
     }
     ok.changed
@@ -96,7 +96,7 @@ def svc(name: str, want: bool) {
 		t.Fatalf("field recv not shell: %T", f.Recv)
 	}
 
-	// apply block: let + when r.exit != 0 -> err.runtime(r)
+	// apply block: binding + when r.exit != 0 -> err.runtime(r)
 	apply := d.Phases[1]
 	if _, ok := apply.Stmts[0].(LetStmt); !ok {
 		t.Fatalf("first apply stmt not let: %T", apply.Stmts[0])

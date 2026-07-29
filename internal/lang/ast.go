@@ -24,7 +24,7 @@ type Phase struct {
 
 type Stmt interface{ isStmt() }
 
-// LetStmt: `let name = value`
+// LetStmt: `name = value` (immutable binding, no keyword)
 type LetStmt struct {
 	Name  string
 	Value Expr

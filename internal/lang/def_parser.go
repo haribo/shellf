@@ -73,22 +73,24 @@ func (p *parser) phase() Phase {
 }
 
 func (p *parser) stmt() Stmt {
-	if p.tok.kind == tIdent {
-		switch p.tok.val {
-		case "let":
-			p.adv()
-			name := p.expect(tIdent, "variable name").val
-			p.expect(tEq, "=")
-			return LetStmt{Name: name, Value: p.expr()}
-		case "when":
-			p.adv()
-			cond := p.expr()
-			p.expect(tArrow, "->")
-			return GuardStmt{Cond: cond, Outcome: p.outcome()}
-		}
+	if p.tok.kind == tIdent && p.tok.val == "when" {
+		p.adv()
+		cond := p.expr()
+		p.expect(tArrow, "->")
+		return GuardStmt{Cond: cond, Outcome: p.outcome()}
 	}
-	// Effect: expr [ -> outcome [ when cond ] ]
-	e := EffectStmt{Expr: p.expr()}
+	// A binding `name = expr` (no keyword) or an effect `expr [ -> outcome [ when cond ] ]`.
+	// Parse the expression first, then a trailing `=` marks a binding — no lookahead needed.
+	lhs := p.expr()
+	if p.tok.kind == tEq {
+		id, ok := lhs.(Ident)
+		if !ok {
+			p.fail("cannot bind to a non-identifier")
+		}
+		p.adv()
+		return LetStmt{Name: id.Name, Value: p.expr()}
+	}
+	e := EffectStmt{Expr: lhs}
 	if p.tok.kind == tArrow {
 		p.adv()
 		o := p.outcome()

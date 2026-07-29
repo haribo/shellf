@@ -12,7 +12,7 @@ def apt-install(pkg: str) {
     pre-check: when pkg == "" -> err.pkgMustNotBeNull
     guard: shell { dpkg -s "$pkg" } -> ok.pkgAlreadyInstalled when ok
     apply {
-        let r = shell { apt-get install -y "$pkg" }
+        r = shell { apt-get install -y "$pkg" }
         when r.exit != 0 -> err.runtime(r)
     }
     ok.pkgInstalled

@@ -4,7 +4,7 @@ def file-download(url: str, dst: str, sha256: str) {
     } -> ok.already when ok
 
     apply {
-        let r = shell {
+        r = shell {
             curl -fsSLo "$dst" "$url"
             echo "$sha256  $dst" | sha256sum -c --status
         }
@@ -18,7 +18,7 @@ def file-write(path: str, content: str) {
     guard: shell { test -f "$path" && printf '%s' "$content" | cmp -s - "$path" } -> ok.already when ok
 
     apply {
-        let r = shell { printf '%s' "$content" > "$path" }
+        r = shell { printf '%s' "$content" > "$path" }
         when r.exit != 0 -> err.runtime(r)
     }
 
@@ -29,7 +29,7 @@ def file-line(path: str, line: str) {
     guard: shell { grep -qF -- "$line" "$path" } -> ok.already when ok
 
     apply {
-        let r = shell { printf '%s\n' "$line" >> "$path" }
+        r = shell { printf '%s\n' "$line" >> "$path" }
         when r.exit != 0 -> err.runtime(r)
     }
 
@@ -40,7 +40,7 @@ def file-delete(path: str) {
     guard: shell { test ! -e "$path" } -> ok.already when ok
 
     apply {
-        let r = shell { rm -rf -- "$path" }
+        r = shell { rm -rf -- "$path" }
         when r.exit != 0 -> err.runtime(r)
     }
 

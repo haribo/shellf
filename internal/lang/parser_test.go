@@ -62,6 +62,33 @@ on web {
 	}
 }
 
+func TestParsePlanVariables(t *testing.T) {
+	src := `
+owner = "haribo"
+on server {
+  user-group(owner, "docker")
+  dir-owner("/opt", owner)
+}
+`
+	plan, err := ParsePlan(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ug := plan[0].Steps[0]
+	if ug.Args["user"] != "haribo" || ug.Args["group"] != "docker" {
+		t.Fatalf("user-group args: %+v", ug.Args)
+	}
+	if do := plan[0].Steps[1]; do.Args["owner"] != "haribo" {
+		t.Fatalf("dir-owner owner: %+v", do.Args)
+	}
+}
+
+func TestParsePlanUndefinedVar(t *testing.T) {
+	if _, err := ParsePlan(`on s { user-group(missing, "docker") }`); err == nil {
+		t.Fatal("expected error for undefined variable")
+	}
+}
+
 func TestParseErrors(t *testing.T) {
 	cases := map[string]func(string) error{
 		`host x = { bogus: "y" }`:        func(s string) error { _, e := ParseInventory(s); return e },
