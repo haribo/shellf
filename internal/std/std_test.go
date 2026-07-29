@@ -42,11 +42,26 @@ func TestStdlib_AllPresent(t *testing.T) {
 	for _, name := range []string{
 		"apt-install", "file-download", "archive-extract", "git-clone",
 		"dir-ensure", "file-write", "file-line", "file-delete",
-		"docker.install", "docker.network",
+		"docker.install", "docker.network", "docker.compose-up", "ufw.open",
 	} {
 		if _, ok := Lookup(name); !ok {
 			t.Errorf("missing def %q", name)
 		}
+	}
+}
+
+func TestComposeAndUfw(t *testing.T) {
+	// compose-up has no guard: its single shell is the apply (n==1 → guardExit here).
+	if got := eval(t, "docker.compose-up", map[string]string{"dir": "/opt/app"}, &fakeExec{guardExit: 0}, engine.Apply).String(); got != "ok.up" {
+		t.Fatalf("docker.compose-up: got %s, want ok.up", got)
+	}
+	// ufw.open: rule absent → allow
+	if got := eval(t, "ufw.open", map[string]string{"port": "443/tcp"}, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.opened" {
+		t.Fatalf("ufw.open apply: got %s, want ok.opened", got)
+	}
+	// ufw.open: rule present → skip
+	if got := eval(t, "ufw.open", map[string]string{"port": "443/tcp"}, &fakeExec{guardExit: 0}, engine.Apply).String(); got != "ok.already" {
+		t.Fatalf("ufw.open guard-ok: got %s, want ok.already", got)
 	}
 }
 

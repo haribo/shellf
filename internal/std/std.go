@@ -21,7 +21,7 @@ import (
 	"shellf/internal/lang"
 )
 
-//go:embed *.shellf docker/*.shellf
+//go:embed *.shellf docker/*.shellf ufw/*.shellf
 var files embed.FS
 
 var (
