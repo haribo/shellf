@@ -29,6 +29,9 @@ func (s Step) label() string {
 	if len(s.Parallel) > 0 {
 		return "parallel"
 	}
+	if s.Instruction == "shell" {
+		return "shell(" + firstLine(s.Args["cmd"]) + ")"
+	}
 	keys := make([]string, 0, len(s.Args))
 	for k := range s.Args {
 		keys = append(keys, k)
@@ -39,6 +42,17 @@ func (s Step) label() string {
 		vals[i] = s.Args[k]
 	}
 	return s.Instruction + "(" + strings.Join(vals, ", ") + ")"
+}
+
+func firstLine(cmd string) string {
+	cmd = strings.TrimSpace(cmd)
+	if i := strings.IndexByte(cmd, '\n'); i >= 0 {
+		return cmd[:i] + " …"
+	}
+	if len(cmd) > 50 {
+		return cmd[:50] + "…"
+	}
+	return cmd
 }
 
 type Request struct {
@@ -119,6 +133,8 @@ func dispatch(step Step) (engine.Instruction, error) {
 			Running: step.Args["running"] == "true",
 			Enabled: step.Args["enabled"] == "true",
 		}, nil
+	case "shell":
+		return engine.Shell{Cmd: step.Args["cmd"], Unless: step.Args["unless"]}, nil
 	default:
 		return nil, fmt.Errorf("unknown instruction: %q", step.Instruction)
 	}
