@@ -21,13 +21,16 @@ var instructionArgs = map[string][]string{
 	"archive-extract": {"src", "dst"},
 	"git-clone":       {"url", "dst"},
 	"dir-ensure":      {"path"},
+	"dir-owner":       {"path", "owner"},
+	"user-group":      {"user", "group"},
 	"file-write":      {"path", "content"},
 	"file-line":       {"path", "line"},
 	"file-delete":     {"path"},
 	"docker.install":    {},
 	"docker.network":    {"name"},
 	"docker.compose-up": {"dir"},
-	"ufw.open":          {"port"},
+	"ufw.open":          {"port", "proto"},
+	"ufw.enable":        {},
 }
 
 // ParseInventory parses an inventory file into an Inventory.

@@ -1,8 +1,8 @@
-def open(port: str) {
-    guard: shell { ufw status | grep -q "$port" } -> ok.already when ok
+def open(port: str, proto: str) {
+    guard: shell { ufw status | grep -q "$port/$proto" } -> ok.already when ok
 
     apply {
-        let r = shell { ufw allow "$port" }
+        let r = shell { ufw allow "$port/$proto" }
         when r.exit != 0 -> err.runtime(r)
     }
 
