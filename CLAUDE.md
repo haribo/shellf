@@ -38,6 +38,7 @@ Rules must be concise. One rule per line when possible.
 2. `docs/CONVERSATION.md` — design-discussion history (the WHY).
 3. `docs/language.md` — language spec (stable primitives only).
 - Documentation strategy: `docs/adr/0001-documentation-strategy.md`.
+- ADR lifecycle: never delete an ADR; a reversal is a **new** ADR that supersedes the old (marked `Superseded`). In-place edits only for same-decision clarifications. See ADR-0001 §4.
 - All docs under `docs/` (except root `DESIGN.md`/`README.md`). Decisions with rejected alternatives → `docs/adr/`.
 
 ## Git
