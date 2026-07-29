@@ -42,7 +42,8 @@ func TestStdlib_AllPresent(t *testing.T) {
 	for _, name := range []string{
 		"apt-install", "file-download", "archive-extract", "git-clone",
 		"dir-ensure", "file-write", "file-line", "file-delete",
-		"docker.install", "docker.network", "docker.compose-up", "ufw.open",
+		"user-group", "dir-owner",
+		"docker.install", "docker.network", "docker.compose-up", "ufw.open", "ufw.enable",
 	} {
 		if _, ok := Lookup(name); !ok {
 			t.Errorf("missing def %q", name)
@@ -111,6 +112,21 @@ func TestFileWriteDirDelete(t *testing.T) {
 	// file-delete: already gone → skip
 	if got := eval(t, "file-delete", map[string]string{"path": "/tmp/gone"}, &fakeExec{guardExit: 0}, engine.Apply).String(); got != "ok.already" {
 		t.Fatalf("file-delete guard-ok: got %s, want ok.already", got)
+	}
+}
+
+func TestUserOwnerUfwEnable(t *testing.T) {
+	// user-group: already a member → skip
+	if got := eval(t, "user-group", map[string]string{"user": "haribo", "group": "docker"}, &fakeExec{guardExit: 0}, engine.Apply).String(); got != "ok.already" {
+		t.Fatalf("user-group guard-ok: got %s, want ok.already", got)
+	}
+	// dir-owner: differs → chown
+	if got := eval(t, "dir-owner", map[string]string{"path": "/opt", "owner": "haribo:haribo"}, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.changed" {
+		t.Fatalf("dir-owner apply: got %s, want ok.changed", got)
+	}
+	// ufw.enable: inactive → enable
+	if got := eval(t, "ufw.enable", nil, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.enabled" {
+		t.Fatalf("ufw.enable apply: got %s, want ok.enabled", got)
 	}
 }
 

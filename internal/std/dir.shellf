@@ -8,3 +8,14 @@ def dir-ensure(path: str) {
 
     ok.created
 }
+
+def dir-owner(path: str, owner: str) {
+    guard: shell { test "$(stat -c '%U:%G' "$path")" = "$owner" } -> ok.already when ok
+
+    apply {
+        let r = shell { chown -R "$owner" "$path" }
+        when r.exit != 0 -> err.runtime(r)
+    }
+
+    ok.changed
+}
