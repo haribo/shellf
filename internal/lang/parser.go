@@ -11,9 +11,12 @@ import (
 // builtinArgs maps a builtin instruction to its positional argument names.
 // Call `apt-install("nginx")` → Step{Instruction:"apt-install", Args:{"pkg":"nginx"}}.
 var builtinArgs = map[string][]string{
-	"apt-install": {"pkg"},
-	"file-copy":   {"src", "dst"},
-	"service":     {"name", "running", "enabled"},
+	"apt-install":   {"pkg"},
+	"file-copy":     {"src", "dst"},
+	"service":       {"name", "running", "enabled"},
+	"download-file": {"url", "dst", "sha256"},
+	"untar":         {"src", "dst"},
+	"git-clone":     {"url", "dst"},
 }
 
 // ParseInventory parses an inventory file into an Inventory.

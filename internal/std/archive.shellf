@@ -1,0 +1,24 @@
+def untar(src: str, dst: str) {
+    guard: shell { test -d "$dst" && test -n "$(ls -A "$dst" 2>/dev/null)" } -> ok.already when ok
+
+    apply {
+        let r = shell {
+            mkdir -p "$dst"
+            tar xzf "$src" -C "$dst"
+        }
+        when r.exit != 0 -> err.runtime(r)
+    }
+
+    ok.extracted
+}
+
+def git-clone(url: str, dst: str) {
+    guard: shell { test -d "$dst/.git" } -> ok.already when ok
+
+    apply {
+        let r = shell { git clone "$url" "$dst" }
+        when r.exit != 0 -> err.runtime(r)
+    }
+
+    ok.cloned
+}
