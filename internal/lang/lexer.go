@@ -14,6 +14,7 @@ const (
 	tEOF tokKind = iota
 	tIdent
 	tString
+	tNumber
 	tLBrace
 	tRBrace
 	tLBrack
@@ -23,6 +24,10 @@ const (
 	tEq
 	tColon
 	tComma
+	tDot
+	tEqEq  // ==
+	tNotEq // !=
+	tArrow // ->
 )
 
 type token struct {
@@ -49,12 +54,31 @@ func (l *lexer) next() (token, error) {
 	line, col := l.line, l.col
 	c := l.src[l.pos]
 
+	// Two-char operators (before the single-char map, which owns '=').
+	switch {
+	case c == '=' && l.peek() == '=':
+		l.adv()
+		l.adv()
+		return token{tEqEq, "==", line, col}, nil
+	case c == '!' && l.peek() == '=':
+		l.adv()
+		l.adv()
+		return token{tNotEq, "!=", line, col}, nil
+	case c == '-' && l.peek() == '>':
+		l.adv()
+		l.adv()
+		return token{tArrow, "->", line, col}, nil
+	}
+
 	if punct, ok := punctuation[c]; ok {
 		l.adv()
 		return token{punct, string(c), line, col}, nil
 	}
 	if c == '"' {
 		return l.lexString(line, col)
+	}
+	if c >= '0' && c <= '9' {
+		return l.lexNumber(line, col), nil
 	}
 	if isIdentStart(c) {
 		return l.lexIdent(line, col), nil
@@ -64,7 +88,7 @@ func (l *lexer) next() (token, error) {
 
 var punctuation = map[byte]tokKind{
 	'{': tLBrace, '}': tRBrace, '[': tLBrack, ']': tRBrack,
-	'(': tLParen, ')': tRParen, '=': tEq, ':': tColon, ',': tComma,
+	'(': tLParen, ')': tRParen, '=': tEq, ':': tColon, ',': tComma, '.': tDot,
 }
 
 func (l *lexer) skip() {
@@ -80,6 +104,13 @@ func (l *lexer) skip() {
 			return
 		}
 	}
+}
+
+func (l *lexer) peek() byte {
+	if l.pos+1 < len(l.src) {
+		return l.src[l.pos+1]
+	}
+	return 0
 }
 
 func (l *lexer) adv() {
@@ -125,6 +156,14 @@ func unescape(c byte) byte {
 	default:
 		return c // ", \, and anything else literal
 	}
+}
+
+func (l *lexer) lexNumber(line, col int) token {
+	start := l.pos
+	for l.pos < len(l.src) && l.src[l.pos] >= '0' && l.src[l.pos] <= '9' {
+		l.adv()
+	}
+	return token{tNumber, l.src[start:l.pos], line, col}
 }
 
 func (l *lexer) lexIdent(line, col int) token {
