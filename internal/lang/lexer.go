@@ -165,7 +165,34 @@ func (l *lexer) lexTripleString(line, col int) (token, error) {
 	for i := 0; i < end+3; i++ {
 		l.adv() // content + closing """
 	}
-	return token{tString, s, line, col}, nil
+	return token{tString, dedentTriple(s), line, col}, nil
+}
+
+// dedentTriple strips the block's indentation from a multi-line triple-quoted
+// string, so the content can be indented for readability in the plan. The
+// margin is the whitespace preceding the closing """ (on its own line); it is
+// removed as a prefix from every line, and the newline delimiters right after
+// the opening """ and right before the closing """ are dropped. Swift/Kotlin
+// semantics. A single-line string, or content sharing the closing """'s line,
+// is returned unchanged — so flush-left blocks (margin 0) stay as they were.
+func dedentTriple(s string) string {
+	nl := strings.LastIndexByte(s, '\n')
+	if nl < 0 {
+		return s // single line: nothing to dedent
+	}
+	margin := s[nl+1:]
+	if strings.TrimLeft(margin, " \t") != "" {
+		return s // content on the closing line: not a block form
+	}
+	body := strings.TrimPrefix(s[:nl], "\n") // drop the trailing margin line and a leading newline
+	if margin == "" {
+		return body
+	}
+	lines := strings.Split(body, "\n")
+	for i, ln := range lines {
+		lines[i] = strings.TrimPrefix(ln, margin)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func unescape(c byte) byte {
