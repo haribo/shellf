@@ -1,4 +1,4 @@
-def untar(src: str, dst: str) {
+def archive-extract(src: str, dst: str) {
     guard: shell { test -d "$dst" && test -n "$(ls -A "$dst" 2>/dev/null)" } -> ok.already when ok
 
     apply {

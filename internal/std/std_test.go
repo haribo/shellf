@@ -39,7 +39,7 @@ func eval(t *testing.T, name string, args map[string]string, f *fakeExec, mode e
 }
 
 func TestStdlib_AllPresent(t *testing.T) {
-	for _, name := range []string{"apt-install", "download-file", "untar", "git-clone"} {
+	for _, name := range []string{"apt-install", "file-download", "archive-extract", "git-clone"} {
 		if _, ok := Lookup(name); !ok {
 			t.Errorf("missing stdlib def %q", name)
 		}
@@ -50,20 +50,20 @@ func TestDownloadFile(t *testing.T) {
 	args := map[string]string{"url": "http://x/a.tgz", "dst": "/tmp/a.tgz", "sha256": "abc"}
 
 	// hash already matches → skip
-	if got := eval(t, "download-file", args, &fakeExec{guardExit: 0}, engine.Apply).String(); got != "ok.already" {
+	if got := eval(t, "file-download", args, &fakeExec{guardExit: 0}, engine.Apply).String(); got != "ok.already" {
 		t.Fatalf("guard-ok: got %s, want ok.already", got)
 	}
 	// not present → download
-	if got := eval(t, "download-file", args, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.downloaded" {
+	if got := eval(t, "file-download", args, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.downloaded" {
 		t.Fatalf("apply: got %s, want ok.downloaded", got)
 	}
 	// download fails → err.runtime
-	if got := eval(t, "download-file", args, &fakeExec{guardExit: 1, applyExit: 22}, engine.Apply).String(); got != "err.runtime" {
+	if got := eval(t, "file-download", args, &fakeExec{guardExit: 1, applyExit: 22}, engine.Apply).String(); got != "err.runtime" {
 		t.Fatalf("apply-fail: got %s, want err.runtime", got)
 	}
 	// check mode never runs curl
 	f := &fakeExec{guardExit: 1}
-	if got := eval(t, "download-file", args, f, engine.Check).String(); got != "would.downloaded" {
+	if got := eval(t, "file-download", args, f, engine.Check).String(); got != "would.downloaded" {
 		t.Fatalf("check: got %s, want would.downloaded", got)
 	}
 	for _, c := range f.calls {
@@ -74,7 +74,7 @@ func TestDownloadFile(t *testing.T) {
 }
 
 func TestUntarAndClone(t *testing.T) {
-	if got := eval(t, "untar", map[string]string{"src": "/a.tgz", "dst": "/opt"}, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.extracted" {
+	if got := eval(t, "archive-extract", map[string]string{"src": "/a.tgz", "dst": "/opt"}, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.extracted" {
 		t.Fatalf("untar: got %s, want ok.extracted", got)
 	}
 	if got := eval(t, "git-clone", map[string]string{"url": "http://x/r", "dst": "/opt/r"}, &fakeExec{guardExit: 0}, engine.Apply).String(); got != "ok.already" {

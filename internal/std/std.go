@@ -15,8 +15,8 @@ import (
 //go:embed apt.shellf
 var aptSrc string
 
-//go:embed download.shellf
-var downloadSrc string
+//go:embed file.shellf
+var fileSrc string
 
 //go:embed archive.shellf
 var archiveSrc string
@@ -28,7 +28,7 @@ var (
 
 func load() {
 	defs = map[string]lang.Def{}
-	for _, src := range []string{aptSrc, downloadSrc, archiveSrc} {
+	for _, src := range []string{aptSrc, fileSrc, archiveSrc} {
 		parsed, err := lang.ParseDefs(src)
 		if err != nil {
 			panic(fmt.Sprintf("std: parsing embedded def: %v", err))
