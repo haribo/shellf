@@ -22,10 +22,16 @@ func TestServeResident_ProcessesThenSelfKills(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// A stub binary that the self-kill should erase (not the test's own binary).
+	binPath := filepath.Join(t.TempDir(), "shellf-stub")
+	if err := os.WriteFile(binPath, []byte("stub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
 	f := newFake()
 	f.set("echo hi", "", 0)
 	done := make(chan error, 1)
-	go func() { done <- ServeResident(wd, f, 300*time.Millisecond) }()
+	go func() { done <- ServeResident(wd, binPath, f, 300*time.Millisecond) }()
 
 	// Wait for the result marker.
 	deadline := time.Now().Add(2 * time.Second)
@@ -60,5 +66,8 @@ func TestServeResident_ProcessesThenSelfKills(t *testing.T) {
 	}
 	if _, err := os.Stat(wd); !os.IsNotExist(err) {
 		t.Fatalf("workdir should be removed on self-kill")
+	}
+	if _, err := os.Stat(binPath); !os.IsNotExist(err) {
+		t.Fatalf("binary should be erased on self-kill (zero trace)")
 	}
 }

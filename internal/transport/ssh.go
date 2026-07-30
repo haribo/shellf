@@ -27,9 +27,18 @@ type SSH struct {
 	Port        string        // empty = 22
 	Key         string        // identity file
 	Timeout     time.Duration // dial (connect) timeout; 0 = 10s
-	ExecTimeout time.Duration // push+exec watchdog; 0 = 5m
+	ExecTimeout time.Duration // job watchdog (poll deadline); 0 = 30m
+	AgentTTL    time.Duration // resident agent inactivity TTL; 0 = 2h
 	KnownHosts  string        // known_hosts path; empty = ~/.ssh/known_hosts
 	Insecure    bool          // bypass host-key verification (dev only)
+}
+
+// agentTTLSecs is the inactivity TTL passed to the launched resident agent.
+func (s SSH) agentTTLSecs() int {
+	if s.AgentTTL == 0 {
+		return int((2 * time.Hour).Seconds())
+	}
+	return int(s.AgentTTL.Seconds())
 }
 
 // hashID identifies a build by a short hash of the binary. Paths are per-build:
@@ -181,8 +190,8 @@ func (s SSH) startAndDeposit(client *ssh.Client, path, wd, jobid string, req []b
 	cmd := fmt.Sprintf(
 		"mkdir -p %[1]s && cat > %[2]s && mv %[2]s %[3]s && "+
 			`{ { test -f %[1]s/agent.pid && kill -0 "$(cat %[1]s/agent.pid)" 2>/dev/null; } || `+
-			`{ mkdir %[1]s/lock 2>/dev/null && setsid %[4]s __agent-resident %[1]s >/dev/null 2>&1 </dev/null & }; }`,
-		wd, reqTmp, reqFinal, path)
+			`{ mkdir %[1]s/lock 2>/dev/null && setsid %[4]s __agent-resident %[1]s %[5]d >/dev/null 2>&1 </dev/null & }; }`,
+		wd, reqTmp, reqFinal, path, s.agentTTLSecs())
 	if err := sess.Run(cmd); err != nil {
 		return fmt.Errorf("deposit/start: %v: %s", err, stderr.String())
 	}
