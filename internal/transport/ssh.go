@@ -2,6 +2,8 @@ package transport
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -13,10 +15,11 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
-// SSH pushes and runs the ephemeral agent over a single golang.org/x/crypto/ssh
-// connection (one TCP dial, multiple sessions). Hardened over the earlier
-// shell-out: dial timeout + an exec watchdog, no per-host subprocess fork,
-// host-key verification against known_hosts.
+// SSH pushes (or reuses a hash-cached binary) and runs the agent over a single
+// golang.org/x/crypto/ssh connection (one TCP dial, multiple sessions). The
+// agent process stays ephemeral; only its binary is cached on the target.
+// Hardened over the earlier shell-out: dial timeout + an exec watchdog, no
+// per-host subprocess fork, host-key verification against known_hosts.
 type SSH struct {
 	User        string
 	Host        string
@@ -28,10 +31,12 @@ type SSH struct {
 	Insecure    bool          // bypass host-key verification (dev only)
 }
 
-// remotePath is per-process to avoid ETXTBSY against a binary a prior (killed)
-// run may have left executing on the target.
-func remotePath() string {
-	return fmt.Sprintf("/tmp/shellf-agent-%d", os.Getpid())
+// remotePath names the agent by a hash of its bytes, so repeated runs of the
+// same build reuse the cached binary on the target instead of re-transferring
+// it. Distinct builds get distinct paths (no ETXTBSY against a running one).
+func remotePath(bin []byte) string {
+	sum := sha256.Sum256(bin)
+	return "/tmp/shellf-agent-" + hex.EncodeToString(sum[:8])
 }
 
 func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
@@ -39,6 +44,7 @@ func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read agent: %w", err)
 	}
+	path := remotePath(bin)
 
 	client, err := s.dial()
 	if err != nil {
@@ -50,10 +56,23 @@ func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
 	stop := time.AfterFunc(s.execTimeout(), func() { client.Close() })
 	defer stop.Stop()
 
-	if err := s.push(client, bin); err != nil {
-		return nil, err
+	if !s.cached(client, path) {
+		if err := s.push(client, bin, path); err != nil {
+			return nil, err
+		}
 	}
-	return s.exec(client, req)
+	return s.exec(client, req, path)
+}
+
+// cached reports whether the agent binary is already present and executable on
+// the target (a cache hit → skip the transfer).
+func (s SSH) cached(client *ssh.Client, path string) bool {
+	sess, err := client.NewSession()
+	if err != nil {
+		return false
+	}
+	defer sess.Close()
+	return sess.Run("test -x "+path) == nil
 }
 
 func (s SSH) dial() (*ssh.Client, error) {
@@ -104,8 +123,10 @@ func (s SSH) hostKeyCallback() (ssh.HostKeyCallback, error) {
 	}, nil
 }
 
-// push streams the binary to the target (stdin of a `cat` session).
-func (s SSH) push(client *ssh.Client, bin []byte) error {
+// push streams the binary to the target (stdin of a `cat` session), writing to
+// a temp then renaming: an interrupted push never leaves a partial binary at
+// path, and a concurrent run sees either the old file or none (atomic mv).
+func (s SSH) push(client *ssh.Client, bin []byte, path string) error {
 	sess, err := client.NewSession()
 	if err != nil {
 		return err
@@ -115,15 +136,17 @@ func (s SSH) push(client *ssh.Client, bin []byte) error {
 	sess.Stdin = bytes.NewReader(bin)
 	var stderr bytes.Buffer
 	sess.Stderr = &stderr
-	path := remotePath()
-	if err := sess.Run("cat > " + path + " && chmod +x " + path); err != nil {
+	tmp := path + ".tmp"
+	cmd := fmt.Sprintf("cat > %[1]s && chmod +x %[1]s && mv %[1]s %[2]s", tmp, path)
+	if err := sess.Run(cmd); err != nil {
 		return fmt.Errorf("push agent: %v: %s", err, stderr.String())
 	}
 	return nil
 }
 
-// exec runs the agent (stdin = req), captures stdout, then removes the binary.
-func (s SSH) exec(client *ssh.Client, req []byte) ([]byte, error) {
+// exec runs the agent (stdin = req) and captures stdout. The binary is kept
+// (cached) for the next run; TTL cleanup of stale agents is PR3.
+func (s SSH) exec(client *ssh.Client, req []byte, path string) ([]byte, error) {
 	sess, err := client.NewSession()
 	if err != nil {
 		return nil, err
@@ -135,8 +158,7 @@ func (s SSH) exec(client *ssh.Client, req []byte) ([]byte, error) {
 	sess.Stdout = &stdout
 	sess.Stderr = &stderr
 
-	cmd := fmt.Sprintf("%[1]s __agent; r=$?; rm -f %[1]s; exit $r", remotePath())
-	if err := sess.Run(cmd); err != nil {
+	if err := sess.Run(path + " __agent"); err != nil {
 		return nil, fmt.Errorf("agent run: %v: %s", err, stderr.String())
 	}
 	return stdout.Bytes(), nil
