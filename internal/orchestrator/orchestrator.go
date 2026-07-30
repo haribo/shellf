@@ -35,7 +35,10 @@ type BlockReport struct {
 // Run executes the plan. Blocks run sequentially; each block fans out over its
 // live hosts. A host that fails (transport error or an err step) is dropped
 // from subsequent blocks.
-func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.Dial) []BlockReport {
+// Run executes the plan. baseVars (--vars + plan bindings) and setVars (--set)
+// resolve each Step's bare-identifier Refs per host, with precedence
+// base < per-host inventory var < --set.
+func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.Dial, baseVars, setVars map[string]string) []BlockReport {
 	dead := map[string]bool{}
 	var reports []BlockReport
 
@@ -47,8 +50,17 @@ func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.D
 			}
 		}
 
-		req, _ := json.Marshal(proto.Request{Mode: mode, Steps: block.Steps})
-		results := fleet.Run(live, agentBin, req, dial)
+		block := block // capture for the closure
+		reqFor := func(alias string) ([]byte, error) {
+			host, _ := inv.Resolve(alias)
+			env := mergeEnv(baseVars, host.Vars, setVars)
+			steps, err := proto.ResolveRefs(block.Steps, env)
+			if err != nil {
+				return nil, err
+			}
+			return json.Marshal(proto.Request{Mode: mode, Steps: steps})
+		}
+		results := fleet.Run(live, agentBin, reqFor, dial)
 
 		report := BlockReport{Target: block.Target}
 		for _, hr := range results {
@@ -60,6 +72,22 @@ func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.D
 		reports = append(reports, report)
 	}
 	return reports
+}
+
+// mergeEnv layers the variable tables by increasing precedence: base (--vars +
+// plan bindings) < per-host inventory vars < --set.
+func mergeEnv(base, host, set map[string]string) map[string]string {
+	env := make(map[string]string, len(base)+len(host)+len(set))
+	for k, v := range base {
+		env[k] = v
+	}
+	for k, v := range host {
+		env[k] = v
+	}
+	for k, v := range set {
+		env[k] = v
+	}
+	return env
 }
 
 func failed(r proto.Response) bool {

@@ -4,17 +4,51 @@
 package proto
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
 	"shellf/internal/engine"
 )
 
+// ResolveRefs returns a copy of steps with every Ref resolved against env and
+// merged into Args (an unresolved ref is an error). Recurses into Parallel.
+// Called per host by the orchestrator, so the agent only ever sees Args.
+func ResolveRefs(steps []Step, env map[string]string) ([]Step, error) {
+	out := make([]Step, len(steps))
+	for i, s := range steps {
+		if len(s.Parallel) > 0 {
+			sub, err := ResolveRefs(s.Parallel, env)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = Step{Parallel: sub}
+			continue
+		}
+		args := make(map[string]string, len(s.Args)+len(s.Refs))
+		for k, v := range s.Args {
+			args[k] = v
+		}
+		for argName, varName := range s.Refs {
+			v, ok := env[varName]
+			if !ok {
+				return nil, fmt.Errorf("undefined variable %q", varName)
+			}
+			args[argName] = v
+		}
+		out[i] = Step{Instruction: s.Instruction, Args: args}
+	}
+	return out, nil
+}
+
 // Step is either a single instruction call (Instruction + Args) or a parallel
-// block (Parallel set).
+// block (Parallel set). Refs holds bare-identifier arguments not yet resolved
+// (argName → varName); the orchestrator resolves them per host into Args before
+// the Request is sent, so the agent never sees a Ref.
 type Step struct {
 	Instruction string            `json:"instruction,omitempty"`
 	Args        map[string]string `json:"args,omitempty"`
+	Refs        map[string]string `json:"refs,omitempty"`
 	Parallel    []Step            `json:"parallel,omitempty"`
 }
 

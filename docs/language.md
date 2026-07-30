@@ -94,6 +94,6 @@ file-write("/app/compose.yaml", """
 ```
 
 - **Scope**: lexical, with lexical shadowing (a file may shadow a global, confined to that file — no dynamic scoping).
-- **Precedence**: `--vars` global `<` inventory (per-host) `<` CLI `--set k=v`. Per-host inventory vars need orchestration-time resolution (planned) — `--vars`/`--set` (global, parse-time) ship first.
+- **Precedence**: `--vars` `<` plan binding `<` inventory (per-host) `<` CLI `--set`. A **bare-identifier** argument resolves **per host at orchestration time** (so a per-host inventory var can override a global); an undefined one errors at orchestration. `${name}` **interpolation is global** (resolved at parse) — a per-host var cannot be interpolated. Per-host vars are free-form fields in the inventory: `host web1 = { address: "…", owner: "alice" }`.
 
 See [ADR-0003](adr/0003-variable-scoping.md).

@@ -44,20 +44,22 @@ func ParseInventory(src string) (inv inventory.Inventory, err error) {
 
 // ParsePlan parses a plan file into an orchestration Plan.
 func ParsePlan(src string) (orchestrator.Plan, error) {
-	return ParsePlanWithVars(src, nil, nil)
+	return ParsePlanWithVars(src, map[string]string{}, nil)
 }
 
-// ParsePlanWithVars parses a plan with pre-loaded global variables. `globals`
-// seed the binding table (from a --vars file, then --set overriding it);
-// `setKeys` are the keys pinned by --set, which a plan-level binding cannot
-// override. Precedence: --vars < plan binding < --set.
-func ParsePlanWithVars(src string, globals map[string]string, setKeys map[string]bool) (plan orchestrator.Plan, err error) {
+// ParsePlanWithVars parses a plan with pre-loaded global variables. `baseVars`
+// (from a --vars file) is the lower-precedence table; `setVars` (from --set) is
+// the highest. Plan-level bindings are appended to `baseVars` (which is mutated
+// in place), so the caller can pass the enriched table to the orchestrator for
+// per-host resolution of the Steps' Refs. Interpolation and binding values are
+// resolved here; bare-identifier arguments are left as Refs.
+func ParsePlanWithVars(src string, baseVars, setVars map[string]string) (plan orchestrator.Plan, err error) {
 	defer catch(&err)
 	p := newParser(src)
-	for k, v := range globals {
-		p.vars[k] = v
+	if baseVars != nil {
+		p.baseVars = baseVars
 	}
-	p.setKeys = setKeys
+	p.setVars = setVars
 	plan = p.plan()
 	return
 }
@@ -70,9 +72,9 @@ func ParseVars(src string) (vars map[string]string, err error) {
 	for p.tok.kind != tEOF {
 		name := p.expect(tIdent, "variable name").val
 		p.expect(tEq, "=")
-		p.vars[name] = p.arg()
+		p.baseVars[name] = p.arg()
 	}
-	return p.vars, nil
+	return p.baseVars, nil
 }
 
 // --- parser ---
@@ -90,16 +92,25 @@ func catch(dst *error) {
 }
 
 type parser struct {
-	lex     *lexer
-	tok     token
-	vars    map[string]string // bindings, resolved at parse time
-	setKeys map[string]bool   // keys pinned by --set: a plan binding cannot override them
+	lex      *lexer
+	tok      token
+	baseVars map[string]string // --vars + plan bindings (lower precedence)
+	setVars  map[string]string // --set overrides (highest precedence)
 }
 
 func newParser(src string) *parser {
-	p := &parser{lex: newLexer(src), vars: map[string]string{}}
+	p := &parser{lex: newLexer(src), baseVars: map[string]string{}}
 	p.adv()
 	return p
+}
+
+// lookup resolves a variable name at parse time, --set winning over base.
+func (p *parser) lookup(name string) (string, bool) {
+	if v, ok := p.setVars[name]; ok {
+		return v, true
+	}
+	v, ok := p.baseVars[name]
+	return v, ok
 }
 
 func (p *parser) adv() {
@@ -163,7 +174,11 @@ func (p *parser) host() inventory.Host {
 		case "key":
 			h.Key = v
 		default:
-			p.fail("unknown host field %q", k)
+			// Any other field is a free-form per-host variable.
+			if h.Vars == nil {
+				h.Vars = map[string]string{}
+			}
+			h.Vars[k] = v
 		}
 	}
 	return h
@@ -208,12 +223,10 @@ func (p *parser) plan() orchestrator.Plan {
 	for p.tok.kind != tEOF {
 		kw := p.expect(tIdent, "'on' or a binding").val
 		if kw != "on" {
-			// Top-level binding: `name = value` (value is a string, bool, or var ref).
+			// Top-level binding: `name = value`. Appended to baseVars; --set still
+			// wins at resolution (via lookup order), so no pinning is needed here.
 			p.expect(tEq, "=")
-			v := p.arg()
-			if !p.setKeys[kw] { // --set pins the value; a plan binding cannot override it
-				p.vars[kw] = v
-			}
+			p.baseVars[kw] = p.arg()
 			continue
 		}
 		target := p.expect(tIdent, "group or host").val
@@ -277,9 +290,11 @@ func (p *parser) call(name string) proto.Step {
 		p.fail("unknown instruction %q", name)
 	}
 	p.expect(tLParen, "(")
-	var vals []string
+	type argv struct{ val, ref string }
+	var vals []argv
 	for p.tok.kind != tRParen {
-		vals = append(vals, p.arg())
+		v, r := p.callArg()
+		vals = append(vals, argv{v, r})
 		if p.tok.kind == tComma {
 			p.adv()
 		} else {
@@ -292,16 +307,24 @@ func (p *parser) call(name string) proto.Step {
 		p.fail("%s expects %d argument(s), got %d", name, len(argNames), len(vals))
 	}
 	args := map[string]string{}
+	var refs map[string]string
 	for i, n := range argNames {
-		args[n] = vals[i]
+		if vals[i].ref != "" {
+			if refs == nil {
+				refs = map[string]string{}
+			}
+			refs[n] = vals[i].ref
+		} else {
+			args[n] = vals[i].val
+		}
 	}
-	return proto.Step{Instruction: name, Args: args}
+	return proto.Step{Instruction: name, Args: args, Refs: refs}
 }
 
-// arg accepts a simple string (with `${name}` interpolation), a raw
-// triple-quoted string (never interpolated), a bare bool literal (true/false),
-// or a variable reference (a bare identifier resolved against the plan's
-// bindings). All are kept as their string form.
+// arg resolves a binding's value (plan top-level binding or --vars file entry)
+// at parse time: a string (interpolated), a raw triple-quoted string, a bool,
+// or a bare identifier resolved against the known vars. A binding cannot
+// reference a per-host var (unknown at parse) — an unknown name errors here.
 func (p *parser) arg() string {
 	switch {
 	case p.tok.kind == tString:
@@ -319,7 +342,7 @@ func (p *parser) arg() string {
 	case p.tok.kind == tIdent:
 		name := p.tok.val
 		p.adv()
-		v, ok := p.vars[name]
+		v, ok := p.lookup(name)
 		if !ok {
 			p.fail("undefined variable %q", name)
 		}
@@ -327,6 +350,34 @@ func (p *parser) arg() string {
 	default:
 		p.fail("expected a string, bool, or variable argument, got %q", p.tok.val)
 		return "" // unreachable
+	}
+}
+
+// callArg parses one instruction argument. Unlike arg, a bare identifier is
+// returned as a ref name (empty value), NOT resolved: bare-identifier arguments
+// are resolved per host at orchestration time (ADR-0003 §5). Strings are still
+// interpolated at parse time (interpolation is global-only).
+func (p *parser) callArg() (value, ref string) {
+	switch {
+	case p.tok.kind == tString:
+		v := p.interpolate(p.tok.val)
+		p.adv()
+		return v, ""
+	case p.tok.kind == tRawString:
+		v := p.tok.val
+		p.adv()
+		return v, ""
+	case p.tok.kind == tIdent && (p.tok.val == "true" || p.tok.val == "false"):
+		v := p.tok.val
+		p.adv()
+		return v, ""
+	case p.tok.kind == tIdent:
+		name := p.tok.val
+		p.adv()
+		return "", name
+	default:
+		p.fail("expected a string, bool, or variable argument, got %q", p.tok.val)
+		return "", "" // unreachable
 	}
 }
 
@@ -348,7 +399,7 @@ func (p *parser) interpolate(s string) string {
 			p.fail("unterminated ${...} interpolation")
 		}
 		name := rest[:end]
-		v, ok := p.vars[name]
+		v, ok := p.lookup(name)
 		if !ok {
 			p.fail("undefined variable %q in interpolation", name)
 		}

@@ -16,37 +16,43 @@ pair  = "${owner}:${owner}"
 	}
 }
 
-func TestVarPrecedence(t *testing.T) {
-	src := `
-owner = "plan"
-on s { dir-owner("/opt", owner) }
-`
-	// --vars only: a plan binding overrides the --vars default
-	pl, err := ParsePlanWithVars(src, map[string]string{"owner": "vars"}, nil)
+func TestBareIdentBecomesRef(t *testing.T) {
+	// A bare identifier argument is NOT resolved at parse — it becomes a Ref,
+	// resolved per host at orchestration time.
+	pl, err := ParsePlanWithVars(`on s { dir-owner("/opt", owner) }`, map[string]string{"owner": "x"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := pl[0].Steps[0].Args["owner"]; got != "plan" {
-		t.Fatalf("plan binding should override --vars: got %q, want plan", got)
+	st := pl[0].Steps[0]
+	if st.Refs["owner"] != "owner" {
+		t.Fatalf("bare ident should be a ref: %+v", st)
 	}
+	if _, ok := st.Args["owner"]; ok {
+		t.Fatalf("bare ident must not be resolved into Args: %+v", st.Args)
+	}
+}
 
-	// --set pins the key: the plan binding cannot override it
-	pl, err = ParsePlanWithVars(src, map[string]string{"owner": "set"}, map[string]bool{"owner": true})
+func TestPlanBindingEnrichesBaseVars(t *testing.T) {
+	// A top-level binding is appended to baseVars (mutated in place) so the
+	// caller can resolve the plan's refs per host afterwards.
+	base := map[string]string{}
+	_, err := ParsePlanWithVars("owner = \"haribo\"\non s { dir-owner(\"/opt\", owner) }", base, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base["owner"] != "haribo" {
+		t.Fatalf("plan binding should enrich baseVars: %+v", base)
+	}
+}
+
+func TestInterpolationPrecedence(t *testing.T) {
+	// Interpolation resolves at parse; --set (setVars) wins over base.
+	pl, err := ParsePlanWithVars(`on s { dir-owner("/opt", "${owner}") }`,
+		map[string]string{"owner": "base"}, map[string]string{"owner": "set"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := pl[0].Steps[0].Args["owner"]; got != "set" {
-		t.Fatalf("--set should win over the plan binding: got %q, want set", got)
-	}
-}
-
-func TestGlobalVarResolvesInPlan(t *testing.T) {
-	// a global var (no plan binding) is usable directly
-	pl, err := ParsePlanWithVars(`on s { dir-owner("/opt", owner) }`, map[string]string{"owner": "haribo"}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := pl[0].Steps[0].Args["owner"]; got != "haribo" {
-		t.Fatalf("global var: got %q, want haribo", got)
+		t.Fatalf("interpolation: --set should win over base, got %q", got)
 	}
 }

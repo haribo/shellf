@@ -27,7 +27,10 @@ type HostResult struct {
 
 // Run pushes the agent to every target concurrently and returns results in the
 // same order as targets.
-func Run(targets []string, agentBin string, req []byte, dial Dial) []HostResult {
+// Run fans out over targets. reqFor builds the per-host Request (it may differ
+// per host once variables are resolved per host); a reqFor error marks that
+// host failed without dialing it.
+func Run(targets []string, agentBin string, reqFor func(target string) ([]byte, error), dial Dial) []HostResult {
 	results := make([]HostResult, len(targets))
 	sem := make(chan struct{}, maxConcurrent)
 	var wg sync.WaitGroup
@@ -40,6 +43,12 @@ func Run(targets []string, agentBin string, req []byte, dial Dial) []HostResult 
 			defer func() { <-sem }()
 
 			hr := HostResult{Target: t}
+			req, err := reqFor(t)
+			if err != nil {
+				hr.Err = err
+				results[i] = hr
+				return
+			}
 			raw, err := dial(t).Run(agentBin, req)
 			if err != nil {
 				hr.Err = err

@@ -9,6 +9,7 @@ type Host struct {
 	User    string
 	Port    string
 	Key     string
+	Vars    map[string]string // free-form per-host variables
 }
 
 // Inventory maps aliases to hosts and names groups of aliases. Defaults fill
@@ -34,6 +35,15 @@ func (inv Inventory) Resolve(alias string) (Host, bool) {
 	if h.Key == "" {
 		h.Key = inv.Defaults.Key
 	}
+	// Merge vars: defaults first, host overrides.
+	merged := map[string]string{}
+	for k, v := range inv.Defaults.Vars {
+		merged[k] = v
+	}
+	for k, v := range h.Vars {
+		merged[k] = v
+	}
+	h.Vars = merged
 	return h, true
 }
 
