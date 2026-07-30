@@ -79,9 +79,15 @@ func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
 			return nil, err
 		}
 	}
-	if err := s.startAndDeposit(client, path, wd, jobid, req); err != nil {
+	if err := s.deposit(client, wd, jobid, req); err != nil {
 		client.Close()
 		return nil, err
+	}
+	if !s.agentAlive(client, wd) {
+		if err := s.launchAgent(client, path, wd); err != nil {
+			client.Close()
+			return nil, err
+		}
 	}
 	client.Close()
 
@@ -172,10 +178,9 @@ func (s SSH) push(client *ssh.Client, bin []byte, path string) error {
 
 const pollWait = time.Second
 
-// startAndDeposit atomically deposits the request (tmp + mv), then ensures a
-// resident agent is running: reuse a live one (kill -0 on agent.pid), else take
-// a mkdir-lock and launch one detached (setsid) — the agent releases the lock.
-func (s SSH) startAndDeposit(client *ssh.Client, path, wd, jobid string, req []byte) error {
+// deposit writes the request atomically (tmp + mv) — a blocking Run that closes
+// cleanly (no backgrounded process to hold the channel open).
+func (s SSH) deposit(client *ssh.Client, wd, jobid string, req []byte) error {
 	sess, err := client.NewSession()
 	if err != nil {
 		return err
@@ -184,17 +189,49 @@ func (s SSH) startAndDeposit(client *ssh.Client, path, wd, jobid string, req []b
 	sess.Stdin = bytes.NewReader(req)
 	var stderr bytes.Buffer
 	sess.Stderr = &stderr
-
 	reqTmp := fmt.Sprintf("%s/req-%s.json.tmp", wd, jobid)
 	reqFinal := fmt.Sprintf("%s/req-%s.json", wd, jobid)
-	cmd := fmt.Sprintf(
-		"mkdir -p %[1]s && cat > %[2]s && mv %[2]s %[3]s && "+
-			`{ { test -f %[1]s/agent.pid && kill -0 "$(cat %[1]s/agent.pid)" 2>/dev/null; } || `+
-			`{ mkdir %[1]s/lock 2>/dev/null && setsid %[4]s __agent-resident %[1]s %[5]d >/dev/null 2>&1 </dev/null & }; }`,
-		wd, reqTmp, reqFinal, path, s.agentTTLSecs())
+	cmd := fmt.Sprintf("mkdir -p %[1]s && cat > %[2]s && mv %[2]s %[3]s", wd, reqTmp, reqFinal)
 	if err := sess.Run(cmd); err != nil {
-		return fmt.Errorf("deposit/start: %v: %s", err, stderr.String())
+		return fmt.Errorf("deposit: %v: %s", err, stderr.String())
 	}
+	return nil
+}
+
+// agentAlive reports whether OUR resident agent is running. It checks the pid's
+// /proc/<pid>/cmdline, not just kill -0: a dead agent's pid can be recycled by
+// an unrelated process (common in a container), which kill -0 would accept — a
+// false positive that would skip the relaunch and hang the poll.
+func (s SSH) agentAlive(client *ssh.Client, wd string) bool {
+	sess, err := client.NewSession()
+	if err != nil {
+		return false
+	}
+	defer sess.Close()
+	cmd := fmt.Sprintf(`p=$(cat %[1]s/agent.pid 2>/dev/null) && [ -n "$p" ] && grep -qa __agent-resident /proc/$p/cmdline 2>/dev/null`, wd)
+	return sess.Run(cmd) == nil
+}
+
+// launchAgent starts a detached resident agent. It uses Start (not Run) and
+// closes our side after a brief pause: a detached process keeps the exec
+// channel open, so Run would block waiting for it. The setsid'd agent survives
+// the Close (it is in its own session/process-group). No lock: a rare double
+// launch (concurrent runs) is harmless — the agent claims each request
+// atomically, so no request is run twice, and idle duplicates self-kill.
+func (s SSH) launchAgent(client *ssh.Client, path, wd string) error {
+	sess, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	cmd := fmt.Sprintf(
+		`setsid %[1]s __agent-resident %[2]s %[3]d >/dev/null 2>&1 </dev/null &`,
+		path, wd, s.agentTTLSecs())
+	if err := sess.Start(cmd); err != nil {
+		sess.Close()
+		return err
+	}
+	time.Sleep(300 * time.Millisecond) // let the agent write agent.pid and detach
+	sess.Close()                        // best-effort: closing a channel with a detached process may EOF
 	return nil
 }
 

@@ -23,7 +23,6 @@ func ServeResident(workdir, binPath string, ex engine.Executor, ttl time.Duratio
 		return err
 	}
 	_ = os.WriteFile(filepath.Join(workdir, "agent.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600)
-	_ = os.Remove(filepath.Join(workdir, "lock")) // release the launch lock once up
 
 	last := time.Now()
 	for {
@@ -40,21 +39,31 @@ func ServeResident(workdir, binPath string, ex engine.Executor, ttl time.Duratio
 	}
 }
 
-// nextRequest returns one ready request path (req-*.json, ignoring .tmp), or "".
+// nextRequest atomically claims one ready request (req-*.json → .claiming via
+// rename) and returns the claimed path, or "". The rename makes the claim safe
+// if two agents ever race: only one wins, so no request runs twice.
 func nextRequest(workdir string) string {
 	entries, _ := os.ReadDir(workdir)
 	for _, e := range entries {
-		if name := e.Name(); strings.HasPrefix(name, "req-") && strings.HasSuffix(name, ".json") {
-			return filepath.Join(workdir, name)
+		name := e.Name()
+		if !strings.HasPrefix(name, "req-") || !strings.HasSuffix(name, ".json") {
+			continue
 		}
+		src := filepath.Join(workdir, name)
+		claimed := src + ".claiming"
+		if os.Rename(src, claimed) == nil {
+			return claimed
+		}
+		// lost the race (another agent claimed it) — try the next
 	}
 	return ""
 }
 
-// processJob runs a request and writes out-<id>.json (atomically) + done-<id>,
-// then removes the request. The control polls done-<id> and reads out-<id>.
+// processJob runs a claimed request (req-<id>.json.claiming) and writes
+// out-<id>.json (atomically) + done-<id>, then removes the claimed file.
 func processJob(workdir, reqPath string, ex engine.Executor) {
-	id := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(reqPath), "req-"), ".json")
+	base := strings.TrimSuffix(filepath.Base(reqPath), ".claiming")
+	id := strings.TrimSuffix(strings.TrimPrefix(base, "req-"), ".json")
 
 	var resp proto.Response
 	data, err := os.ReadFile(reqPath)
