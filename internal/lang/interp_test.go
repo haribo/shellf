@@ -34,16 +34,18 @@ func TestInterpolationUndefined(t *testing.T) {
 }
 
 func TestInterpolationInBinding(t *testing.T) {
-	// a binding's value may itself interpolate an earlier binding
-	plan, err := ParsePlan(`
-owner = "haribo"
-pair = "${owner}:${owner}"
-on s { dir-owner("/opt", pair) }
-`)
+	// a binding's value may itself interpolate an earlier binding (at parse)
+	base := map[string]string{}
+	plan, err := ParsePlanWithVars("owner = \"haribo\"\npair = \"${owner}:${owner}\"\non s { dir-owner(\"/opt\", pair) }", base, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := plan[0].Steps[0].Args["owner"]; got != "haribo:haribo" {
-		t.Fatalf("binding interpolation: got %q, want haribo:haribo", got)
+	// the binding's value is interpolated at parse and stored in baseVars
+	if base["pair"] != "haribo:haribo" {
+		t.Fatalf("binding interpolation: %+v", base)
+	}
+	// used as a bare identifier → a ref to `pair`, resolved later
+	if got := plan[0].Steps[0].Refs["owner"]; got != "pair" {
+		t.Fatalf("ref: %+v", plan[0].Steps[0])
 	}
 }

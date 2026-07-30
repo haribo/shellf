@@ -23,7 +23,8 @@ func TestRun_CollectsPerHostInOrder(t *testing.T) {
 		return fakeTransport{body: bodies[target]}
 	}
 
-	res := Run([]string{"h1", "h2", "h3"}, "/bin/agent", []byte(`{}`), dial)
+	reqFor := func(string) ([]byte, error) { return []byte(`{}`), nil }
+	res := Run([]string{"h1", "h2", "h3"}, "/bin/agent", reqFor, dial)
 
 	if len(res) != 3 {
 		t.Fatalf("got %d results, want 3", len(res))

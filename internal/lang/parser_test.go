@@ -70,31 +70,30 @@ on server {
   dir-owner("/opt", owner)
 }
 `
-	plan, err := ParsePlan(src)
+	base := map[string]string{}
+	plan, err := ParsePlanWithVars(src, base, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// bare identifiers become refs; string args stay in Args
 	ug := plan[0].Steps[0]
-	if ug.Args["user"] != "haribo" || ug.Args["group"] != "docker" {
-		t.Fatalf("user-group args: %+v", ug.Args)
+	if ug.Refs["user"] != "owner" || ug.Args["group"] != "docker" {
+		t.Fatalf("user-group: %+v", ug)
 	}
-	if do := plan[0].Steps[1]; do.Args["owner"] != "haribo" {
-		t.Fatalf("dir-owner owner: %+v", do.Args)
+	if do := plan[0].Steps[1]; do.Refs["owner"] != "owner" {
+		t.Fatalf("dir-owner: %+v", do)
 	}
-}
-
-func TestParsePlanUndefinedVar(t *testing.T) {
-	if _, err := ParsePlan(`on s { user-group(missing, "docker") }`); err == nil {
-		t.Fatal("expected error for undefined variable")
+	// the top-level binding populated baseVars for later per-host resolution
+	if base["owner"] != "haribo" {
+		t.Fatalf("baseVars: %+v", base)
 	}
 }
 
 func TestParseErrors(t *testing.T) {
 	cases := map[string]func(string) error{
-		`host x = { bogus: "y" }`:        func(s string) error { _, e := ParseInventory(s); return e },
-		`on web { unknown-instr("x") }`:  func(s string) error { _, e := ParsePlan(s); return e },
+		`on web { unknown-instr("x") }`:   func(s string) error { _, e := ParsePlan(s); return e },
 		`on web { apt-install("a","b") }`: func(s string) error { _, e := ParsePlan(s); return e },
-		`host x = { address: "unterm`:    func(s string) error { _, e := ParseInventory(s); return e },
+		`host x = { address: "unterm`:     func(s string) error { _, e := ParseInventory(s); return e },
 	}
 	for src, run := range cases {
 		if err := run(src); err == nil {

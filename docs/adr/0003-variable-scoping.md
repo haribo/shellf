@@ -26,10 +26,10 @@ Immutable binding, **no `let` keyword**. The same syntax applies **everywhere**:
 ### 3. Precedence — 3 levels, no more
 
 ```
---vars global   <   inventory (per-host)   <   CLI --set k=v
+--vars   <   plan binding   <   inventory (per-host)   <   CLI --set
 ```
 
-Deliberately not Ansible's 22-level precedence.
+Increasing specificity: shared vars file `<` the plan `<` the target `<` the CLI. Deliberately not Ansible's 22-level precedence.
 
 ### 4. Reference and interpolation
 
@@ -37,9 +37,14 @@ Deliberately not Ansible's 22-level precedence.
 - **Interpolation `${name}` in simple strings only**: `dir-owner("/opt", "${owner}:${owner}")`.
 - **Triple-quoted strings `"""…"""` are RAW** — no interpolation. Their `${VAR}` are shell/compose variables resolved on the target; interpolating them would corrupt the content.
 
-### 5. Resolution
+### 5. Resolution — split by kind
 
-Variables are resolved **on the control host**. For a plan, resolution happens at parse time (a variable must be defined before use). The agent receives fully-resolved argument values — the wire protocol is unchanged.
+Variables are resolved **on the control host**, but *when* depends on the reference (amended: per-host vars are incompatible with pure parse-time resolution, since the host is unknown at parse):
+
+- **Interpolation `${name}`** and a **plan binding's value** resolve **at parse time**, against the globals known then (`--vars`, `--set`, earlier bindings). Consequence: a `${name}` cannot reference a per-host var — interpolation is **global-only**.
+- **Bare-identifier arguments** (`dir-owner("/opt", owner)`) are **not** resolved at parse; they are carried as unresolved refs (`proto.Step.Refs`) and resolved **per host at orchestration time**, with the full §3 precedence. This is what lets a per-host inventory var override a global. An undefined bare ref is therefore reported at **orchestration**, not parse.
+
+The agent still receives fully-resolved argument values — the control↔agent wire protocol is unchanged (refs are resolved into `Args` before the Request is sent).
 
 ## Rejected alternatives
 
