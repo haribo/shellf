@@ -17,6 +17,22 @@ import (
 func ResolveRefs(steps []Step, env map[string]string) ([]Step, error) {
 	out := make([]Step, len(steps))
 	for i, s := range steps {
+		if s.If != nil {
+			cond, err := ResolveRefs([]Step{*s.If.Cond}, env)
+			if err != nil {
+				return nil, err
+			}
+			then, err := ResolveRefs(s.If.Then, env)
+			if err != nil {
+				return nil, err
+			}
+			els, err := ResolveRefs(s.If.Else, env)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = Step{If: &IfBlock{Cond: &cond[0], Then: then, Else: els}}
+			continue
+		}
 		if len(s.Parallel) > 0 {
 			sub, err := ResolveRefs(s.Parallel, env)
 			if err != nil {
@@ -50,10 +66,22 @@ type Step struct {
 	Args        map[string]string `json:"args,omitempty"`
 	Refs        map[string]string `json:"refs,omitempty"`
 	Parallel    []Step            `json:"parallel,omitempty"`
+	If          *IfBlock          `json:"if,omitempty"`
+}
+
+// IfBlock is a conditional: run Cond (an instruction), then take Then on its
+// Result `.ok`, else Else. The agent evaluates it on the target.
+type IfBlock struct {
+	Cond *Step  `json:"cond"`
+	Then []Step `json:"then"`
+	Else []Step `json:"else,omitempty"`
 }
 
 // Label is a compact human-readable form for reports.
 func (s Step) Label() string {
+	if s.If != nil {
+		return "if(" + s.If.Cond.Label() + ")"
+	}
 	if len(s.Parallel) > 0 {
 		return "parallel"
 	}

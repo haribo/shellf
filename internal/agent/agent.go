@@ -25,20 +25,51 @@ func Serve(in io.Reader, out io.Writer, ex engine.Executor) error {
 		return write(out, proto.Response{Error: fmt.Sprintf("decode: %v", err)})
 	}
 
-	m := mode(req.Mode)
-	var resp proto.Response
-	for _, step := range req.Steps {
+	results, halted := runSteps(req.Steps, ex, mode(req.Mode))
+	return write(out, proto.Response{Results: results, Halted: halted})
+}
+
+// runSteps executes a sequence, halting on the first err (the halting rule).
+func runSteps(steps []proto.Step, ex engine.Executor, m engine.Mode) (results []proto.StepResult, halted bool) {
+	for _, step := range steps {
 		sr := runStep(step, ex, m)
-		resp.Results = append(resp.Results, sr)
+		results = append(results, sr)
 		if sr.Category == "err" {
-			resp.Halted = true
+			halted = true
 			break
 		}
 	}
-	return write(out, resp)
+	return results, halted
+}
+
+// runIf evaluates the condition instruction, then takes the branch on its
+// Result `.ok`. In check, a would-condition (effect not applied) makes the
+// branch undetermined — the then-branch is previewed but never claimed to run.
+func runIf(ib *proto.IfBlock, ex engine.Executor, m engine.Mode) proto.StepResult {
+	cond := runStep(*ib.Cond, ex, m)
+	label := "if(" + ib.Cond.Label() + ")"
+
+	if m == engine.Check && cond.Category == "would" {
+		preview, _ := runSteps(ib.Then, ex, m)
+		return proto.StepResult{Label: label, Category: "undetermined", Sub: append([]proto.StepResult{cond}, preview...)}
+	}
+
+	branch := ib.Else // cond err/false → else (a captured result never halts)
+	if cond.Category == "ok" {
+		branch = ib.Then
+	}
+	subs, halted := runSteps(branch, ex, m)
+	cat := "ok"
+	if halted {
+		cat = "err"
+	}
+	return proto.StepResult{Label: label, Category: cat, Sub: append([]proto.StepResult{cond}, subs...)}
 }
 
 func runStep(step proto.Step, ex engine.Executor, m engine.Mode) proto.StepResult {
+	if step.If != nil {
+		return runIf(step.If, ex, m)
+	}
 	if len(step.Parallel) > 0 {
 		subs := make([]proto.StepResult, len(step.Parallel))
 		var wg sync.WaitGroup

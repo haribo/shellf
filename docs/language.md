@@ -97,3 +97,20 @@ file-write("/app/compose.yaml", """
 - **Precedence**: `--vars` `<` plan binding `<` inventory (per-host) `<` CLI `--set`. A **bare-identifier** argument resolves **per host at orchestration time** (so a per-host inventory var can override a global); an undefined one errors at orchestration. `${name}` **interpolation is global** (resolved at parse) — a per-host var cannot be interpolated. Per-host vars are free-form fields in the inventory: `host web1 = { address: "…", owner: "alice" }`.
 
 See [ADR-0003](adr/0003-variable-scoping.md).
+
+## Control flow — `if` / `else`
+
+```
+if dir-create("/opt/app") {     // condition = an instruction; branch on its Result .ok
+  apt-install("nginx")
+} else {
+  apt-install("apache")
+}
+```
+
+- The **condition is an instruction** (or a `shell` block); the branch is taken on its Result `.ok`.
+- The condition runs **on the target** — the agent interprets the flow.
+- A failing condition takes `else` (or is skipped): the `if` **captures** the result, so it does **not** halt (halting rule).
+- **Preview** (`--check`): a `would` condition (an effect not applied) makes the branch **`undetermined`** — honest, never guessed. An `ok`/`err` condition is deterministic. See [ADR-0004](adr/0004-control-flow-preview.md).
+
+Put the effect **inside** the `if` (not a separate action followed by a `test`) so the preview stays honest.

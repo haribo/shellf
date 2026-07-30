@@ -246,9 +246,12 @@ func (p *parser) block() []proto.Step {
 }
 
 func (p *parser) step() proto.Step {
-	// `shell` is a special form (raw capture), handled before the call() path.
+	// `shell` and `if` are special forms, handled before the call() path.
 	if p.tok.kind == tIdent && p.tok.val == "shell" {
 		return p.shellStep()
+	}
+	if p.tok.kind == tIdent && p.tok.val == "if" {
+		return p.ifStep()
 	}
 	name := p.expect(tIdent, "instruction or 'parallel'").val
 	if p.tok.kind == tDot { // qualified call: module.instruction
@@ -260,6 +263,20 @@ func (p *parser) step() proto.Step {
 		return proto.Step{Parallel: p.block()}
 	}
 	return p.call(name)
+}
+
+// ifStep parses `if <call> { then } [else { else }]`. The condition is a step
+// (an instruction call, or a shell); the branch is taken on its Result `.ok`.
+func (p *parser) ifStep() proto.Step {
+	p.adv() // consume 'if'
+	cond := p.step()
+	then := p.block()
+	var els []proto.Step
+	if p.tok.kind == tIdent && p.tok.val == "else" {
+		p.adv()
+		els = p.block()
+	}
+	return proto.Step{If: &proto.IfBlock{Cond: &cond, Then: then, Else: els}}
 }
 
 // shellStep parses `shell <line>` or `shell { … }` with an optional
