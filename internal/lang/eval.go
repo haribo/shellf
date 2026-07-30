@@ -41,22 +41,33 @@ func EvalDef(def Def, args map[string]string, ex engine.Executor, mode engine.Mo
 	}
 
 	if mode == engine.Check {
-		return engine.Would(retTag(def)), nil
+		r := engine.Would(retTag(def))
+		r.Changed = true // it would act
+		return r, nil
 	}
 
 	// Pass 2: effectful phases.
 	for _, ph := range def.Phases {
 		if ph.Name == "apply" || ph.Name == "post" {
 			if o := ev.evalPhase(ph); o != nil {
-				return ev.toResult(*o), nil
+				return changedIfOK(ev.toResult(*o)), nil
 			}
 		}
 	}
 
 	if def.Return != nil {
-		return ev.toResult(*def.Return), nil
+		return changedIfOK(ev.toResult(*def.Return)), nil
 	}
-	return engine.Ok(""), nil
+	return changedIfOK(engine.Ok("")), nil
+}
+
+// changedIfOK marks a Result Changed when it comes from a run apply (not a
+// guard skip) and did not err.
+func changedIfOK(r engine.Result) engine.Result {
+	if r.Category == engine.OK {
+		r.Changed = true
+	}
+	return r
 }
 
 func retTag(def Def) string {

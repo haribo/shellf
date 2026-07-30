@@ -114,3 +114,17 @@ if dir-create("/opt/app") {     // condition = an instruction; branch on its Res
 - **Preview** (`--check`): a `would` condition (an effect not applied) makes the branch **`undetermined`** — honest, never guessed. An `ok`/`err` condition is deterministic. See [ADR-0004](adr/0004-control-flow-preview.md).
 
 Put the effect **inside** the `if` (not a separate action followed by a `test`) so the preview stays honest.
+
+### Capturing a result
+
+```
+x = dir-ensure("/opt/app")   // capture the instruction's Result under `x`
+if x.changed {               // acted this run (apply ran, not a guard-skip)
+  service("nginx", true, true)
+}
+if x { … }                   // `if x` is sugar for `if x.ok`
+```
+
+- `.ok` = the instruction succeeded; `.changed` = it actually acted (apply ran, not skipped by its guard).
+- In `--check`, a captured `would` result makes `if x.ok` / `if x.changed` **`undetermined`** — same never-lie rule.
+- A capture is block-scoped; capturing an `if`/`parallel` is rejected.

@@ -18,9 +18,13 @@ func ResolveRefs(steps []Step, env map[string]string) ([]Step, error) {
 	out := make([]Step, len(steps))
 	for i, s := range steps {
 		if s.If != nil {
-			cond, err := ResolveRefs([]Step{*s.If.Cond}, env)
-			if err != nil {
-				return nil, err
+			var cond *Step
+			if s.If.Cond != nil {
+				resolved, err := ResolveRefs([]Step{*s.If.Cond}, env)
+				if err != nil {
+					return nil, err
+				}
+				cond = &resolved[0]
 			}
 			then, err := ResolveRefs(s.If.Then, env)
 			if err != nil {
@@ -30,7 +34,7 @@ func ResolveRefs(steps []Step, env map[string]string) ([]Step, error) {
 			if err != nil {
 				return nil, err
 			}
-			out[i] = Step{If: &IfBlock{Cond: &cond[0], Then: then, Else: els}}
+			out[i] = Step{If: &IfBlock{Cond: cond, CondRef: s.If.CondRef, Then: then, Else: els}}
 			continue
 		}
 		if len(s.Parallel) > 0 {
@@ -65,21 +69,33 @@ type Step struct {
 	Instruction string            `json:"instruction,omitempty"`
 	Args        map[string]string `json:"args,omitempty"`
 	Refs        map[string]string `json:"refs,omitempty"`
+	Bind        string            `json:"bind,omitempty"` // capture this step's Result under this name
 	Parallel    []Step            `json:"parallel,omitempty"`
 	If          *IfBlock          `json:"if,omitempty"`
 }
 
-// IfBlock is a conditional: run Cond (an instruction), then take Then on its
-// Result `.ok`, else Else. The agent evaluates it on the target.
+// IfBlock is a conditional. The condition is either Cond (an instruction run
+// inline, branch on its Result `.ok`) or CondRef (a field of a previously
+// captured Result). Exactly one is set.
 type IfBlock struct {
-	Cond *Step  `json:"cond"`
-	Then []Step `json:"then"`
-	Else []Step `json:"else,omitempty"`
+	Cond    *Step      `json:"cond,omitempty"`
+	CondRef *ResultRef `json:"condRef,omitempty"`
+	Then    []Step     `json:"then"`
+	Else    []Step     `json:"else,omitempty"`
+}
+
+// ResultRef references a field (`ok` | `changed`) of a captured Result.
+type ResultRef struct {
+	Name  string `json:"name"`
+	Field string `json:"field"`
 }
 
 // Label is a compact human-readable form for reports.
 func (s Step) Label() string {
 	if s.If != nil {
+		if s.If.CondRef != nil {
+			return "if(" + s.If.CondRef.Name + "." + s.If.CondRef.Field + ")"
+		}
 		return "if(" + s.If.Cond.Label() + ")"
 	}
 	if len(s.Parallel) > 0 {
@@ -120,6 +136,7 @@ type StepResult struct {
 	Label    string              `json:"label"`
 	Category string              `json:"category"`
 	Tag      string              `json:"tag,omitempty"`
+	Changed  bool                `json:"changed,omitempty"`
 	Shell    *engine.ShellResult `json:"shell,omitempty"`
 	Sub      []StepResult        `json:"sub,omitempty"`
 }

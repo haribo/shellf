@@ -254,6 +254,15 @@ func (p *parser) step() proto.Step {
 		return p.ifStep()
 	}
 	name := p.expect(tIdent, "instruction or 'parallel'").val
+	if p.tok.kind == tEq { // capture: name = <call>
+		p.adv()
+		rhs := p.step()
+		if rhs.If != nil || len(rhs.Parallel) > 0 {
+			p.fail("cannot capture an if/parallel block into a variable")
+		}
+		rhs.Bind = name
+		return rhs
+	}
 	if p.tok.kind == tDot { // qualified call: module.instruction
 		p.adv()
 		name = name + "." + p.expect(tIdent, "instruction name").val
@@ -269,14 +278,46 @@ func (p *parser) step() proto.Step {
 // (an instruction call, or a shell); the branch is taken on its Result `.ok`.
 func (p *parser) ifStep() proto.Step {
 	p.adv() // consume 'if'
-	cond := p.step()
-	then := p.block()
-	var els []proto.Step
+	ib := &proto.IfBlock{}
+	if cond, ref := p.condition(); ref != nil {
+		ib.CondRef = ref
+	} else {
+		ib.Cond = cond
+	}
+	ib.Then = p.block()
 	if p.tok.kind == tIdent && p.tok.val == "else" {
 		p.adv()
-		els = p.block()
+		ib.Else = p.block()
 	}
-	return proto.Step{If: &proto.IfBlock{Cond: &cond, Then: then, Else: els}}
+	return proto.Step{If: ib}
+}
+
+// condition parses an if condition: an instruction (call or shell) run inline,
+// or a reference to a captured Result's field (`s1.ok`, `s1.changed`, or bare
+// `s1` = `s1.ok`).
+func (p *parser) condition() (*proto.Step, *proto.ResultRef) {
+	if p.tok.kind == tIdent && p.tok.val == "shell" {
+		s := p.shellStep()
+		return &s, nil
+	}
+	name := p.expect(tIdent, "condition").val
+	if p.tok.kind == tDot {
+		p.adv()
+		second := p.expect(tIdent, "field or instruction").val
+		if p.tok.kind == tLParen { // qualified call: name.second(...)
+			s := p.call(name + "." + second)
+			return &s, nil
+		}
+		if second != "ok" && second != "changed" {
+			p.fail("unknown result field %q (want ok or changed)", second)
+		}
+		return nil, &proto.ResultRef{Name: name, Field: second}
+	}
+	if p.tok.kind == tLParen { // call: name(...)
+		s := p.call(name)
+		return &s, nil
+	}
+	return nil, &proto.ResultRef{Name: name, Field: "ok"} // `if s1 {` → s1.ok
 }
 
 // shellStep parses `shell <line>` or `shell { … }` with an optional

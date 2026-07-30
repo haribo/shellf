@@ -38,10 +38,15 @@ func Run(inst Instruction, ex Executor, mode Mode) Result {
 	}
 	if mode == Check {
 		res := Would(inst.ChangedTag()) // derived, never authored
+		res.Changed = true              // it would act
 		if p := inst.Preview(ex); p != nil {
 			res.Shell = p // e.g. the diff a file-copy would apply
 		}
 		return res
 	}
-	return inst.Apply(ex)
+	r := inst.Apply(ex)
+	if r.Category == OK {
+		r.Changed = true // apply ran and succeeded
+	}
+	return r
 }

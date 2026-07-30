@@ -25,14 +25,15 @@ func Serve(in io.Reader, out io.Writer, ex engine.Executor) error {
 		return write(out, proto.Response{Error: fmt.Sprintf("decode: %v", err)})
 	}
 
-	results, halted := runSteps(req.Steps, ex, mode(req.Mode))
+	results, halted := runSteps(req.Steps, ex, mode(req.Mode), map[string]engine.Result{})
 	return write(out, proto.Response{Results: results, Halted: halted})
 }
 
 // runSteps executes a sequence, halting on the first err (the halting rule).
-func runSteps(steps []proto.Step, ex engine.Executor, m engine.Mode) (results []proto.StepResult, halted bool) {
+// scope holds the Results captured by `name = <call>` steps in this block.
+func runSteps(steps []proto.Step, ex engine.Executor, m engine.Mode, scope map[string]engine.Result) (results []proto.StepResult, halted bool) {
 	for _, step := range steps {
-		sr := runStep(step, ex, m)
+		sr := runStep(step, ex, m, scope)
 		results = append(results, sr)
 		if sr.Category == "err" {
 			halted = true
@@ -45,37 +46,74 @@ func runSteps(steps []proto.Step, ex engine.Executor, m engine.Mode) (results []
 // runIf evaluates the condition instruction, then takes the branch on its
 // Result `.ok`. In check, a would-condition (effect not applied) makes the
 // branch undetermined — the then-branch is previewed but never claimed to run.
-func runIf(ib *proto.IfBlock, ex engine.Executor, m engine.Mode) proto.StepResult {
-	cond := runStep(*ib.Cond, ex, m)
-	label := "if(" + ib.Cond.Label() + ")"
+func runIf(ib *proto.IfBlock, ex engine.Executor, m engine.Mode, scope map[string]engine.Result) proto.StepResult {
+	var condResult engine.Result
+	var condSub *proto.StepResult // the inline cond's own result, shown in Sub
+	field := "ok"
+	var label string
 
-	if m == engine.Check && cond.Category == "would" {
-		preview, _ := runSteps(ib.Then, ex, m)
-		return proto.StepResult{Label: label, Category: "undetermined", Sub: append([]proto.StepResult{cond}, preview...)}
+	if ib.CondRef != nil {
+		label = "if(" + ib.CondRef.Name + "." + ib.CondRef.Field + ")"
+		r, ok := scope[ib.CondRef.Name]
+		if !ok {
+			return proto.StepResult{Label: label, Category: "err", Tag: "undefinedResult"}
+		}
+		condResult = r
+		field = ib.CondRef.Field
+	} else {
+		label = "if(" + ib.Cond.Label() + ")"
+		res, err := runInstruction(*ib.Cond, ex, m)
+		if err != nil {
+			return proto.StepResult{Label: label, Category: "err", Tag: "agent"}
+		}
+		condResult = res
+		condSub = &proto.StepResult{Label: ib.Cond.Label(), Category: res.Category.String(), Tag: res.Tag, Changed: res.Changed, Shell: res.Shell}
 	}
 
-	branch := ib.Else // cond err/false → else (a captured result never halts)
-	if cond.Category == "ok" {
+	// Never-lie: an unapplied action's result is undetermined in check.
+	if m == engine.Check && condResult.Category == engine.WOULD {
+		preview, _ := runSteps(ib.Then, ex, m, scope)
+		return proto.StepResult{Label: label, Category: "undetermined", Sub: withCond(condSub, preview)}
+	}
+
+	branch := ib.Else // false/err → else (a captured result never halts)
+	if fieldTruth(condResult, field) {
 		branch = ib.Then
 	}
-	subs, halted := runSteps(branch, ex, m)
+	subs, halted := runSteps(branch, ex, m, scope)
 	cat := "ok"
 	if halted {
 		cat = "err"
 	}
-	return proto.StepResult{Label: label, Category: cat, Sub: append([]proto.StepResult{cond}, subs...)}
+	return proto.StepResult{Label: label, Category: cat, Sub: withCond(condSub, subs)}
 }
 
-func runStep(step proto.Step, ex engine.Executor, m engine.Mode) proto.StepResult {
+func fieldTruth(r engine.Result, field string) bool {
+	if field == "changed" {
+		return r.Changed
+	}
+	return r.Category == engine.OK
+}
+
+func withCond(cond *proto.StepResult, subs []proto.StepResult) []proto.StepResult {
+	if cond == nil {
+		return subs
+	}
+	return append([]proto.StepResult{*cond}, subs...)
+}
+
+func runStep(step proto.Step, ex engine.Executor, m engine.Mode, scope map[string]engine.Result) proto.StepResult {
 	if step.If != nil {
-		return runIf(step.If, ex, m)
+		return runIf(step.If, ex, m, scope)
 	}
 	if len(step.Parallel) > 0 {
 		subs := make([]proto.StepResult, len(step.Parallel))
 		var wg sync.WaitGroup
 		for i, b := range step.Parallel {
 			wg.Add(1)
-			go func(i int, b proto.Step) { defer wg.Done(); subs[i] = runStep(b, ex, m) }(i, b)
+			// Each branch gets a copy of the scope: reads see prior captures,
+			// writes stay local (no data race; captures inside parallel don't escape).
+			go func(i int, b proto.Step) { defer wg.Done(); subs[i] = runStep(b, ex, m, copyScope(scope)) }(i, b)
 		}
 		wg.Wait()
 
@@ -92,7 +130,18 @@ func runStep(step proto.Step, ex engine.Executor, m engine.Mode) proto.StepResul
 	if err != nil {
 		return proto.StepResult{Label: step.Label(), Category: "err", Tag: "agent"}
 	}
-	return proto.StepResult{Label: step.Label(), Category: res.Category.String(), Tag: res.Tag, Shell: res.Shell}
+	if step.Bind != "" {
+		scope[step.Bind] = res
+	}
+	return proto.StepResult{Label: step.Label(), Category: res.Category.String(), Tag: res.Tag, Changed: res.Changed, Shell: res.Shell}
+}
+
+func copyScope(s map[string]engine.Result) map[string]engine.Result {
+	c := make(map[string]engine.Result, len(s))
+	for k, v := range s {
+		c[k] = v
+	}
+	return c
 }
 
 // runInstruction resolves an instruction to an embedded stdlib def (run by the
