@@ -94,6 +94,6 @@ file-write("/app/compose.yaml", """
 ```
 
 - **Scope**: lexical, with lexical shadowing (a file may shadow a global, confined to that file — no dynamic scoping).
-- **Precedence**: `--vars` global `<` inventory (per-host) `<` CLI `--set k=v`.
+- **Precedence**: `--vars` global `<` inventory (per-host) `<` CLI `--set k=v`. Per-host inventory vars need orchestration-time resolution (planned) — `--vars`/`--set` (global, parse-time) ship first.
 
 See [ADR-0003](adr/0003-variable-scoping.md).
