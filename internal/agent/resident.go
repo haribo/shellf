@@ -16,8 +16,9 @@ const pollInterval = 200 * time.Millisecond
 
 // ServeResident runs the agent as a detached resident (ADR-0005): it watches
 // workdir for request files, processes each, and after `ttl` of inactivity
-// cleans up (workdir + its own binary) and exits.
-func ServeResident(workdir string, ex engine.Executor, ttl time.Duration) error {
+// erases everything (workdir + its own binary at binPath) and exits — leaving
+// no trace of shellf. binPath is injectable so tests don't delete themselves.
+func ServeResident(workdir, binPath string, ex engine.Executor, ttl time.Duration) error {
 	if err := os.MkdirAll(workdir, 0o700); err != nil {
 		return err
 	}
@@ -32,7 +33,7 @@ func ServeResident(workdir string, ex engine.Executor, ttl time.Duration) error 
 			continue
 		}
 		if time.Since(last) > ttl {
-			cleanup(workdir)
+			cleanup(workdir, binPath)
 			return nil
 		}
 		time.Sleep(pollInterval)
@@ -77,10 +78,12 @@ func processJob(workdir, reqPath string, ex engine.Executor) {
 	_ = os.Remove(reqPath) // consumed
 }
 
-// cleanup removes the workdir (residues) on self-kill. The cached BINARY is
-// deliberately KEPT — deleting it would force a re-transfer on the next run
-// (e.g. a morning run then an evening run). The binary is purged separately
-// (an explicit `clean`, or reboot clearing /tmp). See ADR-0005.
-func cleanup(workdir string) {
+// cleanup erases everything on self-kill: the workdir (residues) and the agent
+// binary → zero trace of shellf after inactivity (ADR-0005). The long, settable
+// TTL — not a kept binary — is what avoids re-transfer during activity.
+func cleanup(workdir, binPath string) {
 	os.RemoveAll(workdir)
+	if binPath != "" {
+		os.Remove(binPath)
+	}
 }

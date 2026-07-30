@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,9 +30,16 @@ func main() {
 	}
 
 	// Resident agent: detached loop over file requests in a workdir (ADR-0005).
+	// Args: __agent-resident <workdir> [ttl-seconds].
 	if len(os.Args) > 2 && os.Args[1] == "__agent-resident" {
-		const ttl = 10 * time.Minute // PR3: make configurable
-		if err := agent.ServeResident(os.Args[2], engine.ShellExecutor{}, ttl); err != nil {
+		ttl := 2 * time.Hour // default; overridden by the arg
+		if len(os.Args) > 3 {
+			if secs, err := strconv.Atoi(os.Args[3]); err == nil && secs > 0 {
+				ttl = time.Duration(secs) * time.Second
+			}
+		}
+		self, _ := os.Executable()
+		if err := agent.ServeResident(os.Args[2], self, engine.ShellExecutor{}, ttl); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -116,6 +124,7 @@ func runCmd(args []string) {
 	check := fs.Bool("check", false, "dry-run: decide without mutating")
 	insecure := fs.Bool("insecure", false, "skip host-key verification (dev only)")
 	knownHosts := fs.String("known-hosts", "", "known_hosts path (default ~/.ssh/known_hosts)")
+	agentTTL := fs.Duration("agent-ttl", 0, "resident agent inactivity TTL before it self-erases (0 = 2h)")
 	fs.Parse(args)
 
 	if fs.NArg() < 1 || *invPath == "" {
@@ -167,7 +176,7 @@ func runCmd(args []string) {
 		h, _ := inv.Resolve(alias)
 		return transport.SSH{
 			User: h.User, Host: h.Address, Port: h.Port, Key: h.Key,
-			KnownHosts: *knownHosts, Insecure: *insecure,
+			KnownHosts: *knownHosts, Insecure: *insecure, AgentTTL: *agentTTL,
 		}
 	}
 
