@@ -25,9 +25,10 @@ const (
 	tColon
 	tComma
 	tDot
-	tEqEq  // ==
-	tNotEq // !=
-	tArrow // ->
+	tEqEq      // ==
+	tNotEq     // !=
+	tArrow     // ->
+	tRawString // """ … """ — raw, never interpolated
 )
 
 type token struct {
@@ -165,7 +166,7 @@ func (l *lexer) lexTripleString(line, col int) (token, error) {
 	for i := 0; i < end+3; i++ {
 		l.adv() // content + closing """
 	}
-	return token{tString, dedentTriple(s), line, col}, nil
+	return token{tRawString, dedentTriple(s), line, col}, nil
 }
 
 // dedentTriple strips the block's indentation from a multi-line triple-quoted
