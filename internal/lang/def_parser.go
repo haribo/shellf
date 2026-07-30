@@ -143,7 +143,7 @@ func (p *parser) postfix() Expr {
 
 func (p *parser) primary() Expr {
 	switch p.tok.kind {
-	case tString:
+	case tString, tRawString:
 		v := p.tok.val
 		p.adv()
 		return StrLit{Value: v}

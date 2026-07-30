@@ -2,6 +2,7 @@ package lang
 
 import (
 	"fmt"
+	"strings"
 
 	"shellf/internal/inventory"
 	"shellf/internal/orchestrator"
@@ -268,12 +269,17 @@ func (p *parser) call(name string) proto.Step {
 	return proto.Step{Instruction: name, Args: args}
 }
 
-// arg accepts a quoted string, a bare bool literal (true/false), or a variable
-// reference (a bare identifier resolved against the plan's bindings). All are
-// kept as their string form.
+// arg accepts a simple string (with `${name}` interpolation), a raw
+// triple-quoted string (never interpolated), a bare bool literal (true/false),
+// or a variable reference (a bare identifier resolved against the plan's
+// bindings). All are kept as their string form.
 func (p *parser) arg() string {
 	switch {
 	case p.tok.kind == tString:
+		v := p.interpolate(p.tok.val)
+		p.adv()
+		return v
+	case p.tok.kind == tRawString:
 		v := p.tok.val
 		p.adv()
 		return v
@@ -292,5 +298,32 @@ func (p *parser) arg() string {
 	default:
 		p.fail("expected a string, bool, or variable argument, got %q", p.tok.val)
 		return "" // unreachable
+	}
+}
+
+// interpolate replaces every `${name}` in a simple string with the bound value,
+// failing on an unterminated `${` or an undefined name. Raw triple-quoted
+// strings never reach here, so their `${VAR}` (shell/compose) stay verbatim.
+func (p *parser) interpolate(s string) string {
+	var out strings.Builder
+	for {
+		i := strings.Index(s, "${")
+		if i < 0 {
+			out.WriteString(s)
+			return out.String()
+		}
+		out.WriteString(s[:i])
+		rest := s[i+2:]
+		end := strings.IndexByte(rest, '}')
+		if end < 0 {
+			p.fail("unterminated ${...} interpolation")
+		}
+		name := rest[:end]
+		v, ok := p.vars[name]
+		if !ok {
+			p.fail("undefined variable %q in interpolation", name)
+		}
+		out.WriteString(v)
+		s = rest[end+1:]
 	}
 }
