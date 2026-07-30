@@ -43,11 +43,36 @@ func ParseInventory(src string) (inv inventory.Inventory, err error) {
 }
 
 // ParsePlan parses a plan file into an orchestration Plan.
-func ParsePlan(src string) (plan orchestrator.Plan, err error) {
+func ParsePlan(src string) (orchestrator.Plan, error) {
+	return ParsePlanWithVars(src, nil, nil)
+}
+
+// ParsePlanWithVars parses a plan with pre-loaded global variables. `globals`
+// seed the binding table (from a --vars file, then --set overriding it);
+// `setKeys` are the keys pinned by --set, which a plan-level binding cannot
+// override. Precedence: --vars < plan binding < --set.
+func ParsePlanWithVars(src string, globals map[string]string, setKeys map[string]bool) (plan orchestrator.Plan, err error) {
 	defer catch(&err)
 	p := newParser(src)
+	for k, v := range globals {
+		p.vars[k] = v
+	}
+	p.setKeys = setKeys
 	plan = p.plan()
 	return
+}
+
+// ParseVars parses a file of `name = value` bindings (a --vars file) into a
+// map. Later bindings may reference earlier ones (resolved in order).
+func ParseVars(src string) (vars map[string]string, err error) {
+	defer catch(&err)
+	p := newParser(src)
+	for p.tok.kind != tEOF {
+		name := p.expect(tIdent, "variable name").val
+		p.expect(tEq, "=")
+		p.vars[name] = p.arg()
+	}
+	return p.vars, nil
 }
 
 // --- parser ---
@@ -65,9 +90,10 @@ func catch(dst *error) {
 }
 
 type parser struct {
-	lex  *lexer
-	tok  token
-	vars map[string]string // plan-level bindings, resolved at parse time
+	lex     *lexer
+	tok     token
+	vars    map[string]string // bindings, resolved at parse time
+	setKeys map[string]bool   // keys pinned by --set: a plan binding cannot override them
 }
 
 func newParser(src string) *parser {
@@ -184,7 +210,10 @@ func (p *parser) plan() orchestrator.Plan {
 		if kw != "on" {
 			// Top-level binding: `name = value` (value is a string, bool, or var ref).
 			p.expect(tEq, "=")
-			p.vars[kw] = p.arg()
+			v := p.arg()
+			if !p.setKeys[kw] { // --set pins the value; a plan binding cannot override it
+				p.vars[kw] = v
+			}
 			continue
 		}
 		target := p.expect(tIdent, "group or host").val

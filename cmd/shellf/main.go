@@ -99,13 +99,16 @@ func main() {
 func runCmd(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	invPath := fs.String("inventory", "", "inventory file (required)")
+	varsPath := fs.String("vars", "", "vars file: global `name = value` bindings")
+	var sets kvFlags
+	fs.Var(&sets, "set", "override a variable, k=v (repeatable); wins over --vars and plan bindings")
 	check := fs.Bool("check", false, "dry-run: decide without mutating")
 	insecure := fs.Bool("insecure", false, "skip host-key verification (dev only)")
 	knownHosts := fs.String("known-hosts", "", "known_hosts path (default ~/.ssh/known_hosts)")
 	fs.Parse(args)
 
 	if fs.NArg() < 1 || *invPath == "" {
-		fmt.Fprintln(os.Stderr, "usage: shellf run --inventory <hosts.shellf> [--check] [--insecure] <plan.shellf>")
+		fmt.Fprintln(os.Stderr, "usage: shellf run --inventory <hosts.shellf> [--vars <f>] [--set k=v] [--check] [--insecure] <plan.shellf>")
 		os.Exit(2)
 	}
 
@@ -120,7 +123,12 @@ func runCmd(args []string) {
 		os.Exit(1)
 	}
 
-	plan, err := lang.ParsePlan(string(planSrc))
+	globals, setKeys, err := loadGlobals(*varsPath, sets)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	plan, err := lang.ParsePlanWithVars(string(planSrc), globals, setKeys)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", fs.Arg(0), err)
 		os.Exit(1)
@@ -151,6 +159,38 @@ func runCmd(args []string) {
 	}
 
 	printReports(orchestrator.Run(plan, inv, self, mode, dial))
+}
+
+// kvFlags collects repeatable --set k=v flags.
+type kvFlags []string
+
+func (k *kvFlags) String() string     { return strings.Join(*k, ",") }
+func (k *kvFlags) Set(v string) error { *k = append(*k, v); return nil }
+
+// loadGlobals builds the global variable table: the --vars file first, then
+// --set overrides (which also pin their keys against plan bindings).
+func loadGlobals(varsPath string, sets kvFlags) (map[string]string, map[string]bool, error) {
+	globals := map[string]string{}
+	if varsPath != "" {
+		src, err := os.ReadFile(varsPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		globals, err = lang.ParseVars(string(src))
+		if err != nil {
+			return nil, nil, fmt.Errorf("%s: %v", varsPath, err)
+		}
+	}
+	setKeys := map[string]bool{}
+	for _, kv := range sets {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok || k == "" {
+			return nil, nil, fmt.Errorf("--set expects k=v, got %q", kv)
+		}
+		globals[k] = v
+		setKeys[k] = true
+	}
+	return globals, setKeys, nil
 }
 
 func buildSteps(pkgs []string, par, copy string) []proto.Step {
