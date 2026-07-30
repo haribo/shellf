@@ -44,6 +44,23 @@ func TestAgentIf_ElseOnErr(t *testing.T) {
 	}
 }
 
+func TestAgentIf_QuestionDeterministicInCheck(t *testing.T) {
+	// A read-only question (dir-exists) resolves in check → the if is
+	// deterministic (NOT undetermined), unlike an effectful instruction.
+	f := newFake()
+	f.set(`test -d "$path"`, "", 0) // dir present → ok.present
+	f.set("thencmd", "", 0)
+	steps := []proto.Step{{If: &proto.IfBlock{
+		Cond: &proto.Step{Instruction: "dir-exists", Args: map[string]string{"path": "/opt"}},
+		Then: []proto.Step{{Instruction: "shell", Args: map[string]string{"cmd": "thencmd"}}},
+	}}}
+	resp := serve(t, f, proto.Request{Mode: "check", Steps: steps})
+
+	if resp.Results[0].Category != "ok" {
+		t.Fatalf("question condition must be deterministic (present → then), got %+v", resp.Results[0])
+	}
+}
+
 func TestAgentIf_UndeterminedInCheck(t *testing.T) {
 	f := newFake()
 	// the cond shell has no guard → would in check → undetermined branch

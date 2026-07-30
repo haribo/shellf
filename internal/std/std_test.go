@@ -42,7 +42,7 @@ func TestStdlib_AllPresent(t *testing.T) {
 	for _, name := range []string{
 		"apt-install", "file-download", "archive-extract", "git-clone",
 		"dir-ensure", "file-write", "file-line", "file-delete",
-		"user-group", "dir-owner",
+		"user-group", "dir-owner", "dir-exists", "file-exists",
 		"docker.install", "docker.network", "docker.compose-up", "ufw.open", "ufw.enable",
 	} {
 		if _, ok := Lookup(name); !ok {
@@ -127,6 +127,19 @@ func TestUserOwnerUfwEnable(t *testing.T) {
 	// ufw.enable: inactive → enable
 	if got := eval(t, "ufw.enable", nil, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.enabled" {
 		t.Fatalf("ufw.enable apply: got %s, want ok.enabled", got)
+	}
+}
+
+func TestReadOnlyQuestions(t *testing.T) {
+	// A question resolves in pass 1: deterministic even in CHECK (never `would`).
+	if got := eval(t, "dir-exists", map[string]string{"path": "/opt"}, &fakeExec{guardExit: 0}, engine.Check).String(); got != "ok.present" {
+		t.Fatalf("dir-exists present in check: got %s, want ok.present", got)
+	}
+	if got := eval(t, "dir-exists", map[string]string{"path": "/opt"}, &fakeExec{guardExit: 1}, engine.Check).String(); got != "err.absent" {
+		t.Fatalf("dir-exists absent in check: got %s, want err.absent (never would)", got)
+	}
+	if got := eval(t, "file-exists", map[string]string{"path": "/etc/x"}, &fakeExec{guardExit: 0}, engine.Check).String(); got != "ok.present" {
+		t.Fatalf("file-exists present in check: got %s, want ok.present", got)
 	}
 }
 

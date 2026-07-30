@@ -19,3 +19,13 @@ def dir-owner(path: str, owner: str) {
 
     ok.changed
 }
+
+# A read-only question: no apply phase, so it resolves in pass 1 and is
+# deterministic in check (never `would`).
+def dir-exists(path: str) {
+    check {
+        r = shell { test -d "$path" }
+        when r.ok -> ok.present
+        when true -> err.absent
+    }
+}

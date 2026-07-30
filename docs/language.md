@@ -128,3 +128,15 @@ if x { … }                   // `if x` is sugar for `if x.ok`
 - `.ok` = the instruction succeeded; `.changed` = it actually acted (apply ran, not skipped by its guard).
 - In `--check`, a captured `would` result makes `if x.ok` / `if x.changed` **`undetermined`** — same never-lie rule.
 - A capture is block-scoped; capturing an `if`/`parallel` is rejected.
+
+### Read-only questions
+
+`dir-exists` / `file-exists` are **questions**: read-only defs with **no `apply` phase**, so they resolve in pass 1 and are **deterministic in check** (never `undetermined`), unlike an effectful instruction.
+
+```
+if dir-exists("/opt/app") {   // present → then, absent → else — deterministic even in --check
+  apt-install("nginx")
+}
+```
+
+The name distinguishes read from write — `-exists` questions vs `-ensure`/`-owner` instructions. No keyword: a question is simply a def whose decision lives entirely in read-only phases.
