@@ -28,6 +28,7 @@ const (
 	tEqEq      // ==
 	tNotEq     // !=
 	tArrow     // ->
+	tBang      // !
 	tRawString // """ … """ — raw, never interpolated
 )
 
@@ -93,6 +94,7 @@ func (l *lexer) next() (token, error) {
 var punctuation = map[byte]tokKind{
 	'{': tLBrace, '}': tRBrace, '[': tLBrack, ']': tRBrack,
 	'(': tLParen, ')': tRParen, '=': tEq, ':': tColon, ',': tComma, '.': tDot,
+	'!': tBang, // '!=' is handled before this map, so a lone '!' lands here
 }
 
 func (l *lexer) skip() {

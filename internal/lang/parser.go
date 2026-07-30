@@ -281,6 +281,10 @@ func (p *parser) step() proto.Step {
 func (p *parser) ifStep() proto.Step {
 	p.adv() // consume 'if'
 	ib := &proto.IfBlock{}
+	if p.tok.kind == tBang { // `if !cond`
+		p.adv()
+		ib.Negate = true
+	}
 	if cond, ref := p.condition(); ref != nil {
 		ib.CondRef = ref
 	} else {
@@ -334,12 +338,7 @@ func (p *parser) shellStep() proto.Step {
 
 	args := map[string]string{"cmd": body}
 	if p.tok.kind == tIdent && p.tok.val == "unless" {
-		guard, err := p.lex.rawBracesRequired()
-		if err != nil {
-			panic(parseErr{err})
-		}
-		p.adv()
-		args["unless"] = guard
+		p.fail("`unless` was removed from plans; use `if !shell { <guard> } { shell { <cmd> } }`")
 	}
 	return proto.Step{Instruction: "shell", Args: args}
 }

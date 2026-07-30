@@ -13,11 +13,6 @@ on web {
     mkdir -p /opt/app
     echo "done ${HOME}"
   }
-  shell {
-    docker network create web
-  } unless {
-    docker network inspect web
-  }
 }
 `
 	plan, err := ParsePlan(src)
@@ -25,8 +20,8 @@ on web {
 		t.Fatal(err)
 	}
 	steps := plan[0].Steps
-	if len(steps) != 3 {
-		t.Fatalf("want 3 steps, got %d", len(steps))
+	if len(steps) != 2 {
+		t.Fatalf("want 2 steps, got %d", len(steps))
 	}
 	if steps[0].Instruction != "shell" || steps[0].Args["cmd"] != "docker compose up -d" {
 		t.Fatalf("one-line: %+v", steps[0])
@@ -36,9 +31,15 @@ on web {
 		!strings.Contains(steps[1].Args["cmd"], "${HOME}") {
 		t.Fatalf("block: %q", steps[1].Args["cmd"])
 	}
-	if steps[2].Args["cmd"] != "docker network create web" ||
-		steps[2].Args["unless"] != "docker network inspect web" {
-		t.Fatalf("unless: %+v", steps[2])
+}
+
+func TestUnlessRemovedFromPlan(t *testing.T) {
+	_, err := ParsePlan("on web { shell { echo hi } unless { true } }")
+	if err == nil {
+		t.Fatal("expected an error: unless is removed from plans")
+	}
+	if !strings.Contains(err.Error(), "unless") {
+		t.Fatalf("error should mention unless: %v", err)
 	}
 }
 

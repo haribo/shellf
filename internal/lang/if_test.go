@@ -39,6 +39,20 @@ func TestParseIfNoElse(t *testing.T) {
 	}
 }
 
+func TestParseIfNegation(t *testing.T) {
+	plan, err := ParsePlan(`on s { if !dir-exists("/opt") { dir-ensure("/opt") } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := plan[0].Steps[0]
+	if st.If == nil || !st.If.Negate {
+		t.Fatalf("expected a negated if: %+v", st.If)
+	}
+	if st.If.Cond == nil || st.If.Cond.Instruction != "dir-exists" {
+		t.Fatalf("cond: %+v", st.If.Cond)
+	}
+}
+
 func TestParseIfShellCond(t *testing.T) {
 	// the condition may be a shell block
 	plan, err := ParsePlan(`on s { if shell { test -d /opt } { apt-install("nginx") } }`)
