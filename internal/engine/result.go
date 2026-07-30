@@ -28,6 +28,7 @@ func (c Category) String() string {
 type Result struct {
 	Category Category
 	Tag      string
+	Changed  bool         // the action actually acted (apply ran); false on guard-skip or err
 	Shell    *ShellResult // optional diagnostics payload
 }
 
