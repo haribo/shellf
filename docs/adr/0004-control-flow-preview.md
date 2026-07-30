@@ -35,5 +35,6 @@ A pure read-only question (`dir.exists`, a `test` shell) **is** evaluated in che
 ## Consequences
 
 - `proto.Step` gains a conditional form (`If{Cond, Then, Else}`); the agent interprets it.
-- Delivered in increments (epic #45): flow with an instruction condition (PR1), named result capture + `if s1.ok/.changed` (PR2), typed read-only questions (PR3), deprecate plan-level `unless` (PR4).
+- Delivered in increments (epic #45): flow with an instruction condition (PR1), named result capture + `if s1.ok/.changed` (PR2), read-only questions (PR3), deprecate plan-level `unless` (PR4).
+- **Read-only questions need no keyword** (PR3): a question is a def whose decision lives entirely in read-only phases (no `apply`), so it resolves in pass 1 and is deterministic in check — never `would`, hence never `undetermined` as an `if` condition. The read/write distinction is carried by naming (`-exists` vs `-ensure`).
 - `docs/language.md` documents `if`/`else` and the preview semantics.

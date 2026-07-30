@@ -46,3 +46,12 @@ def file-delete(path: str) {
 
     ok.deleted
 }
+
+# A read-only question: no apply phase → deterministic in check (never `would`).
+def file-exists(path: str) {
+    check {
+        r = shell { test -f "$path" }
+        when r.ok -> ok.present
+        when true -> err.absent
+    }
+}
