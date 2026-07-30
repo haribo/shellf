@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -31,12 +32,23 @@ type SSH struct {
 	Insecure    bool          // bypass host-key verification (dev only)
 }
 
-// remotePath names the agent by a hash of its bytes, so repeated runs of the
-// same build reuse the cached binary on the target instead of re-transferring
-// it. Distinct builds get distinct paths (no ETXTBSY against a running one).
-func remotePath(bin []byte) string {
+// hashID identifies a build by a short hash of the binary. Paths are per-build:
+// a new version reuses neither the old cached binary nor the old workdir.
+func hashID(bin []byte) string {
 	sum := sha256.Sum256(bin)
-	return "/tmp/shellf-agent-" + hex.EncodeToString(sum[:8])
+	return hex.EncodeToString(sum[:8])
+}
+
+// remotePath is the cached binary path; workDir is the resident agent's
+// rendezvous directory (request/result/pid files).
+func remotePath(bin []byte) string { return "/tmp/shellf-agent-" + hashID(bin) }
+func workDir(bin []byte) string     { return "/tmp/shellf-" + hashID(bin) }
+
+var jobCounter atomic.Uint64
+
+// newJobID is unique per job across a control run.
+func newJobID() string {
+	return fmt.Sprintf("%d-%d-%d", os.Getpid(), time.Now().UnixNano(), jobCounter.Add(1))
 }
 
 func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
@@ -44,24 +56,29 @@ func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read agent: %w", err)
 	}
-	path := remotePath(bin)
+	path, wd, jobid := remotePath(bin), workDir(bin), newJobID()
+	deadline := time.Now().Add(s.execTimeout())
 
+	// One connection: push (if not cached), ensure a resident agent, deposit the job.
 	client, err := s.dial()
 	if err != nil {
 		return nil, err
 	}
-	defer client.Close()
-
-	// Watchdog on the whole push+exec (an apt install can take minutes).
-	stop := time.AfterFunc(s.execTimeout(), func() { client.Close() })
-	defer stop.Stop()
-
 	if !s.cached(client, path) {
 		if err := s.push(client, bin, path); err != nil {
+			client.Close()
 			return nil, err
 		}
 	}
-	return s.exec(client, req, path)
+	if err := s.startAndDeposit(client, path, wd, jobid, req); err != nil {
+		client.Close()
+		return nil, err
+	}
+	client.Close()
+
+	// Poll for the result, re-dialing on a dropped session, until the deadline.
+	// The detached agent keeps running across drops, so a long job survives.
+	return s.poll(wd, jobid, deadline)
 }
 
 // cached reports whether the agent binary is already present and executable on
@@ -144,24 +161,101 @@ func (s SSH) push(client *ssh.Client, bin []byte, path string) error {
 	return nil
 }
 
-// exec runs the agent (stdin = req) and captures stdout. The binary is kept
-// (cached) for the next run; TTL cleanup of stale agents is PR3.
-func (s SSH) exec(client *ssh.Client, req []byte, path string) ([]byte, error) {
+const pollWait = time.Second
+
+// startAndDeposit atomically deposits the request (tmp + mv), then ensures a
+// resident agent is running: reuse a live one (kill -0 on agent.pid), else take
+// a mkdir-lock and launch one detached (setsid) — the agent releases the lock.
+func (s SSH) startAndDeposit(client *ssh.Client, path, wd, jobid string, req []byte) error {
 	sess, err := client.NewSession()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer sess.Close()
-
 	sess.Stdin = bytes.NewReader(req)
-	var stdout, stderr bytes.Buffer
-	sess.Stdout = &stdout
+	var stderr bytes.Buffer
 	sess.Stderr = &stderr
 
-	if err := sess.Run(path + " __agent"); err != nil {
-		return nil, fmt.Errorf("agent run: %v: %s", err, stderr.String())
+	reqTmp := fmt.Sprintf("%s/req-%s.json.tmp", wd, jobid)
+	reqFinal := fmt.Sprintf("%s/req-%s.json", wd, jobid)
+	cmd := fmt.Sprintf(
+		"mkdir -p %[1]s && cat > %[2]s && mv %[2]s %[3]s && "+
+			`{ { test -f %[1]s/agent.pid && kill -0 "$(cat %[1]s/agent.pid)" 2>/dev/null; } || `+
+			`{ mkdir %[1]s/lock 2>/dev/null && setsid %[4]s __agent-resident %[1]s >/dev/null 2>&1 </dev/null & }; }`,
+		wd, reqTmp, reqFinal, path)
+	if err := sess.Run(cmd); err != nil {
+		return fmt.Errorf("deposit/start: %v: %s", err, stderr.String())
 	}
-	return stdout.Bytes(), nil
+	return nil
+}
+
+// poll waits for the job's result, re-dialing on a dropped session until the
+// deadline. Because the agent is detached, the job keeps running across drops.
+func (s SSH) poll(wd, jobid string, deadline time.Time) ([]byte, error) {
+	donePath := fmt.Sprintf("%s/done-%s", wd, jobid)
+	outPath := fmt.Sprintf("%s/out-%s.json", wd, jobid)
+
+	var client *ssh.Client
+	defer func() {
+		if client != nil {
+			client.Close()
+		}
+	}()
+
+	for time.Now().Before(deadline) {
+		if client == nil {
+			c, err := s.dial()
+			if err != nil {
+				time.Sleep(pollWait)
+				continue // survive: retry the dial
+			}
+			client = c
+		}
+		data, ready, err := s.checkDone(client, donePath, outPath)
+		if err != nil {
+			client.Close()
+			client = nil // dropped → re-dial next iteration
+			time.Sleep(pollWait)
+			continue
+		}
+		if ready {
+			s.rmJob(client, wd, jobid)
+			return data, nil
+		}
+		time.Sleep(pollWait)
+	}
+	return nil, fmt.Errorf("agent job %s timed out after %s", jobid, s.execTimeout())
+}
+
+// checkDone returns the result if done exists; a session error means a dropped
+// connection (distinct from "not done yet").
+func (s SSH) checkDone(client *ssh.Client, donePath, outPath string) (out []byte, ready bool, err error) {
+	sess, err := client.NewSession()
+	if err != nil {
+		return nil, false, err
+	}
+	defer sess.Close()
+	var stdout bytes.Buffer
+	sess.Stdout = &stdout
+	cmd := fmt.Sprintf("if test -f %s; then cat %s; else printf __NOTDONE__; fi", donePath, outPath)
+	if err := sess.Run(cmd); err != nil {
+		return nil, false, err
+	}
+	data := stdout.Bytes()
+	if bytes.Equal(data, []byte("__NOTDONE__")) {
+		return nil, false, nil
+	}
+	return data, true, nil
+}
+
+// rmJob removes the consumed result/done files (best-effort).
+func (s SSH) rmJob(client *ssh.Client, wd, jobid string) {
+	sess, err := client.NewSession()
+	if err != nil {
+		return
+	}
+	defer sess.Close()
+	_ = sess.Run(fmt.Sprintf("rm -f %s/out-%s.json %s/done-%s", wd, jobid, wd, jobid))
 }
 
 func (s SSH) signer() (ssh.Signer, error) {
@@ -191,7 +285,7 @@ func (s SSH) timeout() time.Duration {
 
 func (s SSH) execTimeout() time.Duration {
 	if s.ExecTimeout == 0 {
-		return 5 * time.Minute
+		return 30 * time.Minute // detached agent survives drops, so allow long jobs
 	}
 	return s.ExecTimeout
 }

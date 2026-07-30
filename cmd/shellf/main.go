@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"shellf/internal/agent"
 	"shellf/internal/engine"
@@ -21,6 +22,16 @@ func main() {
 	// Agent mode: hidden, invoked on each target after being pushed over SSH.
 	if len(os.Args) > 1 && os.Args[1] == "__agent" {
 		if err := agent.Serve(os.Stdin, os.Stdout, engine.ShellExecutor{}); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Resident agent: detached loop over file requests in a workdir (ADR-0005).
+	if len(os.Args) > 2 && os.Args[1] == "__agent-resident" {
+		const ttl = 10 * time.Minute // PR3: make configurable
+		if err := agent.ServeResident(os.Args[2], engine.ShellExecutor{}, ttl); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}

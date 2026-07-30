@@ -15,7 +15,7 @@ The agent is a **transient resident** process — *not* a supervised daemon, and
 - **Binary cached on disk.** Pushed once, named by a hash of its bytes (`/tmp/shellf-agent-<hash>`); later runs reuse it — no re-transfer (PR1, done).
 - **Stays alive between jobs.** After finishing a job the agent does not die; it waits for the next job (from a later run) by **watching a request file in `/tmp`** — no listening socket.
 - **Detached execution.** A job runs detached from the SSH session, so it **survives a connection drop mid-job**; the control reconnects and collects the result.
-- **Self-terminating.** After **inactivity (a settable TTL)** the agent **cleans up** the residues (job files and its own binary) and **self-kills**.
+- **Self-terminating.** After **inactivity (a settable TTL)** the agent removes the **residues** (its workdir), **keeps the cached binary**, and **self-kills**. Deleting the binary would defeat the cache — a morning run then an evening run would re-transfer it. The binary is purged **separately**: an explicit `clean`, or a reboot clearing `/tmp`.
 - **Nothing after reboot.** The agent is not a supervised service; a reboot clears `/tmp` and nothing relaunches it.
 
 This is a **transient** resident: it lives across a burst of runs, then removes itself. It is the settled model — **do not re-open**.
