@@ -111,6 +111,7 @@ if dir-create("/opt/app") {     // condition = an instruction; branch on its Res
 - The **condition is an instruction** (or a `shell` block); the branch is taken on its Result `.ok`.
 - The condition runs **on the target** — the agent interprets the flow.
 - A failing condition takes `else` (or is skipped): the `if` **captures** the result, so it does **not** halt (halting rule).
+- **Negation**: `if !<cond> { … }` flips the branch. This replaces the old `unless` guard (**removed from plans**): `shell { cmd } unless { g }` becomes `if !shell { g } { shell { cmd } }`, and `if !dir-exists("/opt") { dir-ensure("/opt") }` acts only when absent.
 - **Preview** (`--check`): a `would` condition (an effect not applied) makes the branch **`undetermined`** — honest, never guessed. An `ok`/`err` condition is deterministic. See [ADR-0004](adr/0004-control-flow-preview.md).
 
 Put the effect **inside** the `if` (not a separate action followed by a `test`) so the preview stays honest.

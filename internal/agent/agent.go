@@ -76,8 +76,12 @@ func runIf(ib *proto.IfBlock, ex engine.Executor, m engine.Mode, scope map[strin
 		return proto.StepResult{Label: label, Category: "undetermined", Sub: withCond(condSub, preview)}
 	}
 
+	truth := fieldTruth(condResult, field)
+	if ib.Negate {
+		truth = !truth
+	}
 	branch := ib.Else // false/err → else (a captured result never halts)
-	if fieldTruth(condResult, field) {
+	if truth {
 		branch = ib.Then
 	}
 	subs, halted := runSteps(branch, ex, m, scope)

@@ -44,6 +44,22 @@ func TestAgentIf_ElseOnErr(t *testing.T) {
 	}
 }
 
+func TestAgentIf_Negation(t *testing.T) {
+	// if !shell { cond } { then }: cond err → !false → then runs (unless-like)
+	f := newFake()
+	f.set("condcmd", "", 1) // cond err
+	f.set("thencmd", "", 0)
+	steps := []proto.Step{{If: &proto.IfBlock{
+		Negate: true,
+		Cond:   &proto.Step{Instruction: "shell", Args: map[string]string{"cmd": "condcmd"}},
+		Then:   []proto.Step{{Instruction: "shell", Args: map[string]string{"cmd": "thencmd"}}},
+	}}}
+	serve(t, f, proto.Request{Mode: "apply", Steps: steps})
+	if !f.called("thencmd", "") {
+		t.Fatalf("!cond with a failing cond should run then")
+	}
+}
+
 func TestAgentIf_QuestionDeterministicInCheck(t *testing.T) {
 	// A read-only question (dir-exists) resolves in check → the if is
 	// deterministic (NOT undetermined), unlike an effectful instruction.

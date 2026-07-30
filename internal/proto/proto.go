@@ -34,7 +34,7 @@ func ResolveRefs(steps []Step, env map[string]string) ([]Step, error) {
 			if err != nil {
 				return nil, err
 			}
-			out[i] = Step{If: &IfBlock{Cond: cond, CondRef: s.If.CondRef, Then: then, Else: els}}
+			out[i] = Step{If: &IfBlock{Cond: cond, CondRef: s.If.CondRef, Negate: s.If.Negate, Then: then, Else: els}}
 			continue
 		}
 		if len(s.Parallel) > 0 {
@@ -80,6 +80,7 @@ type Step struct {
 type IfBlock struct {
 	Cond    *Step      `json:"cond,omitempty"`
 	CondRef *ResultRef `json:"condRef,omitempty"`
+	Negate  bool       `json:"negate,omitempty"` // `if !cond` — flip the branch truth
 	Then    []Step     `json:"then"`
 	Else    []Step     `json:"else,omitempty"`
 }
