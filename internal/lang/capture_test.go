@@ -75,6 +75,26 @@ func TestParseCatch_ErrTestRequiresCatch(t *testing.T) {
 	}
 }
 
+func TestParseCatch_InlineErrTest(t *testing.T) {
+	plan, err := ParsePlan(`on s { if apt.install("nginx")? == err.dbLocked { dir-ensure("/o") } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ib := plan[0].Steps[0].If
+	if ib.Cond == nil || !ib.Cond.Caught {
+		t.Fatalf("inline cond should be caught: %+v", ib.Cond)
+	}
+	if ib.Match == nil || ib.Match.Category != "err" || ib.Match.Tag != "dbLocked" {
+		t.Fatalf("inline match: %+v", ib.Match)
+	}
+}
+
+func TestParseCatch_InlineErrTestRequiresCatch(t *testing.T) {
+	if _, err := ParsePlan(`on s { if apt.install("nginx") == err.dbLocked { dir-ensure("/o") } }`); err == nil {
+		t.Fatal("inline == err without `?` should error")
+	}
+}
+
 func TestParseIfQualifiedCallStaysCall(t *testing.T) {
 	// docker.install() as a condition is a qualified call, not a ref
 	plan, err := ParsePlan(`on s { if docker.install() { apt.install("x") } }`)

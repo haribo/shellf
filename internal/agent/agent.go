@@ -87,13 +87,12 @@ func handlesCaught(step proto.Step, name string, scope map[string]engine.Result)
 func runIf(ib *proto.IfBlock, ex engine.Executor, m engine.Mode, scope map[string]engine.Result) proto.StepResult {
 	var condResult engine.Result
 	var condSub *proto.StepResult // the inline cond's own result, shown in Sub
-	var label string
-	// Default predicate (inline cond): the instruction's Result is `ok`.
+	label := "if(" + ib.CondLabel() + ")"
+	// Default predicate (inline cond, no match): the instruction's Result is `ok`.
 	truthFn := func(r engine.Result) bool { return r.Category == engine.OK }
 
 	if ib.CondRef != nil {
 		ref := ib.CondRef
-		label = "if(" + ref.Label() + ")"
 		r, ok := scope[ref.Name]
 		if !ok {
 			return proto.StepResult{Label: label, Category: "err", Tag: "undefinedResult"}
@@ -101,13 +100,16 @@ func runIf(ib *proto.IfBlock, ex engine.Executor, m engine.Mode, scope map[strin
 		condResult = r
 		truthFn = func(res engine.Result) bool { return refTruth(res, ref) }
 	} else {
-		label = "if(" + ib.Cond.Label() + ")"
 		res, err := runInstruction(*ib.Cond, ex, m)
 		if err != nil {
 			return proto.StepResult{Label: label, Category: "err", Tag: "agent"}
 		}
 		condResult = res
 		condSub = &proto.StepResult{Label: ib.Cond.Label(), Category: res.Category.String(), Tag: res.Tag, Changed: res.Changed, Shell: res.Shell}
+		if ib.Match != nil { // inline outcome test: `call() == err.tag`
+			match := ib.Match
+			truthFn = func(res engine.Result) bool { return refTruth(res, match) }
+		}
 	}
 
 	// Never-lie: an unapplied action's result is undetermined in check.
@@ -119,6 +121,10 @@ func runIf(ib *proto.IfBlock, ex engine.Executor, m engine.Mode, scope map[strin
 	truth := truthFn(condResult)
 	if ib.Negate {
 		truth = !truth
+	}
+	// A `?`-caught inline error that no branch covers halts (ADR-0009).
+	if ib.Cond != nil && ib.Cond.Caught && condResult.Category == engine.ERR && !truth && len(ib.Else) == 0 {
+		return proto.StepResult{Label: label, Category: "err", Tag: condResult.Tag, Shell: condResult.Shell, Sub: withCond(condSub, nil)}
 	}
 	branch := ib.Else // false/err → else (a captured result never halts)
 	if truth {
