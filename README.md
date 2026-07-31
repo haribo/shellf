@@ -1,6 +1,17 @@
-# shellf
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/wordmark-dark.svg">
+    <img alt="shellf" src="docs/assets/wordmark-light.svg" width="440">
+  </picture>
+</p>
 
-Raw shell, but idempotent, previewable, and fast.
+<p align="center"><em>Raw shell, but idempotent, previewable, and fast.</em></p>
+
+<p align="center">
+  <a href="https://github.com/haribo/shellf/actions/workflows/ci.yaml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/haribo/shellf/ci.yaml?branch=develop&label=CI"></a>
+  <img alt="Go" src="https://img.shields.io/github/go-mod/go-version/haribo/shellf">
+  <img alt="status" src="https://img.shields.io/badge/status-experimental-e0a000">
+</p>
 
 shellf runs configuration as plain shell — but structured so every action is
 **idempotent** (skip when already in the desired state), **previewable** (a
