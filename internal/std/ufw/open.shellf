@@ -6,6 +6,6 @@ def open(port: str, proto: str) {
     apply {
         r = shell { ufw allow "$port/$proto" }
         if r.exit != 0 { return err.runtime(r) }
+        return ok.opened
     }
-    return ok.opened
 }

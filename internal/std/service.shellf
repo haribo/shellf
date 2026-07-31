@@ -13,6 +13,6 @@ def service(name: str, running: str, enabled: str) {
             if [ "$enabled" = true ]; then systemctl enable "$name"; else systemctl disable "$name"; fi
         }
         if r.exit != 0 { return err.runtime(r) }
+        return ok.converged
     }
-    return ok.converged
 }

@@ -6,8 +6,8 @@ def dir-ensure(path: str) {
     apply {
         r = shell { mkdir -p "$path" }
         if r.exit != 0 { return err.runtime(r) }
+        return ok.created
     }
-    return ok.created
 }
 
 def dir-owner(path: str, owner: str) {
@@ -18,8 +18,8 @@ def dir-owner(path: str, owner: str) {
     apply {
         r = shell { chown -R "$owner" "$path" }
         if r.exit != 0 { return err.runtime(r) }
+        return ok.changed
     }
-    return ok.changed
 }
 
 # A read-only question: no apply phase, deterministic in check (never `would`).

@@ -6,6 +6,6 @@ def network(name: str) {
     apply {
         r = shell { docker network create "$name" }
         if r.exit != 0 { return err.runtime(r) }
+        return ok.created
     }
-    return ok.created
 }
