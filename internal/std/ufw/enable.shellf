@@ -6,6 +6,6 @@ def enable() {
     apply {
         r = shell { ufw --force enable }
         if r.exit != 0 { return err.runtime(r) }
+        return ok.enabled
     }
-    return ok.enabled
 }

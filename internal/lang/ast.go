@@ -7,7 +7,7 @@ type Def struct {
 	Name   string
 	Params []Param
 	Phases []Phase
-	Return *Outcome // the bare outcome at the end of the def, if any
+	Return *Outcome // derived: apply's trailing `return`, for `would` in check (ADR-0007)
 }
 
 type Param struct {

@@ -9,8 +9,8 @@ def archive-extract(src: str, dst: str) {
             tar xzf "$src" -C "$dst"
         }
         if r.exit != 0 { return err.runtime(r) }
+        return ok.extracted
     }
-    return ok.extracted
 }
 
 def git-clone(url: str, dst: str) {
@@ -21,6 +21,6 @@ def git-clone(url: str, dst: str) {
     apply {
         r = shell { git clone "$url" "$dst" }
         if r.exit != 0 { return err.runtime(r) }
+        return ok.cloned
     }
-    return ok.cloned
 }

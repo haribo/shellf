@@ -15,8 +15,8 @@ def install(pkg: str) {
     apply {
         r = shell { apt-get install -y "$pkg" }
         if r.exit != 0 { return err.runtime(r) }
+        return ok.pkgInstalled
     }
-    return ok.pkgInstalled
 }
 `
 	defs, err := ParseDefs(src)
@@ -74,8 +74,8 @@ def svc(name: str, want: bool) {
     apply {
         r = shell { systemctl start "$name" }
         if r.exit != 0 { return err.runtime(r) }
+        return ok.changed
     }
-    return ok.changed
 }
 `
 	defs, err := ParseDefs(src)
@@ -128,6 +128,7 @@ func TestParseDef_Errors(t *testing.T) {
 		`def x() { guard { if a { return nope.tag } } }`, // unknown outcome category
 		`def x() { apply { shell { echo hi } }`,          // unterminated def (missing })
 		`def x() { apply { 5 == } }`,                     // dangling operator
+		`def x() { apply {} return ok.a }`,               // return outside a phase (ADR-0007)
 	}
 	for _, src := range cases {
 		if _, err := ParseDefs(src); err == nil {

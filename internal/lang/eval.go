@@ -46,17 +46,15 @@ func EvalDef(def Def, args map[string]string, ex engine.Executor, mode engine.Mo
 		return r, nil
 	}
 
-	// Pass 2: effectful phases.
+	// Pass 2: effectful phases. A trailing `return` in apply is the nominal
+	// outcome (evalPhase reaches it); running to the end with no return yields
+	// an implicit tag-less `ok` (ADR-0007).
 	for _, ph := range def.Phases {
 		if ph.Name == "apply" || ph.Name == "post" {
 			if o := ev.evalPhase(ph); o != nil {
 				return changedIfOK(ev.toResult(*o)), nil
 			}
 		}
-	}
-
-	if def.Return != nil {
-		return changedIfOK(ev.toResult(*def.Return)), nil
 	}
 	return changedIfOK(engine.Ok("")), nil
 }

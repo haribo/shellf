@@ -11,8 +11,8 @@ def file-download(url: str, dst: str, sha256: str) {
             echo "$sha256  $dst" | sha256sum -c --status
         }
         if r.exit != 0 { return err.runtime(r) }
+        return ok.downloaded
     }
-    return ok.downloaded
 }
 
 def file-write(path: str, content: str) {
@@ -23,8 +23,8 @@ def file-write(path: str, content: str) {
     apply {
         r = shell { printf '%s' "$content" > "$path" }
         if r.exit != 0 { return err.runtime(r) }
+        return ok.written
     }
-    return ok.written
 }
 
 def file-line(path: str, line: str) {
@@ -35,8 +35,8 @@ def file-line(path: str, line: str) {
     apply {
         r = shell { printf '%s\n' "$line" >> "$path" }
         if r.exit != 0 { return err.runtime(r) }
+        return ok.added
     }
-    return ok.added
 }
 
 def file-delete(path: str) {
@@ -47,8 +47,8 @@ def file-delete(path: str) {
     apply {
         r = shell { rm -rf -- "$path" }
         if r.exit != 0 { return err.runtime(r) }
+        return ok.deleted
     }
-    return ok.deleted
 }
 
 # A read-only question: no apply phase -> deterministic in check (never `would`).

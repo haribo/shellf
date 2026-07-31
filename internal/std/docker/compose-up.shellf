@@ -5,6 +5,6 @@ def compose-up(dir: str) {
             docker compose up -d
         }
         if r.exit != 0 { return err.runtime(r) }
+        return ok.up
     }
-    return ok.up
 }

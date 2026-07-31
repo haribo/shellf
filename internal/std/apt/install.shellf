@@ -9,6 +9,6 @@ def install(pkg: str) {
     apply {
         r = shell { apt-get install -y "$pkg" }
         if r.exit != 0 { return err.runtime(r) }
+        return ok.installed
     }
-    return ok.installed
 }

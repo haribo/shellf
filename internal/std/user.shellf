@@ -6,6 +6,6 @@ def user-group(user: str, group: str) {
     apply {
         r = shell { usermod -aG "$group" "$user" }
         if r.exit != 0 { return err.runtime(r) }
+        return ok.added
     }
-    return ok.added
 }

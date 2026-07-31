@@ -6,6 +6,6 @@ def install() {
     apply {
         r = shell { curl -fsSL https://get.docker.com | sh }
         if r.exit != 0 { return err.runtime(r) }
+        return ok.installed
     }
-    return ok.installed
 }

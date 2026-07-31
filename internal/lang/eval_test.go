@@ -19,8 +19,8 @@ def apt-install(pkg: str) {
     apply {
         r = shell { apt-get install -y "$pkg" }
         if r.exit != 0 { return err.runtime(r) }
+        return ok.pkgInstalled
     }
-    return ok.pkgInstalled
 }`
 
 const (
@@ -108,5 +108,42 @@ func TestEvalDef_Check_WouldNotMutate(t *testing.T) {
 	}
 	if f.calls[aptS] {
 		t.Fatal("check mode ran apt-get")
+	}
+}
+
+// ADR-0007: an apply with no trailing return yields an implicit, tag-less `ok`
+// (and a tag-less `would` in check).
+func TestEvalDef_ImplicitOk_NoTrailingReturn(t *testing.T) {
+	src := `
+def touch(path: str) {
+    apply {
+        r = shell { touch "$path" }
+        if r.exit != 0 { return err.runtime(r) }
+    }
+}`
+	defs, err := ParseDefs(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defs[0].Return != nil {
+		t.Fatalf("no trailing return → def.Return must be nil, got %+v", defs[0].Return)
+	}
+	f := &evalFake{resp: map[string]engine.ShellResult{`touch "$path"`: {Exit: 0}}}
+	args := map[string]string{"path": "/tmp/x"}
+
+	res, err := EvalDef(defs[0], args, f, engine.Apply)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Category != engine.OK || res.Tag != "" {
+		t.Fatalf("apply: want tag-less ok, got %s", res)
+	}
+
+	res, err = EvalDef(defs[0], args, f, engine.Check)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Category != engine.WOULD || res.Tag != "" {
+		t.Fatalf("check: want tag-less would, got %s", res)
 	}
 }

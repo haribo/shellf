@@ -30,15 +30,32 @@ func (p *parser) def() Def {
 		case p.tok.kind == tIdent && phaseNames[p.tok.val]:
 			d.Phases = append(d.Phases, p.phase())
 		case p.tok.kind == tIdent && p.tok.val == "return":
-			p.adv()
-			o := p.outcome()
-			d.Return = &o
+			p.fail("`return` must be inside a phase, not at def top level (ADR-0007)")
 		default:
-			p.fail("expected a phase or 'return', got %q", p.tok.val)
+			p.fail("expected a phase, got %q", p.tok.val)
 		}
 	}
 	p.expect(tRBrace, "}")
+	d.Return = nominalReturn(d)
 	return d
+}
+
+// nominalReturn is the outcome a def yields when apply runs to completion: the
+// last top-level statement of `apply`, if it is a `return`. It drives
+// `would.<tag>` in check mode, where apply is never executed (ADR-0007).
+func nominalReturn(d Def) *Outcome {
+	for _, ph := range d.Phases {
+		if ph.Name != "apply" {
+			continue
+		}
+		if n := len(ph.Stmts); n > 0 {
+			if rs, ok := ph.Stmts[n-1].(ReturnStmt); ok {
+				o := rs.Outcome
+				return &o
+			}
+		}
+	}
+	return nil
 }
 
 func (p *parser) params() []Param {
