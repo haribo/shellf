@@ -40,7 +40,7 @@ func eval(t *testing.T, name string, args map[string]string, f *fakeExec, mode e
 
 func TestStdlib_AllPresent(t *testing.T) {
 	for _, name := range []string{
-		"apt-install", "file-download", "archive-extract", "git-clone",
+		"apt.install", "file-download", "archive-extract", "git-clone",
 		"dir-ensure", "file-write", "file-line", "file-delete",
 		"user-group", "dir-owner", "dir-exists", "file-exists", "service",
 		"docker.install", "docker.network", "docker.compose-up", "ufw.open", "ufw.enable",

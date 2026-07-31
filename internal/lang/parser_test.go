@@ -30,12 +30,12 @@ group all = [web1, db1]
 
 func TestParsePlan(t *testing.T) {
 	src := `
-on db { apt-install("postgres") }
+on db { apt.install("postgres") }
 on web {
   file-copy("/tmp/nginx.conf", "/etc/nginx.conf")
   parallel {
-    apt-install("nginx")
-    apt-install("redis")
+    apt.install("nginx")
+    apt.install("redis")
   }
 }
 `
@@ -92,7 +92,7 @@ on server {
 func TestParseErrors(t *testing.T) {
 	cases := map[string]func(string) error{
 		`on web { unknown-instr("x") }`:   func(s string) error { _, e := ParsePlan(s); return e },
-		`on web { apt-install("a","b") }`: func(s string) error { _, e := ParsePlan(s); return e },
+		`on web { apt.install("a","b") }`: func(s string) error { _, e := ParsePlan(s); return e },
 		`host x = { address: "unterm`:     func(s string) error { _, e := ParseInventory(s); return e },
 	}
 	for src, run := range cases {

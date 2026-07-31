@@ -10,12 +10,12 @@ import (
 )
 
 // instructionArgs maps an instruction (bare or qualified) to its positional
-// argument names, so the parser can turn `apt-install("nginx")` into
-// Step{Instruction:"apt-install", Args:{"pkg":"nginx"}}. A known smell: this
+// argument names, so the parser can turn `apt.install("nginx")` into
+// Step{Instruction:"apt.install", Args:{"pkg":"nginx"}}. A known smell: this
 // duplicates each def's params; resolving positional args at eval time (where
 // the def is known) is the cleaner future.
 var instructionArgs = map[string][]string{
-	"apt-install":     {"pkg"},
+	"apt.install":     {"pkg"},
 	"file-copy":       {"src", "dst"},
 	"service":         {"name", "running", "enabled"},
 	"file-download":   {"url", "dst", "sha256"},
