@@ -56,7 +56,7 @@ func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.D
 			env := mergeEnv(baseVars, host.Vars, setVars)
 			steps, err := proto.ResolveRefs(block.Steps, env)
 			if err != nil {
-				return nil, err
+				return nil, &ResolveError{Err: err}
 			}
 			return json.Marshal(proto.Request{Mode: mode, Steps: steps})
 		}
@@ -73,6 +73,14 @@ func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.D
 	}
 	return reports
 }
+
+// ResolveError is a per-host variable-resolution failure (e.g. an undefined
+// variable) — not a transport problem. It lets reports avoid calling the host
+// "unreachable" when the real issue is resolution.
+type ResolveError struct{ Err error }
+
+func (e *ResolveError) Error() string { return e.Err.Error() }
+func (e *ResolveError) Unwrap() error { return e.Err }
 
 // mergeEnv layers the variable tables by increasing precedence: base (--vars +
 // plan bindings) < per-host inventory vars < --set.

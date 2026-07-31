@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -49,6 +50,24 @@ func TestRun_DeadHostDroppedFromLaterBlock(t *testing.T) {
 	// h1 errored in block 1 → dropped from block 2.
 	if len(reports[1].Hosts) != 1 || reports[1].Hosts[0].Host != "h2" {
 		t.Fatalf("block 2 should run only on h2, got %+v", reports[1].Hosts)
+	}
+}
+
+func TestRun_ResolveErrorTyped(t *testing.T) {
+	inv := inventory.Inventory{
+		Hosts:  map[string]inventory.Host{"h1": {Address: "1"}},
+		Groups: map[string][]string{"all": {"h1"}},
+	}
+	dial := func(alias string) transport.Transport { return fakeTr{} }
+	// a bare-identifier ref that no env resolves → reqFor fails before dialing
+	plan := Plan{{Target: "all", Steps: []proto.Step{
+		{Instruction: "dir-owner", Refs: map[string]string{"owner": "missing"}},
+	}}}
+	reports := Run(plan, inv, "/bin/agent", "apply", dial, nil, nil)
+
+	var re *ResolveError
+	if !errors.As(reports[0].Hosts[0].Err, &re) {
+		t.Fatalf("expected a *ResolveError, got %v", reports[0].Hosts[0].Err)
 	}
 }
 

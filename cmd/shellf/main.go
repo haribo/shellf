@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -324,7 +325,12 @@ func printReports(reports []orchestrator.BlockReport) {
 		fmt.Printf("on %s:\n", b.Target)
 		for _, h := range b.Hosts {
 			if h.Err != nil {
-				fmt.Printf("  %s: unreachable (%v)\n", h.Host, h.Err)
+				var re *orchestrator.ResolveError
+				if errors.As(h.Err, &re) {
+					fmt.Printf("  %s: %v\n", h.Host, h.Err) // resolution error, not unreachable
+				} else {
+					fmt.Printf("  %s: unreachable (%v)\n", h.Host, h.Err)
+				}
 				anyErr = true
 				continue
 			}
