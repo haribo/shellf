@@ -7,6 +7,8 @@ func TestParseCapture(t *testing.T) {
   x = dir-ensure("/opt")
   if x.changed { apt.install("nginx") }
   if x { apt.install("redis") }
+  if x == ok.created { apt.install("etcd") }
+  if x != err { apt.install("consul") }
 }`)
 	if err != nil {
 		t.Fatal(err)
@@ -15,11 +17,28 @@ func TestParseCapture(t *testing.T) {
 	if steps[0].Bind != "x" || steps[0].Instruction != "dir-ensure" {
 		t.Fatalf("capture: %+v", steps[0])
 	}
-	if r := steps[1].If.CondRef; r == nil || r.Name != "x" || r.Field != "changed" {
+	if r := steps[1].If.CondRef; r == nil || r.Name != "x" || !r.Changed {
 		t.Fatalf("if x.changed: %+v", steps[1].If)
 	}
-	if r := steps[2].If.CondRef; r == nil || r.Field != "ok" { // `if x` → x.ok
+	if r := steps[2].If.CondRef; r == nil || r.Category != "ok" || r.Tag != "" { // `if x` → x == ok
 		t.Fatalf("if x (sugar): %+v", steps[2].If)
+	}
+	if r := steps[3].If.CondRef; r == nil || r.Category != "ok" || r.Tag != "created" {
+		t.Fatalf("if x == ok.created: %+v", steps[3].If)
+	}
+	if r := steps[4].If; r.CondRef == nil || r.CondRef.Category != "err" || !r.Negate { // `!=` negates
+		t.Fatalf("if x != err: %+v", steps[4].If)
+	}
+}
+
+func TestParseCaptureDeprecatedFields(t *testing.T) {
+	for _, src := range []string{
+		`on s { x = dir-ensure("/o") if x.ok { apt.install("y") } }`,  // `.ok` removed → `== ok`
+		`on s { x = dir-ensure("/o") if x.err { apt.install("y") } }`, // `.err` removed → `== err`
+	} {
+		if _, err := ParsePlan(src); err == nil {
+			t.Fatalf("expected a deprecation error for: %s", src)
+		}
 	}
 }
 

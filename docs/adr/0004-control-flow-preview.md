@@ -4,6 +4,11 @@
 
 Active
 
+> **Note (ADR-0008):** the captured-result **category** test spelled `x.ok` / `x.err`
+> in this ADR is superseded by the outcome pattern `x == ok` / `x == err`
+> (with optional tag, e.g. `x == err.dbLocked`). `x.changed` and the `if`/preview
+> model below are unchanged. Examples here predate that spelling.
+
 ## Context
 
 Plans need conditionals to read better than Ansible's `var + stat + when`. But **previewability** is a thesis pillar, so we must decide exactly how an `if` behaves in check mode — otherwise the preview lies like Ansible's `--check`. See issue #45.
