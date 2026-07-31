@@ -96,6 +96,28 @@ func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
 	return s.poll(wd, jobid, deadline)
 }
 
+// Clean kills any resident agent on the target and removes every shellf file
+// from /tmp (binaries and workdirs). Safe: it only touches /tmp/shellf-* paths.
+func (s SSH) Clean() error {
+	client, err := s.dial()
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	sess, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer sess.Close()
+	var stderr bytes.Buffer
+	sess.Stderr = &stderr
+	cmd := `for d in /tmp/shellf-*/; do [ -e "$d/agent.pid" ] && kill "$(cat "$d/agent.pid")" 2>/dev/null; done; rm -rf /tmp/shellf-* 2>/dev/null; true`
+	if err := sess.Run(cmd); err != nil {
+		return fmt.Errorf("clean: %v: %s", err, stderr.String())
+	}
+	return nil
+}
+
 // cached reports whether the agent binary is already present and executable on
 // the target (a cache hit → skip the transfer).
 func (s SSH) cached(client *ssh.Client, path string) bool {
