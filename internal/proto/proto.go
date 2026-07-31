@@ -34,7 +34,7 @@ func ResolveRefs(steps []Step, env map[string]string) ([]Step, error) {
 			if err != nil {
 				return nil, err
 			}
-			out[i] = Step{If: &IfBlock{Cond: cond, CondRef: s.If.CondRef, Negate: s.If.Negate, Then: then, Else: els}}
+			out[i] = Step{If: &IfBlock{Cond: cond, Match: s.If.Match, CondRef: s.If.CondRef, Negate: s.If.Negate, Then: then, Else: els}}
 			continue
 		}
 		if len(s.Parallel) > 0 {
@@ -76,14 +76,28 @@ type Step struct {
 }
 
 // IfBlock is a conditional. The condition is either Cond (an instruction run
-// inline, branch on its Result being `ok`) or CondRef (an outcome test on a
-// previously captured Result). Exactly one is set.
+// inline) or CondRef (an outcome test on a previously captured Result); exactly
+// one is set. With Cond, an optional Match tests its Result against an outcome
+// pattern (`if call() == err.tag`); nil Match means branch on `ok`.
 type IfBlock struct {
 	Cond    *Step      `json:"cond,omitempty"`
+	Match   *ResultRef `json:"match,omitempty"` // outcome pattern for Cond's result (nil = `ok`); ADR-0009
 	CondRef *ResultRef `json:"condRef,omitempty"`
 	Negate  bool       `json:"negate,omitempty"` // `if !cond` / `!=` — flip the branch truth
 	Then    []Step     `json:"then"`
 	Else    []Step     `json:"else,omitempty"`
+}
+
+// CondLabel renders the condition for reports.
+func (ib *IfBlock) CondLabel() string {
+	if ib.CondRef != nil {
+		return ib.CondRef.Label()
+	}
+	l := ib.Cond.Label()
+	if ib.Match != nil {
+		l += " == " + ib.Match.Pattern()
+	}
+	return l
 }
 
 // ResultRef tests a captured Result: either the `changed` flag (Changed) or an
@@ -96,24 +110,26 @@ type ResultRef struct {
 	Changed  bool   `json:"changed,omitempty"`  // test `.changed` instead of the pattern
 }
 
+// Pattern renders the outcome pattern: `err` or `err.dbLocked`.
+func (r *ResultRef) Pattern() string {
+	if r.Tag != "" {
+		return r.Category + "." + r.Tag
+	}
+	return r.Category
+}
+
 // Label renders the ref for reports: `s.changed`, `s == ok`, `s == err.dbLocked`.
 func (r *ResultRef) Label() string {
 	if r.Changed {
 		return r.Name + ".changed"
 	}
-	if r.Tag != "" {
-		return r.Name + " == " + r.Category + "." + r.Tag
-	}
-	return r.Name + " == " + r.Category
+	return r.Name + " == " + r.Pattern()
 }
 
 // Label is a compact human-readable form for reports.
 func (s Step) Label() string {
 	if s.If != nil {
-		if s.If.CondRef != nil {
-			return "if(" + s.If.CondRef.Label() + ")"
-		}
-		return "if(" + s.If.Cond.Label() + ")"
+		return "if(" + s.If.CondLabel() + ")"
 	}
 	if len(s.Parallel) > 0 {
 		return "parallel"

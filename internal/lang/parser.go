@@ -290,14 +290,15 @@ func (p *parser) ifStep() proto.Step {
 		p.adv()
 		ib.Negate = true
 	}
-	cond, ref, neg := p.condition()
+	cond, pat, neg := p.condition()
 	if neg { // `!=` flips the branch truth, composing with a leading `!`
 		ib.Negate = !ib.Negate
 	}
-	if ref != nil {
-		ib.CondRef = ref
-	} else {
+	if cond != nil { // inline instruction; pat (if any) is its outcome match
 		ib.Cond = cond
+		ib.Match = pat
+	} else {
+		ib.CondRef = pat
 	}
 	ib.Then = p.block()
 	if p.tok.kind == tIdent && p.tok.val == "else" {
@@ -308,9 +309,11 @@ func (p *parser) ifStep() proto.Step {
 }
 
 // condition parses an if condition and reports whether it is negated (`!=`).
-// It is one of: an instruction (call or shell) run inline; an outcome test on a
-// captured Result (`s == ok`, `s != err.dbLocked`); the `.changed` flag
-// (`s.changed`); or a bare capture (`s` = `s == ok`). See ADR-0008.
+// It returns either an inline step (with an optional outcome Match, when the
+// second result is non-nil) or a captured-result ref (when the step is nil).
+// Forms: an instruction (`call()`, `call()? == err.tag`) or shell run inline; an
+// outcome test on a captured Result (`s == ok`, `s != err.dbLocked`); the
+// `.changed` flag; or a bare capture (`s` = `s == ok`). See ADR-0008/0009.
 func (p *parser) condition() (*proto.Step, *proto.ResultRef, bool) {
 	if p.tok.kind == tIdent && p.tok.val == "shell" {
 		s := p.shellStep()
@@ -318,32 +321,20 @@ func (p *parser) condition() (*proto.Step, *proto.ResultRef, bool) {
 	}
 	name := p.expect(tIdent, "condition").val
 
-	// Outcome-pattern test: `s == ok`, `s == err.dbLocked`, `s != err`.
+	// Outcome-pattern test on a captured result: `s == ok`, `s != err.dbLocked`.
 	if p.tok.kind == tEqEq || p.tok.kind == tNotEq {
-		neg := p.tok.kind == tNotEq
-		p.adv()
-		ref := &proto.ResultRef{Name: name, Category: p.expect(tIdent, "outcome category").val}
-		if ref.Category != "ok" && ref.Category != "err" && ref.Category != "would" {
-			p.fail("unknown outcome category %q (want ok/err/would)", ref.Category)
-		}
-		if p.tok.kind == tDot { // optional tag: `== err.dbLocked`
-			p.adv()
-			ref.Tag = p.expect(tIdent, "outcome tag").val
-		}
-		// A positive `== err[.tag]` test is only reachable if the source is caught;
-		// otherwise halt-on-err stops the plan before the test (ADR-0009).
-		if !neg && ref.Category == "err" && !p.caught[name] {
+		cat, tag, neg := p.outcomeMatch()
+		if !neg && cat == "err" && !p.caught[name] {
 			p.fail("unreachable error test: %q is not caught — mark its instruction with `?` (ADR-0009)", name)
 		}
-		return nil, ref, neg
+		return nil, &proto.ResultRef{Name: name, Category: cat, Tag: tag}, neg
 	}
 
 	if p.tok.kind == tDot {
 		p.adv()
 		second := p.expect(tIdent, "field or instruction").val
-		if p.tok.kind == tLParen { // qualified call: name.second(...)
-			s := p.call(name + "." + second)
-			return &s, nil, false
+		if p.tok.kind == tLParen { // qualified inline call: name.second(...)
+			return p.inlineCond(p.call(name + "." + second))
 		}
 		if second == "changed" {
 			return nil, &proto.ResultRef{Name: name, Changed: true}, false
@@ -353,11 +344,39 @@ func (p *parser) condition() (*proto.Step, *proto.ResultRef, bool) {
 		}
 		p.fail("unknown result field %q (want .changed, or == ok/err)", second)
 	}
-	if p.tok.kind == tLParen { // call: name(...)
-		s := p.call(name)
-		return &s, nil, false
+	if p.tok.kind == tLParen { // inline call: name(...)
+		return p.inlineCond(p.call(name))
 	}
 	return nil, &proto.ResultRef{Name: name, Category: "ok"}, false // `if s {` → s == ok
+}
+
+// outcomeMatch parses `== cat[.tag]` / `!= cat[.tag]` (tok is at the operator).
+func (p *parser) outcomeMatch() (cat, tag string, neg bool) {
+	neg = p.tok.kind == tNotEq
+	p.adv()
+	cat = p.expect(tIdent, "outcome category").val
+	if cat != "ok" && cat != "err" && cat != "would" {
+		p.fail("unknown outcome category %q (want ok/err/would)", cat)
+	}
+	if p.tok.kind == tDot { // optional tag: `== err.dbLocked`
+		p.adv()
+		tag = p.expect(tIdent, "outcome tag").val
+	}
+	return
+}
+
+// inlineCond finishes an inline-call condition with an optional outcome match
+// (`call()? == err.tag`). A positive `== err[.tag]` requires the call be caught,
+// else the branch is unreachable under halt-on-err (ADR-0009).
+func (p *parser) inlineCond(s proto.Step) (*proto.Step, *proto.ResultRef, bool) {
+	if p.tok.kind != tEqEq && p.tok.kind != tNotEq {
+		return &s, nil, false
+	}
+	cat, tag, neg := p.outcomeMatch()
+	if !neg && cat == "err" && !s.Caught {
+		p.fail("unreachable error test: mark the instruction with `?` (ADR-0009)")
+	}
+	return &s, &proto.ResultRef{Category: cat, Tag: tag}, neg
 }
 
 // shellStep parses `shell <line>` or `shell { … }` with an optional

@@ -146,6 +146,57 @@ func TestAgentCatch_ElseCatchAll(t *testing.T) {
 	}
 }
 
+func inlineCaught(cmd, tag string, then, els []proto.Step) proto.Step {
+	ib := &proto.IfBlock{
+		Cond:  &proto.Step{Instruction: "shell", Args: map[string]string{"cmd": cmd}, Caught: true},
+		Match: &proto.ResultRef{Category: "err", Tag: tag},
+		Then:  then,
+		Else:  els,
+	}
+	return proto.Step{If: ib}
+}
+
+func TestAgentCatch_InlineHandled(t *testing.T) {
+	// if shell{fail}? == err { then } — err matches → then runs, sequence continues.
+	f := newFake()
+	f.set("fail", "", 1)
+	f.set("thencmd", "", 0)
+	f.set("after", "", 0)
+	resp := serve(t, f, proto.Request{Mode: "apply", Steps: []proto.Step{
+		inlineCaught("fail", "", []proto.Step{shellStep("thencmd")}, nil),
+		shellStep("after"),
+	}})
+	if !f.called("thencmd", "") {
+		t.Fatal("inline caught + matched → then should run")
+	}
+	if !f.called("after", "") {
+		t.Fatal("handled → sequence should continue")
+	}
+	if resp.Halted {
+		t.Fatal("handled → must not halt")
+	}
+}
+
+func TestAgentCatch_InlineUncoveredHalts(t *testing.T) {
+	// if shell{fail}? == err.nevermatches { then } — tag mismatch, no else → halt.
+	f := newFake()
+	f.set("fail", "", 1)
+	f.set("after", "", 0)
+	resp := serve(t, f, proto.Request{Mode: "apply", Steps: []proto.Step{
+		inlineCaught("fail", "nevermatches", []proto.Step{shellStep("thencmd")}, nil),
+		shellStep("after"),
+	}})
+	if !resp.Halted {
+		t.Fatal("inline caught but uncovered → must halt")
+	}
+	if f.called("after", "") {
+		t.Fatal("halt → later steps must not run")
+	}
+	if f.called("thencmd", "") {
+		t.Fatal("tag mismatch → then must not run")
+	}
+}
+
 func TestAgentCapture_OutcomePattern(t *testing.T) {
 	// x = shell { doit } exit 0 → ok. `x == ok` runs its then; `x == err` doesn't.
 	f := newFake()
