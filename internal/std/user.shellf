@@ -1,10 +1,11 @@
 def user-group(user: str, group: str) {
-    guard: shell { id -nG "$user" | tr ' ' '\n' | grep -qx "$group" } -> ok.already when ok
-
+    guard {
+        r = shell { id -nG "$user" | tr ' ' '\n' | grep -qx "$group" }
+        if r.ok { return ok.already }
+    }
     apply {
         r = shell { usermod -aG "$group" "$user" }
-        when r.exit != 0 -> err.runtime(r)
+        if r.exit != 0 { return err.runtime(r) }
     }
-
-    ok.added
+    return ok.added
 }

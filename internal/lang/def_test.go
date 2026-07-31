@@ -2,15 +2,21 @@ package lang
 
 import "testing"
 
-func TestParseDef_AptInstall(t *testing.T) {
+func TestParseDef_Install(t *testing.T) {
 	src := `
-def apt-install(pkg: str) {
-    pre-check: when pkg == "" -> err.pkgMustNotBeNull
-    guard: shell { dpkg -s "$pkg" } -> ok.pkgAlreadyInstalled when ok
-    apply: shell {
-        apt-get install -y "$pkg"
+def install(pkg: str) {
+    pre-check {
+        if pkg == "" { return err.pkgMustNotBeNull }
     }
-    ok.pkgInstalled
+    guard {
+        r = shell { dpkg -s "$pkg" }
+        if r.ok { return ok.pkgAlreadyInstalled }
+    }
+    apply {
+        r = shell { apt-get install -y "$pkg" }
+        if r.exit != 0 { return err.runtime(r) }
+    }
+    return ok.pkgInstalled
 }
 `
 	defs, err := ParseDefs(src)
@@ -21,7 +27,7 @@ def apt-install(pkg: str) {
 		t.Fatalf("want 1 def, got %d", len(defs))
 	}
 	d := defs[0]
-	if d.Name != "apt-install" {
+	if d.Name != "install" {
 		t.Fatalf("name: %q", d.Name)
 	}
 	if len(d.Params) != 1 || d.Params[0] != (Param{"pkg", "str"}) {
@@ -34,43 +40,42 @@ def apt-install(pkg: str) {
 		t.Fatalf("return: %+v", d.Return)
 	}
 
-	// pre-check: a guard on `pkg == ""`
-	g, ok := d.Phases[0].Stmts[0].(GuardStmt)
+	// pre-check: `if pkg == "" { return err.pkgMustNotBeNull }`
+	iff, ok := d.Phases[0].Stmts[0].(IfStmt)
 	if !ok {
 		t.Fatalf("pre-check stmt: %T", d.Phases[0].Stmts[0])
 	}
-	if b, ok := g.Cond.(Binary); !ok || b.Op != "==" {
-		t.Fatalf("pre-check cond: %+v", g.Cond)
+	if b, ok := iff.Cond.(Binary); !ok || b.Op != "==" {
+		t.Fatalf("pre-check cond: %+v", iff.Cond)
 	}
-	if g.Outcome.Category != "err" || g.Outcome.Tag != "pkgMustNotBeNull" {
-		t.Fatalf("pre-check outcome: %+v", g.Outcome)
+	if r, ok := iff.Body[0].(ReturnStmt); !ok || r.Outcome.Category != "err" || r.Outcome.Tag != "pkgMustNotBeNull" {
+		t.Fatalf("pre-check return: %+v", iff.Body)
 	}
 
-	// guard: shell {...} -> ok.pkgAlreadyInstalled when ok
-	e, ok := d.Phases[1].Stmts[0].(EffectStmt)
+	// guard: `r = shell {…}` then `if r.ok { return ok.pkgAlreadyInstalled }`
+	if _, ok := d.Phases[1].Stmts[0].(LetStmt); !ok {
+		t.Fatalf("guard stmt0: %T", d.Phases[1].Stmts[0])
+	}
+	gif, ok := d.Phases[1].Stmts[1].(IfStmt)
 	if !ok {
-		t.Fatalf("guard stmt: %T", d.Phases[1].Stmts[0])
+		t.Fatalf("guard stmt1: %T", d.Phases[1].Stmts[1])
 	}
-	if _, ok := e.Expr.(ShellExpr); !ok {
-		t.Fatalf("guard expr: %T", e.Expr)
-	}
-	if e.Outcome == nil || e.Outcome.Tag != "pkgAlreadyInstalled" {
-		t.Fatalf("guard outcome: %+v", e.Outcome)
-	}
-	if id, ok := e.When.(Ident); !ok || id.Name != "ok" {
-		t.Fatalf("guard when: %+v", e.When)
+	if r := gif.Body[0].(ReturnStmt); r.Outcome.Tag != "pkgAlreadyInstalled" {
+		t.Fatalf("guard return: %+v", r.Outcome)
 	}
 }
 
 func TestParseDef_BoolFieldBinaryPayload(t *testing.T) {
 	src := `
 def svc(name: str, want: bool) {
-    guard: shell { systemctl is-active --quiet "$name" }.ok == want -> ok.already
+    guard {
+        if shell { systemctl is-active --quiet "$name" }.ok == want { return ok.already }
+    }
     apply {
         r = shell { systemctl start "$name" }
-        when r.exit != 0 -> err.runtime(r)
+        if r.exit != 0 { return err.runtime(r) }
     }
-    ok.changed
+    return ok.changed
 }
 `
 	defs, err := ParseDefs(src)
@@ -82,11 +87,14 @@ def svc(name: str, want: bool) {
 		t.Fatalf("bool param: %+v", d.Params)
 	}
 
-	// guard expr: (shell{}.ok) == want
-	e := d.Phases[0].Stmts[0].(EffectStmt)
-	bin, ok := e.Expr.(Binary)
+	// guard: `if (shell{}.ok == want) { return ok.already }`
+	gif, ok := d.Phases[0].Stmts[0].(IfStmt)
+	if !ok {
+		t.Fatalf("guard stmt: %T", d.Phases[0].Stmts[0])
+	}
+	bin, ok := gif.Cond.(Binary)
 	if !ok || bin.Op != "==" {
-		t.Fatalf("guard expr not a binary: %+v", e.Expr)
+		t.Fatalf("guard cond not a binary: %+v", gif.Cond)
 	}
 	f, ok := bin.L.(Field)
 	if !ok || f.Name != "ok" {
@@ -96,29 +104,30 @@ def svc(name: str, want: bool) {
 		t.Fatalf("field recv not shell: %T", f.Recv)
 	}
 
-	// apply block: binding + when r.exit != 0 -> err.runtime(r)
+	// apply: LetStmt + `if r.exit != 0 { return err.runtime(r) }`
 	apply := d.Phases[1]
 	if _, ok := apply.Stmts[0].(LetStmt); !ok {
 		t.Fatalf("first apply stmt not let: %T", apply.Stmts[0])
 	}
-	when := apply.Stmts[1].(GuardStmt)
-	if b := when.Cond.(Binary); b.Op != "!=" {
-		t.Fatalf("when cond op: %s", b.Op)
+	aif := apply.Stmts[1].(IfStmt)
+	if b := aif.Cond.(Binary); b.Op != "!=" {
+		t.Fatalf("if cond op: %s", b.Op)
 	}
-	if when.Outcome.Tag != "runtime" || when.Outcome.Payload == nil {
-		t.Fatalf("err.runtime payload missing: %+v", when.Outcome)
+	ret := aif.Body[0].(ReturnStmt)
+	if ret.Outcome.Tag != "runtime" || ret.Outcome.Payload == nil {
+		t.Fatalf("err.runtime payload missing: %+v", ret.Outcome)
 	}
-	if id := when.Outcome.Payload.(Ident); id.Name != "r" {
-		t.Fatalf("payload: %+v", when.Outcome.Payload)
+	if id := ret.Outcome.Payload.(Ident); id.Name != "r" {
+		t.Fatalf("payload: %+v", ret.Outcome.Payload)
 	}
 }
 
 func TestParseDef_Errors(t *testing.T) {
 	cases := []string{
-		`def x(pkg str) { ok.a }`,              // missing colon in param
-		`def x() { guard: when a -> nope.tag }`, // unknown outcome category
-		`def x() { apply: shell { echo hi }`,    // unterminated def (missing })
-		`def x() { apply: 5 == }`,               // dangling operator
+		`def x(pkg str) { return ok.a }`,                 // missing colon in param
+		`def x() { guard { if a { return nope.tag } } }`, // unknown outcome category
+		`def x() { apply { shell { echo hi } }`,          // unterminated def (missing })
+		`def x() { apply { 5 == } }`,                     // dangling operator
 	}
 	for _, src := range cases {
 		if _, err := ParseDefs(src); err == nil {

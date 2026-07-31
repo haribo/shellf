@@ -29,11 +29,12 @@ func (p *parser) def() Def {
 		switch {
 		case p.tok.kind == tIdent && phaseNames[p.tok.val]:
 			d.Phases = append(d.Phases, p.phase())
-		case p.tok.kind == tIdent && categories[p.tok.val]:
+		case p.tok.kind == tIdent && p.tok.val == "return":
+			p.adv()
 			o := p.outcome()
 			d.Return = &o
 		default:
-			p.fail("expected a phase or a return outcome, got %q", p.tok.val)
+			p.fail("expected a phase or 'return', got %q", p.tok.val)
 		}
 	}
 	p.expect(tRBrace, "}")
@@ -57,14 +58,10 @@ func (p *parser) params() []Param {
 	return out
 }
 
+// phase parses `phase { <stmts> }` — always a block (ADR-0006).
 func (p *parser) phase() Phase {
 	ph := Phase{Name: p.expect(tIdent, "phase name").val}
-	if p.tok.kind == tColon { // `phase: <stmt>`
-		p.adv()
-		ph.Stmts = []Stmt{p.stmt()}
-		return ph
-	}
-	p.expect(tLBrace, "{ or :") // `phase { <stmts> }`
+	p.expect(tLBrace, "{")
 	for p.tok.kind != tRBrace {
 		ph.Stmts = append(ph.Stmts, p.stmt())
 	}
@@ -72,15 +69,28 @@ func (p *parser) phase() Phase {
 	return ph
 }
 
+// stmt parses one statement: `if <cond> { … }`, `return <outcome>`, a binding
+// `name = expr`, or a bare effect expression (a `shell { … }`). See ADR-0006.
 func (p *parser) stmt() Stmt {
-	if p.tok.kind == tIdent && p.tok.val == "when" {
-		p.adv()
-		cond := p.expr()
-		p.expect(tArrow, "->")
-		return GuardStmt{Cond: cond, Outcome: p.outcome()}
+	if p.tok.kind == tIdent {
+		switch p.tok.val {
+		case "if":
+			p.adv()
+			cond := p.expr()
+			p.expect(tLBrace, "{")
+			var body []Stmt
+			for p.tok.kind != tRBrace {
+				body = append(body, p.stmt())
+			}
+			p.expect(tRBrace, "}")
+			return IfStmt{Cond: cond, Body: body}
+		case "return":
+			p.adv()
+			return ReturnStmt{Outcome: p.outcome()}
+		}
 	}
-	// A binding `name = expr` (no keyword) or an effect `expr [ -> outcome [ when cond ] ]`.
-	// Parse the expression first, then a trailing `=` marks a binding — no lookahead needed.
+	// A binding `name = expr`, or a bare effect expression. Parse the expression
+	// first; a trailing `=` marks a binding (no lookahead needed).
 	lhs := p.expr()
 	if p.tok.kind == tEq {
 		id, ok := lhs.(Ident)
@@ -90,17 +100,7 @@ func (p *parser) stmt() Stmt {
 		p.adv()
 		return LetStmt{Name: id.Name, Value: p.expr()}
 	}
-	e := EffectStmt{Expr: lhs}
-	if p.tok.kind == tArrow {
-		p.adv()
-		o := p.outcome()
-		e.Outcome = &o
-		if p.tok.kind == tIdent && p.tok.val == "when" {
-			p.adv()
-			e.When = p.expr()
-		}
-	}
-	return e
+	return EffectStmt{Expr: lhs}
 }
 
 func (p *parser) outcome() Outcome {

@@ -102,23 +102,25 @@ func (ev *evaluator) evalPhase(ph Phase) *Outcome {
 	return nil
 }
 
+// evalStmt returns a non-nil outcome when the statement short-circuits the def
+// (a `return`, or an `if` whose body returns).
 func (ev *evaluator) evalStmt(s Stmt) *Outcome {
 	switch st := s.(type) {
 	case LetStmt:
 		ev.vars[st.Name] = ev.evalExpr(st.Value)
 		return nil
-	case GuardStmt:
-		if truthy(ev.evalExpr(st.Cond)) {
-			return &st.Outcome
-		}
-		return nil
 	case EffectStmt:
 		ev.evalExpr(st.Expr) // side effect (e.g. a shell run), updates ev.last
-		if st.Outcome == nil {
-			return nil
-		}
-		if st.When == nil || truthy(ev.evalExpr(st.When)) {
-			return st.Outcome
+		return nil
+	case ReturnStmt:
+		return &st.Outcome
+	case IfStmt:
+		if truthy(ev.evalExpr(st.Cond)) {
+			for _, b := range st.Body {
+				if o := ev.evalStmt(b); o != nil {
+					return o
+				}
+			}
 		}
 		return nil
 	}

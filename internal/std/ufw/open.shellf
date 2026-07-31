@@ -1,10 +1,11 @@
 def open(port: str, proto: str) {
-    guard: shell { ufw status | grep -q "$port/$proto" } -> ok.already when ok
-
+    guard {
+        r = shell { ufw status | grep -q "$port/$proto" }
+        if r.ok { return ok.already }
+    }
     apply {
         r = shell { ufw allow "$port/$proto" }
-        when r.exit != 0 -> err.runtime(r)
+        if r.exit != 0 { return err.runtime(r) }
     }
-
-    ok.opened
+    return ok.opened
 }

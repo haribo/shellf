@@ -30,23 +30,26 @@ type LetStmt struct {
 	Value Expr
 }
 
-// GuardStmt: `when cond -> outcome`
-type GuardStmt struct {
-	Cond    Expr
+// EffectStmt: a bare expression evaluated for its effect (a `shell { … }`).
+type EffectStmt struct {
+	Expr Expr
+}
+
+// IfStmt: `if <cond> { <body> }` (ADR-0006).
+type IfStmt struct {
+	Cond Expr
+	Body []Stmt
+}
+
+// ReturnStmt: `return <outcome>` (ADR-0006).
+type ReturnStmt struct {
 	Outcome Outcome
 }
 
-// EffectStmt: `expr`, or `expr -> outcome`, or `expr -> outcome when cond`.
-// The bare form (Outcome nil) is an effect like a raw `shell { … }`.
-type EffectStmt struct {
-	Expr    Expr
-	Outcome *Outcome
-	When    Expr // nil = unconditional
-}
-
 func (LetStmt) isStmt()    {}
-func (GuardStmt) isStmt()  {}
 func (EffectStmt) isStmt() {}
+func (IfStmt) isStmt()     {}
+func (ReturnStmt) isStmt() {}
 
 // Outcome: `category.tag` or `category.tag(payload)` or bare `category`.
 type Outcome struct {
