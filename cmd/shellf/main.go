@@ -52,6 +52,12 @@ func main() {
 		return
 	}
 
+	// Clean shellf agents and files off the targets.
+	if len(os.Args) > 1 && os.Args[1] == "clean" {
+		cleanCmd(os.Args[2:])
+		return
+	}
+
 	targets := flag.String("targets", "", "comma-separated user@host list (empty = run locally)")
 	port := flag.String("port", "", "ssh port (shared by all targets)")
 	key := flag.String("key", "", "ssh identity file")
@@ -213,6 +219,64 @@ func loadGlobals(varsPath string, sets kvFlags) (baseVars, setVars map[string]st
 		setVars[k] = v
 	}
 	return baseVars, setVars, nil
+}
+
+// cleanCmd: shellf clean --inventory <hosts.shellf> [target...]. Kills resident
+// agents and removes shellf's /tmp files on each target (all hosts if no target).
+func cleanCmd(args []string) {
+	fs := flag.NewFlagSet("clean", flag.ExitOnError)
+	invPath := fs.String("inventory", "", "inventory file (required)")
+	insecure := fs.Bool("insecure", false, "skip host-key verification (dev only)")
+	knownHosts := fs.String("known-hosts", "", "known_hosts path (default ~/.ssh/known_hosts)")
+	fs.Parse(args)
+	if *invPath == "" {
+		fmt.Fprintln(os.Stderr, "usage: shellf clean --inventory <hosts.shellf> [--insecure] [target...]")
+		os.Exit(2)
+	}
+	invSrc, err := os.ReadFile(*invPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	inv, err := lang.ParseInventory(string(invSrc))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", *invPath, err)
+		os.Exit(1)
+	}
+
+	// Targets: positional args (hosts or groups), or every host if none given.
+	targets := fs.Args()
+	if len(targets) == 0 {
+		for name := range inv.Hosts {
+			targets = append(targets, name)
+		}
+	}
+	var aliases []string
+	seen := map[string]bool{}
+	for _, t := range targets {
+		for _, a := range inv.Members(t) {
+			if !seen[a] {
+				seen[a] = true
+				aliases = append(aliases, a)
+			}
+		}
+	}
+
+	anyErr := false
+	for _, alias := range aliases {
+		h, _ := inv.Resolve(alias)
+		s := transport.SSH{
+			User: h.User, Host: h.Address, Port: h.Port, Key: h.Key,
+			KnownHosts: *knownHosts, Insecure: *insecure,
+		}
+		if err := s.Clean(); err != nil {
+			fmt.Printf("  %s: %v\n", alias, err)
+			anyErr = true
+		} else {
+			fmt.Printf("  %s: cleaned\n", alias)
+		}
+	}
+	exitFor(anyErr)
 }
 
 func buildSteps(pkgs []string, par, copy string) []proto.Step {
