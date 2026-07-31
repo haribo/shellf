@@ -56,7 +56,7 @@ func ResolveRefs(steps []Step, env map[string]string) ([]Step, error) {
 			}
 			args[argName] = v
 		}
-		out[i] = Step{Instruction: s.Instruction, Args: args}
+		out[i] = Step{Instruction: s.Instruction, Args: args, Bind: s.Bind, Caught: s.Caught}
 	}
 	return out, nil
 }

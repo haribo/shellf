@@ -24,6 +24,27 @@ func TestResolveRefs(t *testing.T) {
 	}
 }
 
+func TestResolveRefs_PreservesBindAndCaught(t *testing.T) {
+	// A captured, caught step must keep its Bind and Caught through resolution —
+	// otherwise `x = call()?` loses its binding on the orchestrated path.
+	steps := []Step{{
+		Instruction: "apt.install",
+		Args:        map[string]string{"pkg": "nginx"},
+		Bind:        "x",
+		Caught:      true,
+	}}
+	out, err := ResolveRefs(steps, map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out[0].Bind != "x" {
+		t.Fatalf("Bind dropped by ResolveRefs: %+v", out[0])
+	}
+	if !out[0].Caught {
+		t.Fatalf("Caught dropped by ResolveRefs: %+v", out[0])
+	}
+}
+
 func TestResolveRefs_Undefined(t *testing.T) {
 	steps := []Step{{Instruction: "dir-owner", Refs: map[string]string{"owner": "owner"}}}
 	if _, err := ResolveRefs(steps, map[string]string{}); err == nil {
