@@ -165,12 +165,6 @@ func dispatch(step proto.Step) (engine.Instruction, error) {
 	switch step.Instruction {
 	case "file-copy":
 		return engine.FileCopy{Src: step.Args["src"], Dst: step.Args["dst"]}, nil
-	case "service":
-		return engine.Service{
-			Unit:    step.Args["name"],
-			Running: step.Args["running"] == "true",
-			Enabled: step.Args["enabled"] == "true",
-		}, nil
 	case "shell":
 		return engine.Shell{Cmd: step.Args["cmd"], Unless: step.Args["unless"]}, nil
 	default:

@@ -42,7 +42,7 @@ func TestStdlib_AllPresent(t *testing.T) {
 	for _, name := range []string{
 		"apt-install", "file-download", "archive-extract", "git-clone",
 		"dir-ensure", "file-write", "file-line", "file-delete",
-		"user-group", "dir-owner", "dir-exists", "file-exists",
+		"user-group", "dir-owner", "dir-exists", "file-exists", "service",
 		"docker.install", "docker.network", "docker.compose-up", "ufw.open", "ufw.enable",
 	} {
 		if _, ok := Lookup(name); !ok {
@@ -127,6 +127,19 @@ func TestUserOwnerUfwEnable(t *testing.T) {
 	// ufw.enable: inactive → enable
 	if got := eval(t, "ufw.enable", nil, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.enabled" {
 		t.Fatalf("ufw.enable apply: got %s, want ok.enabled", got)
+	}
+}
+
+func TestServiceDef(t *testing.T) {
+	args := map[string]string{"name": "nginx", "running": "true", "enabled": "true"}
+	if got := eval(t, "service", args, &fakeExec{guardExit: 0}, engine.Apply).String(); got != "ok.already" {
+		t.Fatalf("already converged: got %s, want ok.already", got)
+	}
+	if got := eval(t, "service", args, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.converged" {
+		t.Fatalf("apply: got %s, want ok.converged", got)
+	}
+	if got := eval(t, "service", args, &fakeExec{guardExit: 1, applyExit: 1}, engine.Apply).String(); got != "err.runtime" {
+		t.Fatalf("apply-fail: got %s, want err.runtime", got)
 	}
 }
 
