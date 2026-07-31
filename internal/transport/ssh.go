@@ -49,9 +49,31 @@ func hashID(bin []byte) string {
 }
 
 // remotePath is the cached binary path; workDir is the resident agent's
-// rendezvous directory (request/result/pid files).
-func remotePath(bin []byte) string { return "/tmp/shellf-agent-" + hashID(bin) }
-func workDir(bin []byte) string     { return "/tmp/shellf-" + hashID(bin) }
+// rendezvous directory (request/result/pid files). Both are scoped by the SSH
+// user as well as the build hash: a resident agent belongs to the user that
+// launched it, so a different user gets its own agent and never reuses one that
+// would run its jobs under the wrong identity (issue #114).
+func (s SSH) remotePath(bin []byte) string { return "/tmp/shellf-agent-" + s.pathID(bin) }
+func (s SSH) workDir(bin []byte) string    { return "/tmp/shellf-" + s.pathID(bin) }
+
+func (s SSH) pathID(bin []byte) string { return hashID(bin) + "-" + sanitizeUser(s.User) }
+
+// sanitizeUser keeps the SSH user usable and injection-safe as a path segment.
+func sanitizeUser(u string) string {
+	if u == "" {
+		return "nouser"
+	}
+	b := make([]byte, 0, len(u))
+	for i := 0; i < len(u); i++ {
+		switch c := u[i]; {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_', c == '-':
+			b = append(b, c)
+		default:
+			b = append(b, '_')
+		}
+	}
+	return string(b)
+}
 
 var jobCounter atomic.Uint64
 
@@ -65,7 +87,7 @@ func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read agent: %w", err)
 	}
-	path, wd, jobid := remotePath(bin), workDir(bin), newJobID()
+	path, wd, jobid := s.remotePath(bin), s.workDir(bin), newJobID()
 	deadline := time.Now().Add(s.execTimeout())
 
 	// One connection: push (if not cached), ensure a resident agent, deposit the job.
