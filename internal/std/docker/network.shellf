@@ -1,10 +1,11 @@
 def network(name: str) {
-    guard: shell { docker network inspect "$name" } -> ok.already when ok
-
+    guard {
+        r = shell { docker network inspect "$name" }
+        if r.ok { return ok.already }
+    }
     apply {
         r = shell { docker network create "$name" }
-        when r.exit != 0 -> err.runtime(r)
+        if r.exit != 0 { return err.runtime(r) }
     }
-
-    ok.created
+    return ok.created
 }

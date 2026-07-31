@@ -1,10 +1,11 @@
 def install() {
-    guard: shell { command -v docker } -> ok.already when ok
-
+    guard {
+        r = shell { command -v docker }
+        if r.ok { return ok.already }
+    }
     apply {
         r = shell { curl -fsSL https://get.docker.com | sh }
-        when r.exit != 0 -> err.runtime(r)
+        if r.exit != 0 { return err.runtime(r) }
     }
-
-    ok.installed
+    return ok.installed
 }

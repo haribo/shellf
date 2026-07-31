@@ -1,31 +1,32 @@
 def dir-ensure(path: str) {
-    guard: shell { test -d "$path" } -> ok.already when ok
-
+    guard {
+        r = shell { test -d "$path" }
+        if r.ok { return ok.already }
+    }
     apply {
         r = shell { mkdir -p "$path" }
-        when r.exit != 0 -> err.runtime(r)
+        if r.exit != 0 { return err.runtime(r) }
     }
-
-    ok.created
+    return ok.created
 }
 
 def dir-owner(path: str, owner: str) {
-    guard: shell { test "$(stat -c '%U:%G' "$path")" = "$owner" } -> ok.already when ok
-
+    guard {
+        r = shell { test "$(stat -c '%U:%G' "$path")" = "$owner" }
+        if r.ok { return ok.already }
+    }
     apply {
         r = shell { chown -R "$owner" "$path" }
-        when r.exit != 0 -> err.runtime(r)
+        if r.exit != 0 { return err.runtime(r) }
     }
-
-    ok.changed
+    return ok.changed
 }
 
-# A read-only question: no apply phase, so it resolves in pass 1 and is
-# deterministic in check (never `would`).
+# A read-only question: no apply phase, deterministic in check (never `would`).
 def dir-exists(path: str) {
     check {
         r = shell { test -d "$path" }
-        when r.ok -> ok.present
-        when true -> err.absent
+        if r.ok { return ok.present }
+        return err.absent
     }
 }

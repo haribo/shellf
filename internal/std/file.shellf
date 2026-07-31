@@ -1,57 +1,61 @@
 def file-download(url: str, dst: str, sha256: str) {
-    guard: shell {
-        test -f "$dst" && echo "$sha256  $dst" | sha256sum -c --status
-    } -> ok.already when ok
-
+    guard {
+        r = shell {
+            test -f "$dst" && echo "$sha256  $dst" | sha256sum -c --status
+        }
+        if r.ok { return ok.already }
+    }
     apply {
         r = shell {
             curl -fsSLo "$dst" "$url"
             echo "$sha256  $dst" | sha256sum -c --status
         }
-        when r.exit != 0 -> err.runtime(r)
+        if r.exit != 0 { return err.runtime(r) }
     }
-
-    ok.downloaded
+    return ok.downloaded
 }
 
 def file-write(path: str, content: str) {
-    guard: shell { test -f "$path" && printf '%s' "$content" | cmp -s - "$path" } -> ok.already when ok
-
+    guard {
+        r = shell { test -f "$path" && printf '%s' "$content" | cmp -s - "$path" }
+        if r.ok { return ok.already }
+    }
     apply {
         r = shell { printf '%s' "$content" > "$path" }
-        when r.exit != 0 -> err.runtime(r)
+        if r.exit != 0 { return err.runtime(r) }
     }
-
-    ok.written
+    return ok.written
 }
 
 def file-line(path: str, line: str) {
-    guard: shell { grep -qF -- "$line" "$path" } -> ok.already when ok
-
+    guard {
+        r = shell { grep -qF -- "$line" "$path" }
+        if r.ok { return ok.already }
+    }
     apply {
         r = shell { printf '%s\n' "$line" >> "$path" }
-        when r.exit != 0 -> err.runtime(r)
+        if r.exit != 0 { return err.runtime(r) }
     }
-
-    ok.added
+    return ok.added
 }
 
 def file-delete(path: str) {
-    guard: shell { test ! -e "$path" } -> ok.already when ok
-
+    guard {
+        r = shell { test ! -e "$path" }
+        if r.ok { return ok.already }
+    }
     apply {
         r = shell { rm -rf -- "$path" }
-        when r.exit != 0 -> err.runtime(r)
+        if r.exit != 0 { return err.runtime(r) }
     }
-
-    ok.deleted
+    return ok.deleted
 }
 
-# A read-only question: no apply phase → deterministic in check (never `would`).
+# A read-only question: no apply phase -> deterministic in check (never `would`).
 def file-exists(path: str) {
     check {
         r = shell { test -f "$path" }
-        when r.ok -> ok.present
-        when true -> err.absent
+        if r.ok { return ok.present }
+        return err.absent
     }
 }

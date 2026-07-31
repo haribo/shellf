@@ -1,10 +1,11 @@
 def enable() {
-    guard: shell { ufw status | grep -q "Status: active" } -> ok.already when ok
-
+    guard {
+        r = shell { ufw status | grep -q "Status: active" }
+        if r.ok { return ok.already }
+    }
     apply {
         r = shell { ufw --force enable }
-        when r.exit != 0 -> err.runtime(r)
+        if r.exit != 0 { return err.runtime(r) }
     }
-
-    ok.enabled
+    return ok.enabled
 }

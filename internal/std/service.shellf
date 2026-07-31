@@ -1,17 +1,18 @@
 def service(name: str, running: str, enabled: str) {
-    guard: shell {
-        a=$(systemctl is-active --quiet "$name" && echo true || echo false)
-        e=$(systemctl is-enabled --quiet "$name" && echo true || echo false)
-        [ "$a" = "$running" ] && [ "$e" = "$enabled" ]
-    } -> ok.already when ok
-
+    guard {
+        r = shell {
+            a=$(systemctl is-active --quiet "$name" && echo true || echo false)
+            e=$(systemctl is-enabled --quiet "$name" && echo true || echo false)
+            [ "$a" = "$running" ] && [ "$e" = "$enabled" ]
+        }
+        if r.ok { return ok.already }
+    }
     apply {
         r = shell {
             if [ "$running" = true ]; then systemctl start "$name"; else systemctl stop "$name"; fi
             if [ "$enabled" = true ]; then systemctl enable "$name"; else systemctl disable "$name"; fi
         }
-        when r.exit != 0 -> err.runtime(r)
+        if r.exit != 0 { return err.runtime(r) }
     }
-
-    ok.converged
+    return ok.converged
 }

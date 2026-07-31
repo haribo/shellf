@@ -1,12 +1,14 @@
 def install(pkg: str) {
-    pre-check: when pkg == "" -> err.pkgMustNotBeNull
-
-    guard: shell { dpkg -s "$pkg" } -> ok.alreadyInstalled when ok
-
+    pre-check {
+        if pkg == "" { return err.pkgMustNotBeNull }
+    }
+    guard {
+        r = shell { dpkg -s "$pkg" }
+        if r.ok { return ok.alreadyInstalled }
+    }
     apply {
         r = shell { apt-get install -y "$pkg" }
-        when r.exit != 0 -> err.runtime(r)
+        if r.exit != 0 { return err.runtime(r) }
     }
-
-    ok.installed
+    return ok.installed
 }

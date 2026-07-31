@@ -9,13 +9,18 @@ import (
 // The dogfood target: apt-install expressed as a shellf def.
 const aptDef = `
 def apt-install(pkg: str) {
-    pre-check: when pkg == "" -> err.pkgMustNotBeNull
-    guard: shell { dpkg -s "$pkg" } -> ok.pkgAlreadyInstalled when ok
+    pre-check {
+        if pkg == "" { return err.pkgMustNotBeNull }
+    }
+    guard {
+        r = shell { dpkg -s "$pkg" }
+        if r.ok { return ok.pkgAlreadyInstalled }
+    }
     apply {
         r = shell { apt-get install -y "$pkg" }
-        when r.exit != 0 -> err.runtime(r)
+        if r.exit != 0 { return err.runtime(r) }
     }
-    ok.pkgInstalled
+    return ok.pkgInstalled
 }`
 
 const (
