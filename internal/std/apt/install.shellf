@@ -4,11 +4,11 @@ def install(pkg: str) {
     }
     guard {
         r = shell { dpkg -s "$pkg" }
-        if r.ok { return ok.alreadyInstalled }
+        if r { return ok.alreadyInstalled }
     }
     apply {
         r = shell { apt-get install -y "$pkg" }
-        if r.exit != 0 { return err.runtime(r) }
+        if !r { return err.runtime(r) }
         return ok.installed
     }
 }

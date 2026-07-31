@@ -74,6 +74,10 @@ type Binary struct { // a == b, a != b
 	Op   string // "==" | "!="
 	L, R Expr
 }
+type Unary struct { // !x — negate truthiness (ADR-0010)
+	Op string // "!"
+	X  Expr
+}
 type Call struct { // apt-cache-show(pkg)
 	Name string
 	Args []Expr
@@ -89,5 +93,6 @@ func (IntLit) isExpr()    {}
 func (Ident) isExpr()     {}
 func (Field) isExpr()     {}
 func (Binary) isExpr()    {}
+func (Unary) isExpr()     {}
 func (Call) isExpr()      {}
 func (ShellExpr) isExpr() {}

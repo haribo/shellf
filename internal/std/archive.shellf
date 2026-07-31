@@ -1,14 +1,14 @@
 def archive-extract(src: str, dst: str) {
     guard {
         r = shell { test -d "$dst" && test -n "$(ls -A "$dst" 2>/dev/null)" }
-        if r.ok { return ok.already }
+        if r { return ok.already }
     }
     apply {
         r = shell {
             mkdir -p "$dst"
             tar xzf "$src" -C "$dst"
         }
-        if r.exit != 0 { return err.runtime(r) }
+        if !r { return err.runtime(r) }
         return ok.extracted
     }
 }
@@ -16,11 +16,11 @@ def archive-extract(src: str, dst: str) {
 def git-clone(url: str, dst: str) {
     guard {
         r = shell { test -d "$dst/.git" }
-        if r.ok { return ok.already }
+        if r { return ok.already }
     }
     apply {
         r = shell { git clone "$url" "$dst" }
-        if r.exit != 0 { return err.runtime(r) }
+        if !r { return err.runtime(r) }
         return ok.cloned
     }
 }

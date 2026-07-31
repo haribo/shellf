@@ -140,13 +140,23 @@ func (p *parser) outcome() Outcome {
 // --- expressions: comparison over postfix over primary ---
 
 func (p *parser) expr() Expr {
-	left := p.postfix()
+	left := p.unary()
 	if p.tok.kind == tEqEq || p.tok.kind == tNotEq {
 		op := p.tok.val
 		p.adv()
-		return Binary{Op: op, L: left, R: p.postfix()}
+		return Binary{Op: op, L: left, R: p.unary()}
 	}
 	return left
+}
+
+// unary parses an optional leading `!` (negate truthiness), then a postfix
+// expression. Lets `if !r` work inside a def (ADR-0010).
+func (p *parser) unary() Expr {
+	if p.tok.kind == tBang {
+		p.adv()
+		return Unary{Op: "!", X: p.unary()}
+	}
+	return p.postfix()
 }
 
 func (p *parser) postfix() Expr {

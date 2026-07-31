@@ -157,6 +157,8 @@ func (ev *evaluator) evalExpr(e Expr) value {
 			return eq
 		}
 		return !eq
+	case Unary: // `!x` — negate truthiness (ADR-0010)
+		return !truthy(ev.evalExpr(x.X))
 	case ShellExpr:
 		res := ev.ex.Shell(x.Cmd, ev.shellEnv())
 		ev.last = res
@@ -181,10 +183,9 @@ func (ev *evaluator) evalField(f Field) value {
 		return sr.Stdout
 	case "stderr":
 		return sr.Stderr
-	case "ok":
-		return sr.OK()
 	}
-	ev.fail("unknown field .%s", f.Name)
+	// ADR-0010: a ShellResult is a product; success is `if r` / `r.exit == 0`, not `.ok`.
+	ev.fail("no field .%s on a shell result; use `if r` / `if !r`, or .exit/.stdout/.stderr", f.Name)
 	return nil
 }
 
@@ -228,9 +229,16 @@ func (ev *evaluator) toResult(o Outcome) engine.Result {
 	return engine.Result{}
 }
 
+// truthy backs `if x` / `if !x`: a bool is itself; a ShellResult is its success
+// (exit 0). A Result is never truthy-tested here — plans match it (ADR-0010).
 func truthy(v value) bool {
-	b, ok := v.(bool)
-	return ok && b
+	switch t := v.(type) {
+	case bool:
+		return t
+	case engine.ShellResult:
+		return t.OK()
+	}
+	return false
 }
 
 func equal(a, b value) bool { return a == b }
