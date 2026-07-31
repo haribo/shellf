@@ -98,10 +98,11 @@ type parser struct {
 	tok      token
 	baseVars map[string]string // --vars + plan bindings (lower precedence)
 	setVars  map[string]string // --set overrides (highest precedence)
+	caught   map[string]bool   // vars bound with `?` in the current `on` block (ADR-0009)
 }
 
 func newParser(src string) *parser {
-	p := &parser{lex: newLexer(src), baseVars: map[string]string{}}
+	p := &parser{lex: newLexer(src), baseVars: map[string]string{}, caught: map[string]bool{}}
 	p.adv()
 	return p
 }
@@ -232,6 +233,7 @@ func (p *parser) plan() orchestrator.Plan {
 			continue
 		}
 		target := p.expect(tIdent, "group or host").val
+		p.caught = map[string]bool{} // caught vars are scoped to their `on` block
 		plan = append(plan, orchestrator.Block{Target: target, Steps: p.block()})
 	}
 	return plan
@@ -263,6 +265,9 @@ func (p *parser) step() proto.Step {
 			p.fail("cannot capture an if/parallel block into a variable")
 		}
 		rhs.Bind = name
+		if rhs.Caught { // `x = call()?` — x's errors are handled, not auto-halts
+			p.caught[name] = true
+		}
 		return rhs
 	}
 	if p.tok.kind == tDot { // qualified call: module.instruction
@@ -325,6 +330,11 @@ func (p *parser) condition() (*proto.Step, *proto.ResultRef, bool) {
 			p.adv()
 			ref.Tag = p.expect(tIdent, "outcome tag").val
 		}
+		// A positive `== err[.tag]` test is only reachable if the source is caught;
+		// otherwise halt-on-err stops the plan before the test (ADR-0009).
+		if !neg && ref.Category == "err" && !p.caught[name] {
+			p.fail("unreachable error test: %q is not caught — mark its instruction with `?` (ADR-0009)", name)
+		}
 		return nil, ref, neg
 	}
 
@@ -385,6 +395,11 @@ func (p *parser) call(name string) proto.Step {
 		}
 	}
 	p.expect(tRParen, ")")
+	caught := false
+	if p.tok.kind == tQuestion { // `call()?` — mark failible-but-caught (ADR-0009)
+		p.adv()
+		caught = true
+	}
 
 	if len(vals) != len(argNames) {
 		p.fail("%s expects %d argument(s), got %d", name, len(argNames), len(vals))
@@ -401,7 +416,7 @@ func (p *parser) call(name string) proto.Step {
 			args[n] = vals[i].val
 		}
 	}
-	return proto.Step{Instruction: name, Args: args, Refs: refs}
+	return proto.Step{Instruction: name, Args: args, Refs: refs, Caught: caught}
 }
 
 // arg resolves a binding's value (plan top-level binding or --vars file entry)

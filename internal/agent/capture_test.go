@@ -71,6 +71,81 @@ func TestAgentCapture_OkSugar(t *testing.T) {
 	}
 }
 
+func caughtCap(cmd, bind string) proto.Step {
+	s := capture(cmd, "", bind)
+	s.Caught = true
+	return s
+}
+
+func shellStep(cmd string) proto.Step {
+	return proto.Step{Instruction: "shell", Args: map[string]string{"cmd": cmd}}
+}
+
+func TestAgentCatch_HandledContinues(t *testing.T) {
+	// x = shell{fail}? exit 1 → err, caught. `if x == err` handles → then runs, no halt.
+	f := newFake()
+	f.set("fail", "", 1)
+	f.set("thencmd", "", 0)
+	f.set("after", "", 0)
+	resp := serve(t, f, proto.Request{Mode: "apply", Steps: []proto.Step{
+		caughtCap("fail", "x"),
+		ifRef("x", "err"),
+		shellStep("after"),
+	}})
+	if !f.called("thencmd", "") {
+		t.Fatal("caught + handled → then should run")
+	}
+	if !f.called("after", "") {
+		t.Fatal("caught + handled → the sequence should continue past the if")
+	}
+	if resp.Halted {
+		t.Fatal("caught + handled → must not halt")
+	}
+}
+
+func TestAgentCatch_UncoveredHalts(t *testing.T) {
+	// x = shell{fail}? → err. `if x == ok` does not cover it, no else → halt.
+	f := newFake()
+	f.set("fail", "", 1)
+	f.set("after", "", 0)
+	resp := serve(t, f, proto.Request{Mode: "apply", Steps: []proto.Step{
+		caughtCap("fail", "x"),
+		ifRef("x", "ok"),
+		shellStep("after"),
+	}})
+	if !resp.Halted {
+		t.Fatal("caught but uncovered → must halt")
+	}
+	if f.called("after", "") {
+		t.Fatal("halt → later steps must not run")
+	}
+}
+
+func TestAgentCatch_ElseCatchAll(t *testing.T) {
+	// x = shell{fail}? → err with no specific tag. `if x == err.specific {} else {}`
+	// → tag doesn't match, else catches → no halt.
+	f := newFake()
+	f.set("fail", "", 1)
+	f.set("elsecmd", "", 0)
+	resp := serve(t, f, proto.Request{Mode: "apply", Steps: []proto.Step{
+		caughtCap("fail", "x"),
+		{If: &proto.IfBlock{
+			CondRef: &proto.ResultRef{Name: "x", Category: "err", Tag: "specific"},
+			Then:    []proto.Step{shellStep("thencmd")},
+			Else:    []proto.Step{shellStep("elsecmd")},
+		}},
+	}})
+	if resp.Halted {
+		t.Fatal("else catch-all → must not halt")
+	}
+	if !f.called("elsecmd", "") {
+		t.Fatal("err not matching the tag → else should run")
+	}
+	if f.called("thencmd", "") {
+		t.Fatal("tag mismatch → then must not run")
+	}
+}
+
 func TestAgentCapture_OutcomePattern(t *testing.T) {
 	// x = shell { doit } exit 0 → ok. `x == ok` runs its then; `x == err` doesn't.
 	f := newFake()
