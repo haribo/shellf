@@ -124,7 +124,6 @@ if x.changed {               // acted this run (apply ran, not a guard-skip)
   service("nginx", true, true)
 }
 if x { … }                   // sugar for `if x == ok`
-if x == err.dbLocked { … }   // match a specific error tag
 if x != ok { … }             // `!=` negates
 ```
 
@@ -133,6 +132,31 @@ if x != ok { … }             // `!=` negates
 - The old `.ok` / `.err` field tests are **removed** — use `== ok` / `== err`.
 - In `--check`, a captured `would` result makes the branch **`undetermined`** — same never-lie rule.
 - A capture is block-scoped; capturing an `if`/`parallel` is rejected.
+
+### Handling errors — `?`
+
+By default a step that returns `err` **halts** the plan (and its host): nothing is
+built on a broken base. To handle a *specific* error instead, mark the
+instruction with `?` and test its result — captured or inline:
+
+```
+x = apt.install("nginx")?          // `?` = "I handle this; don't halt automatically"
+if x == err.dbLocked { retry() }   // handled → the plan continues
+                                   // any other error → covered by nothing → halt
+
+if apt.install("nginx")? == err.dbLocked { retry() } else { report() }  // inline
+```
+
+- `?` **defers** the halt so a following `if` can test the error — *"let me try to
+  handle it"*, not *"ignore it"*.
+- An error **covered by no branch** (no matching `== err.<tag>`, no `else`)
+  **halts** — no error passes silently.
+- `else` is the explicit catch-all (it also runs on `ok`).
+- Testing `== err[.tag]` **requires** a `?` on the source: without it, halt-on-err
+  makes the branch unreachable, so it is a **compile error**. `== ok` / `!= err`
+  need no `?`.
+
+See [ADR-0009](adr/0009-error-handling.md).
 
 ### Read-only questions
 
