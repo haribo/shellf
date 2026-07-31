@@ -29,6 +29,7 @@ const (
 	tNotEq     // !=
 	tArrow     // ->
 	tBang      // !
+	tQuestion  // ? — marks a failible instruction as caught (ADR-0009)
 	tRawString // """ … """ — raw, never interpolated
 )
 
@@ -95,6 +96,7 @@ var punctuation = map[byte]tokKind{
 	'{': tLBrace, '}': tRBrace, '[': tLBrack, ']': tRBrack,
 	'(': tLParen, ')': tRParen, '=': tEq, ':': tColon, ',': tComma, '.': tDot,
 	'!': tBang, // '!=' is handled before this map, so a lone '!' lands here
+	'?': tQuestion,
 }
 
 func (l *lexer) skip() {

@@ -70,6 +70,7 @@ type Step struct {
 	Args        map[string]string `json:"args,omitempty"`
 	Refs        map[string]string `json:"refs,omitempty"`
 	Bind        string            `json:"bind,omitempty"` // capture this step's Result under this name
+	Caught      bool              `json:"caught,omitempty"` // `?` — an err here is handled, not an automatic halt (ADR-0009)
 	Parallel    []Step            `json:"parallel,omitempty"`
 	If          *IfBlock          `json:"if,omitempty"`
 }

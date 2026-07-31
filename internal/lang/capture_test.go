@@ -42,6 +42,39 @@ func TestParseCaptureDeprecatedFields(t *testing.T) {
 	}
 }
 
+func TestParseCatch_CaughtAndErrTest(t *testing.T) {
+	plan, err := ParsePlan(`on s {
+  x = apt.install("nginx")?
+  if x == err.dbLocked { dir-ensure("/o") }
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan[0].Steps[0].Caught {
+		t.Fatal("`?` should mark the capture caught")
+	}
+	if r := plan[0].Steps[1].If.CondRef; r.Category != "err" || r.Tag != "dbLocked" {
+		t.Fatalf("err test: %+v", r)
+	}
+}
+
+func TestParseCatch_ErrTestRequiresCatch(t *testing.T) {
+	// `== err` without `?` on the source is a dead branch → compile error.
+	if _, err := ParsePlan(`on s {
+  x = apt.install("nginx")
+  if x == err.dbLocked { dir-ensure("/o") }
+}`); err == nil {
+		t.Fatal("expected an error: == err without a caught source")
+	}
+	// `!= err` stays free — it is reachable via the ok path.
+	if _, err := ParsePlan(`on s {
+  x = apt.install("nginx")
+  if x != err { dir-ensure("/o") }
+}`); err != nil {
+		t.Fatalf("!= err should be allowed without `?`: %v", err)
+	}
+}
+
 func TestParseIfQualifiedCallStaysCall(t *testing.T) {
 	// docker.install() as a condition is a qualified call, not a ref
 	plan, err := ParsePlan(`on s { if docker.install() { apt.install("x") } }`)

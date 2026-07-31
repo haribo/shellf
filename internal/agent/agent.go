@@ -2,7 +2,8 @@
 // binary is pushed over SSH and re-invoked in agent mode; it reads a Request on
 // stdin and writes a Response on stdout. Steps run sequentially; a `parallel`
 // step runs its branches concurrently. A step that errors halts the rest of the
-// sequence (the halting rule). An instruction resolves to an embedded stdlib def
+// sequence (the halting rule), unless it is `?`-caught and handled by a
+// following `if` (ADR-0009). An instruction resolves to an embedded stdlib def
 // (executed by the language) or to a remaining Go builtin.
 package agent
 
@@ -30,17 +31,53 @@ func Serve(in io.Reader, out io.Writer, ex engine.Executor) error {
 }
 
 // runSteps executes a sequence, halting on the first err (the halting rule).
-// scope holds the Results captured by `name = <call>` steps in this block.
+// A `?`-caught error (ADR-0009) does not halt immediately: it is deferred so the
+// next step — an `if` on that var — can handle it; if nothing handles it, it
+// halts like any other error. scope holds the Results captured by `name =
+// <call>` steps in this block.
 func runSteps(steps []proto.Step, ex engine.Executor, m engine.Mode, scope map[string]engine.Result) (results []proto.StepResult, halted bool) {
+	pending := "" // a caught error (its var name) awaiting handling by the next step
 	for _, step := range steps {
+		if pending != "" {
+			if !handlesCaught(step, pending, scope) {
+				halted = true // caught error covered by nothing → halt
+				break
+			}
+			pending = ""
+		}
 		sr := runStep(step, ex, m, scope)
 		results = append(results, sr)
+		if step.Caught && step.Bind != "" && sr.Category == "err" {
+			pending = step.Bind // `?` defers the halt to the handling `if`
+			continue
+		}
 		if sr.Category == "err" {
 			halted = true
 			break
 		}
 	}
+	if pending != "" {
+		halted = true // a caught error was never handled
+	}
 	return results, halted
+}
+
+// handlesCaught reports whether step is an `if` that handles the caught error
+// bound to name: it must test that var and either match it (its then-branch
+// runs) or provide an `else` catch-all (ADR-0009).
+func handlesCaught(step proto.Step, name string, scope map[string]engine.Result) bool {
+	ib := step.If
+	if ib == nil || ib.CondRef == nil || ib.CondRef.Name != name {
+		return false
+	}
+	if len(ib.Else) > 0 {
+		return true
+	}
+	matched := refTruth(scope[name], ib.CondRef)
+	if ib.Negate {
+		matched = !matched
+	}
+	return matched
 }
 
 // runIf evaluates the condition, then takes the branch on its truth (an inline
