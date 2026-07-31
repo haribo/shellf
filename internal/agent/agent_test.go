@@ -10,7 +10,7 @@ import (
 	"shellf/internal/proto"
 )
 
-// These tests exercise the agent end to end, including that `apt-install` now
+// These tests exercise the agent end to end, including that `apt.install` now
 // routes through the embedded stdlib def (std/apt.shellf), not a Go builtin.
 
 const (
@@ -52,7 +52,7 @@ func (f *fakeExec) called(script, pkg string) bool {
 }
 
 func apt(pkg string) proto.Step {
-	return proto.Step{Instruction: "apt-install", Args: map[string]string{"pkg": pkg}}
+	return proto.Step{Instruction: "apt.install", Args: map[string]string{"pkg": pkg}}
 }
 
 func serve(t *testing.T, f *fakeExec, req proto.Request) proto.Response {

@@ -36,8 +36,8 @@ func TestRun_DeadHostDroppedFromLaterBlock(t *testing.T) {
 	dial := func(alias string) transport.Transport { return fakeTr{resp: resp[alias]} }
 
 	plan := Plan{
-		{Target: "all", Steps: []proto.Step{{Instruction: "apt-install", Args: map[string]string{"pkg": "nginx"}}}},
-		{Target: "all", Steps: []proto.Step{{Instruction: "apt-install", Args: map[string]string{"pkg": "redis"}}}},
+		{Target: "all", Steps: []proto.Step{{Instruction: "apt.install", Args: map[string]string{"pkg": "nginx"}}}},
+		{Target: "all", Steps: []proto.Step{{Instruction: "apt.install", Args: map[string]string{"pkg": "redis"}}}},
 	}
 	reports := Run(plan, inv, "/bin/agent", "apply", dial, nil, nil)
 

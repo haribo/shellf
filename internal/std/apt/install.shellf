@@ -1,4 +1,4 @@
-def apt-install(pkg: str) {
+def install(pkg: str) {
     pre-check: when pkg == "" -> err.pkgMustNotBeNull
 
     guard: shell { dpkg -s "$pkg" } -> ok.alreadyInstalled when ok

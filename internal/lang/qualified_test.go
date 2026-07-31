@@ -7,7 +7,7 @@ func TestParseQualifiedCall(t *testing.T) {
 on server {
   docker.install()
   docker.network("web")
-  apt-install("nginx")
+  apt.install("nginx")
 }
 `
 	plan, err := ParsePlan(src)
@@ -24,7 +24,7 @@ on server {
 	if steps[1].Instruction != "docker.network" || steps[1].Args["name"] != "web" {
 		t.Fatalf("step 1: %+v", steps[1])
 	}
-	if steps[2].Instruction != "apt-install" || steps[2].Args["pkg"] != "nginx" {
+	if steps[2].Instruction != "apt.install" || steps[2].Args["pkg"] != "nginx" {
 		t.Fatalf("step 2 (bare still works): %+v", steps[2])
 	}
 }

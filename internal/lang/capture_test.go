@@ -5,8 +5,8 @@ import "testing"
 func TestParseCapture(t *testing.T) {
 	plan, err := ParsePlan(`on s {
   x = dir-ensure("/opt")
-  if x.changed { apt-install("nginx") }
-  if x { apt-install("redis") }
+  if x.changed { apt.install("nginx") }
+  if x { apt.install("redis") }
 }`)
 	if err != nil {
 		t.Fatal(err)
@@ -25,7 +25,7 @@ func TestParseCapture(t *testing.T) {
 
 func TestParseIfQualifiedCallStaysCall(t *testing.T) {
 	// docker.install() as a condition is a qualified call, not a ref
-	plan, err := ParsePlan(`on s { if docker.install() { apt-install("x") } }`)
+	plan, err := ParsePlan(`on s { if docker.install() { apt.install("x") } }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,13 +36,13 @@ func TestParseIfQualifiedCallStaysCall(t *testing.T) {
 }
 
 func TestParseUnknownResultField(t *testing.T) {
-	if _, err := ParsePlan(`on s { x = dir-ensure("/o") if x.bogus { apt-install("y") } }`); err == nil {
+	if _, err := ParsePlan(`on s { x = dir-ensure("/o") if x.bogus { apt.install("y") } }`); err == nil {
 		t.Fatal("expected an error for an unknown result field")
 	}
 }
 
 func TestParseCaptureRejectsIf(t *testing.T) {
-	if _, err := ParsePlan(`on s { x = if dir-ensure("/o") { apt-install("y") } }`); err == nil {
+	if _, err := ParsePlan(`on s { x = if dir-ensure("/o") { apt.install("y") } }`); err == nil {
 		t.Fatal("expected an error capturing an if into a variable")
 	}
 }

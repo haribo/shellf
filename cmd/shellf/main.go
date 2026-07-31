@@ -303,7 +303,7 @@ func buildSteps(pkgs []string, par, copy string) []proto.Step {
 }
 
 func aptStep(pkg string) proto.Step {
-	return proto.Step{Instruction: "apt-install", Args: map[string]string{"pkg": pkg}}
+	return proto.Step{Instruction: "apt.install", Args: map[string]string{"pkg": pkg}}
 }
 
 func inventoryFrom(list []string, port, key string) inventory.Inventory {
