@@ -1,0 +1,13 @@
+# Fill in address/key for your target. `pkg` and `webroot` are free-form
+# per-host variables consumed by the plan.
+#
+# NOTE: shellf runs as the SSH user with no privilege escalation yet, so the
+# instructions here (apt, systemctl, writing under /opt) need a user that can run
+# them — use `root`, or a user with the right rights. See issue tracker (become).
+host web = {
+    address: "10.0.0.10",
+    user: "root",
+    key: "~/.ssh/id_deploy",
+    pkg: "nginx",
+    webroot: "/opt/dogfood"
+}
