@@ -11,7 +11,7 @@ Result = ok.<tag>(payload?) | err.<tag>(payload?) | would.<tag>(payload?)
 ```
 
 - `ok` — desired state reached. `err` — failure. `would` — check mode: the engine *would* have acted (derived, never authored).
-- Comparison at two levels: `== ok` matches the category (idempotence); `== ok.changed` matches the exact tag.
+- Comparison at two levels: `== ok` matches the category (idempotence); `== ok.installed` matches the exact tag.
 - Open set: `err.runtime(shellResult)` is mandatory (the shell fails in unbounded ways).
 - Optional payload carries data — often a `ShellResult` for diagnostics (`err.runtime(r)`).
 
@@ -101,14 +101,14 @@ See [ADR-0003](adr/0003-variable-scoping.md).
 ## Control flow — `if` / `else`
 
 ```
-if dir-create("/opt/app") {     // condition = an instruction; branch on its Result .ok
+if dir-create("/opt/app") {     // condition = an instruction; branch on its Result being ok
   apt-install("nginx")
 } else {
   apt-install("apache")
 }
 ```
 
-- The **condition is an instruction** (or a `shell` block); the branch is taken on its Result `.ok`.
+- The **condition is an instruction** (or a `shell` block); the branch is taken on its Result being `ok`.
 - The condition runs **on the target** — the agent interprets the flow.
 - A failing condition takes `else` (or is skipped): the `if` **captures** the result, so it does **not** halt (halting rule).
 - **Negation**: `if !<cond> { … }` flips the branch. This replaces the old `unless` guard (**removed from plans**): `shell { cmd } unless { g }` becomes `if !shell { g } { shell { cmd } }`, and `if !dir-exists("/opt") { dir-ensure("/opt") }` acts only when absent.
@@ -123,11 +123,15 @@ x = dir-ensure("/opt/app")   // capture the instruction's Result under `x`
 if x.changed {               // acted this run (apply ran, not a guard-skip)
   service("nginx", true, true)
 }
-if x { … }                   // `if x` is sugar for `if x.ok`
+if x { … }                   // sugar for `if x == ok`
+if x == err.dbLocked { … }   // match a specific error tag
+if x != ok { … }             // `!=` negates
 ```
 
-- `.ok` = the instruction succeeded; `.changed` = it actually acted (apply ran, not skipped by its guard).
-- In `--check`, a captured `would` result makes `if x.ok` / `if x.changed` **`undetermined`** — same never-lie rule.
+- **Outcome test** (ADR-0008): `x == ok` / `x == err` match the category; `x == ok.created` / `x == err.dbLocked` also match the tag (tag omitted = any tag of that category). `!=` negates; bare `if x` = `if x == ok`.
+- `.changed` = it actually acted (apply ran, not a guard-skip). It is **orthogonal** to the outcome category, so it stays a field, not a pattern.
+- The old `.ok` / `.err` field tests are **removed** — use `== ok` / `== err`.
+- In `--check`, a captured `would` result makes the branch **`undetermined`** — same never-lie rule.
 - A capture is block-scoped; capturing an `if`/`parallel` is rejected.
 
 ### Read-only questions

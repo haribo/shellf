@@ -14,9 +14,15 @@ func capture(cmd, unless, bind string) proto.Step {
 	return proto.Step{Instruction: "shell", Args: args, Bind: bind}
 }
 
-func ifRef(name, field string) proto.Step {
+func ifRef(name, test string) proto.Step {
+	ref := &proto.ResultRef{Name: name}
+	if test == "changed" {
+		ref.Changed = true
+	} else {
+		ref.Category = test // outcome pattern: "ok" | "err" | "would"
+	}
 	return proto.Step{If: &proto.IfBlock{
-		CondRef: &proto.ResultRef{Name: name, Field: field},
+		CondRef: ref,
 		Then:    []proto.Step{{Instruction: "shell", Args: map[string]string{"cmd": "thencmd"}}},
 	}}
 }
@@ -62,6 +68,28 @@ func TestAgentCapture_OkSugar(t *testing.T) {
 	}})
 	if !f.called("thencmd", "") {
 		t.Fatalf("x.ok true → then should run")
+	}
+}
+
+func TestAgentCapture_OutcomePattern(t *testing.T) {
+	// x = shell { doit } exit 0 → ok. `x == ok` runs its then; `x == err` doesn't.
+	f := newFake()
+	f.set("doit", "", 0)
+	f.set("yes", "", 0)
+	f.set("no", "", 0)
+	then := func(cmd string) []proto.Step {
+		return []proto.Step{{Instruction: "shell", Args: map[string]string{"cmd": cmd}}}
+	}
+	serve(t, f, proto.Request{Mode: "apply", Steps: []proto.Step{
+		capture("doit", "", "x"),
+		{If: &proto.IfBlock{CondRef: &proto.ResultRef{Name: "x", Category: "ok"}, Then: then("yes")}},
+		{If: &proto.IfBlock{CondRef: &proto.ResultRef{Name: "x", Category: "err"}, Then: then("no")}},
+	}})
+	if !f.called("yes", "") {
+		t.Fatalf("x == ok → then should run")
+	}
+	if f.called("no", "") {
+		t.Fatalf("x == err → then must NOT run")
 	}
 }
 

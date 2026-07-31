@@ -75,27 +75,42 @@ type Step struct {
 }
 
 // IfBlock is a conditional. The condition is either Cond (an instruction run
-// inline, branch on its Result `.ok`) or CondRef (a field of a previously
-// captured Result). Exactly one is set.
+// inline, branch on its Result being `ok`) or CondRef (an outcome test on a
+// previously captured Result). Exactly one is set.
 type IfBlock struct {
 	Cond    *Step      `json:"cond,omitempty"`
 	CondRef *ResultRef `json:"condRef,omitempty"`
-	Negate  bool       `json:"negate,omitempty"` // `if !cond` — flip the branch truth
+	Negate  bool       `json:"negate,omitempty"` // `if !cond` / `!=` — flip the branch truth
 	Then    []Step     `json:"then"`
 	Else    []Step     `json:"else,omitempty"`
 }
 
-// ResultRef references a field (`ok` | `changed`) of a captured Result.
+// ResultRef tests a captured Result: either the `changed` flag (Changed) or an
+// outcome pattern — a Category with an optional Tag ("" tag = category
+// wildcard), e.g. `s == ok`, `s == err.dbLocked`. See ADR-0008.
 type ResultRef struct {
-	Name  string `json:"name"`
-	Field string `json:"field"`
+	Name     string `json:"name"`
+	Category string `json:"category,omitempty"` // ok | err | would (outcome pattern)
+	Tag      string `json:"tag,omitempty"`      // optional; "" = category wildcard
+	Changed  bool   `json:"changed,omitempty"`  // test `.changed` instead of the pattern
+}
+
+// Label renders the ref for reports: `s.changed`, `s == ok`, `s == err.dbLocked`.
+func (r *ResultRef) Label() string {
+	if r.Changed {
+		return r.Name + ".changed"
+	}
+	if r.Tag != "" {
+		return r.Name + " == " + r.Category + "." + r.Tag
+	}
+	return r.Name + " == " + r.Category
 }
 
 // Label is a compact human-readable form for reports.
 func (s Step) Label() string {
 	if s.If != nil {
 		if s.If.CondRef != nil {
-			return "if(" + s.If.CondRef.Name + "." + s.If.CondRef.Field + ")"
+			return "if(" + s.If.CondRef.Label() + ")"
 		}
 		return "if(" + s.If.Cond.Label() + ")"
 	}

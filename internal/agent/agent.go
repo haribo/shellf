@@ -43,23 +43,26 @@ func runSteps(steps []proto.Step, ex engine.Executor, m engine.Mode, scope map[s
 	return results, halted
 }
 
-// runIf evaluates the condition instruction, then takes the branch on its
-// Result `.ok`. In check, a would-condition (effect not applied) makes the
-// branch undetermined — the then-branch is previewed but never claimed to run.
+// runIf evaluates the condition, then takes the branch on its truth (an inline
+// instruction's Result being `ok`, or a captured result's outcome test). In
+// check, a would-condition (effect not applied) makes the branch undetermined —
+// the then-branch is previewed but never claimed to run.
 func runIf(ib *proto.IfBlock, ex engine.Executor, m engine.Mode, scope map[string]engine.Result) proto.StepResult {
 	var condResult engine.Result
 	var condSub *proto.StepResult // the inline cond's own result, shown in Sub
-	field := "ok"
 	var label string
+	// Default predicate (inline cond): the instruction's Result is `ok`.
+	truthFn := func(r engine.Result) bool { return r.Category == engine.OK }
 
 	if ib.CondRef != nil {
-		label = "if(" + ib.CondRef.Name + "." + ib.CondRef.Field + ")"
-		r, ok := scope[ib.CondRef.Name]
+		ref := ib.CondRef
+		label = "if(" + ref.Label() + ")"
+		r, ok := scope[ref.Name]
 		if !ok {
 			return proto.StepResult{Label: label, Category: "err", Tag: "undefinedResult"}
 		}
 		condResult = r
-		field = ib.CondRef.Field
+		truthFn = func(res engine.Result) bool { return refTruth(res, ref) }
 	} else {
 		label = "if(" + ib.Cond.Label() + ")"
 		res, err := runInstruction(*ib.Cond, ex, m)
@@ -76,7 +79,7 @@ func runIf(ib *proto.IfBlock, ex engine.Executor, m engine.Mode, scope map[strin
 		return proto.StepResult{Label: label, Category: "undetermined", Sub: withCond(condSub, preview)}
 	}
 
-	truth := fieldTruth(condResult, field)
+	truth := truthFn(condResult)
 	if ib.Negate {
 		truth = !truth
 	}
@@ -92,11 +95,16 @@ func runIf(ib *proto.IfBlock, ex engine.Executor, m engine.Mode, scope map[strin
 	return proto.StepResult{Label: label, Category: cat, Sub: withCond(condSub, subs)}
 }
 
-func fieldTruth(r engine.Result, field string) bool {
-	if field == "changed" {
+// refTruth evaluates a captured-result test: the `changed` flag, or an outcome
+// pattern — category match plus an optional tag match ("" tag = wildcard).
+func refTruth(r engine.Result, ref *proto.ResultRef) bool {
+	if ref.Changed {
 		return r.Changed
 	}
-	return r.Category == engine.OK
+	if r.Category.String() != ref.Category {
+		return false
+	}
+	return ref.Tag == "" || r.Tag == ref.Tag
 }
 
 func withCond(cond *proto.StepResult, subs []proto.StepResult) []proto.StepResult {

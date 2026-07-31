@@ -285,7 +285,11 @@ func (p *parser) ifStep() proto.Step {
 		p.adv()
 		ib.Negate = true
 	}
-	if cond, ref := p.condition(); ref != nil {
+	cond, ref, neg := p.condition()
+	if neg { // `!=` flips the branch truth, composing with a leading `!`
+		ib.Negate = !ib.Negate
+	}
+	if ref != nil {
 		ib.CondRef = ref
 	} else {
 		ib.Cond = cond
@@ -298,32 +302,52 @@ func (p *parser) ifStep() proto.Step {
 	return proto.Step{If: ib}
 }
 
-// condition parses an if condition: an instruction (call or shell) run inline,
-// or a reference to a captured Result's field (`s1.ok`, `s1.changed`, or bare
-// `s1` = `s1.ok`).
-func (p *parser) condition() (*proto.Step, *proto.ResultRef) {
+// condition parses an if condition and reports whether it is negated (`!=`).
+// It is one of: an instruction (call or shell) run inline; an outcome test on a
+// captured Result (`s == ok`, `s != err.dbLocked`); the `.changed` flag
+// (`s.changed`); or a bare capture (`s` = `s == ok`). See ADR-0008.
+func (p *parser) condition() (*proto.Step, *proto.ResultRef, bool) {
 	if p.tok.kind == tIdent && p.tok.val == "shell" {
 		s := p.shellStep()
-		return &s, nil
+		return &s, nil, false
 	}
 	name := p.expect(tIdent, "condition").val
+
+	// Outcome-pattern test: `s == ok`, `s == err.dbLocked`, `s != err`.
+	if p.tok.kind == tEqEq || p.tok.kind == tNotEq {
+		neg := p.tok.kind == tNotEq
+		p.adv()
+		ref := &proto.ResultRef{Name: name, Category: p.expect(tIdent, "outcome category").val}
+		if ref.Category != "ok" && ref.Category != "err" && ref.Category != "would" {
+			p.fail("unknown outcome category %q (want ok/err/would)", ref.Category)
+		}
+		if p.tok.kind == tDot { // optional tag: `== err.dbLocked`
+			p.adv()
+			ref.Tag = p.expect(tIdent, "outcome tag").val
+		}
+		return nil, ref, neg
+	}
+
 	if p.tok.kind == tDot {
 		p.adv()
 		second := p.expect(tIdent, "field or instruction").val
 		if p.tok.kind == tLParen { // qualified call: name.second(...)
 			s := p.call(name + "." + second)
-			return &s, nil
+			return &s, nil, false
 		}
-		if second != "ok" && second != "changed" {
-			p.fail("unknown result field %q (want ok or changed)", second)
+		if second == "changed" {
+			return nil, &proto.ResultRef{Name: name, Changed: true}, false
 		}
-		return nil, &proto.ResultRef{Name: name, Field: second}
+		if second == "ok" || second == "err" {
+			p.fail("`.%s` on a result was removed; test it with `== %s` (ADR-0008)", second, second)
+		}
+		p.fail("unknown result field %q (want .changed, or == ok/err)", second)
 	}
 	if p.tok.kind == tLParen { // call: name(...)
 		s := p.call(name)
-		return &s, nil
+		return &s, nil, false
 	}
-	return nil, &proto.ResultRef{Name: name, Field: "ok"} // `if s1 {` → s1.ok
+	return nil, &proto.ResultRef{Name: name, Category: "ok"}, false // `if s {` → s == ok
 }
 
 // shellStep parses `shell <line>` or `shell { … }` with an optional
