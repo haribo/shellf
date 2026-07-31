@@ -1,11 +1,11 @@
 def dir-ensure(path: str) {
     guard {
         r = shell { test -d "$path" }
-        if r.ok { return ok.already }
+        if r { return ok.already }
     }
     apply {
         r = shell { mkdir -p "$path" }
-        if r.exit != 0 { return err.runtime(r) }
+        if !r { return err.runtime(r) }
         return ok.created
     }
 }
@@ -13,11 +13,11 @@ def dir-ensure(path: str) {
 def dir-owner(path: str, owner: str) {
     guard {
         r = shell { test "$(stat -c '%U:%G' "$path")" = "$owner" }
-        if r.ok { return ok.already }
+        if r { return ok.already }
     }
     apply {
         r = shell { chown -R "$owner" "$path" }
-        if r.exit != 0 { return err.runtime(r) }
+        if !r { return err.runtime(r) }
         return ok.changed
     }
 }
@@ -26,7 +26,7 @@ def dir-owner(path: str, owner: str) {
 def dir-exists(path: str) {
     check {
         r = shell { test -d "$path" }
-        if r.ok { return ok.present }
+        if r { return ok.present }
         return err.absent
     }
 }

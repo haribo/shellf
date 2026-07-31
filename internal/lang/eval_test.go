@@ -14,11 +14,11 @@ def apt-install(pkg: str) {
     }
     guard {
         r = shell { dpkg -s "$pkg" }
-        if r.ok { return ok.pkgAlreadyInstalled }
+        if r { return ok.pkgAlreadyInstalled }
     }
     apply {
         r = shell { apt-get install -y "$pkg" }
-        if r.exit != 0 { return err.runtime(r) }
+        if !r { return err.runtime(r) }
         return ok.pkgInstalled
     }
 }`
@@ -108,6 +108,19 @@ func TestEvalDef_Check_WouldNotMutate(t *testing.T) {
 	}
 	if f.calls[aptS] {
 		t.Fatal("check mode ran apt-get")
+	}
+}
+
+// ADR-0010: `.ok` on a shell result is gone — success is `if r` / `.exit == 0`.
+func TestEvalDef_ShellDotOkRejected(t *testing.T) {
+	src := `def q(p: str) { guard { r = shell { test -d "$p" } if r.ok { return ok.yes } } }`
+	defs, err := ParseDefs(src) // `.ok` still parses as a Field; it fails at eval
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &evalFake{resp: map[string]engine.ShellResult{`test -d "$p"`: {Exit: 0}}}
+	if _, err := EvalDef(defs[0], map[string]string{"p": "/x"}, f, engine.Apply); err == nil {
+		t.Fatal("`.ok` on a shell result must be an eval error (ADR-0010)")
 	}
 }
 

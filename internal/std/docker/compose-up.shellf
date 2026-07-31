@@ -4,7 +4,7 @@ def compose-up(dir: str) {
             cd "$dir"
             docker compose up -d
         }
-        if r.exit != 0 { return err.runtime(r) }
+        if !r { return err.runtime(r) }
         return ok.up
     }
 }

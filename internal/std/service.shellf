@@ -5,14 +5,14 @@ def service(name: str, running: str, enabled: str) {
             e=$(systemctl is-enabled --quiet "$name" && echo true || echo false)
             [ "$a" = "$running" ] && [ "$e" = "$enabled" ]
         }
-        if r.ok { return ok.already }
+        if r { return ok.already }
     }
     apply {
         r = shell {
             if [ "$running" = true ]; then systemctl start "$name"; else systemctl stop "$name"; fi
             if [ "$enabled" = true ]; then systemctl enable "$name"; else systemctl disable "$name"; fi
         }
-        if r.exit != 0 { return err.runtime(r) }
+        if !r { return err.runtime(r) }
         return ok.converged
     }
 }

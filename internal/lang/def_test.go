@@ -10,11 +10,11 @@ def install(pkg: str) {
     }
     guard {
         r = shell { dpkg -s "$pkg" }
-        if r.ok { return ok.pkgAlreadyInstalled }
+        if r { return ok.pkgAlreadyInstalled }
     }
     apply {
         r = shell { apt-get install -y "$pkg" }
-        if r.exit != 0 { return err.runtime(r) }
+        if !r { return err.runtime(r) }
         return ok.pkgInstalled
     }
 }
@@ -65,15 +65,17 @@ def install(pkg: str) {
 	}
 }
 
-func TestParseDef_BoolFieldBinaryPayload(t *testing.T) {
+func TestParseDef_TruthyUnaryPayload(t *testing.T) {
+	// ADR-0010: shell success is `if r` (truthy), failure is `if !r` (unary).
 	src := `
 def svc(name: str, want: bool) {
     guard {
-        if shell { systemctl is-active --quiet "$name" }.ok == want { return ok.already }
+        r = shell { systemctl is-active --quiet "$name" }
+        if r { return ok.already }
     }
     apply {
         r = shell { systemctl start "$name" }
-        if r.exit != 0 { return err.runtime(r) }
+        if !r { return err.runtime(r) }
         return ok.changed
     }
 }
@@ -87,31 +89,23 @@ def svc(name: str, want: bool) {
 		t.Fatalf("bool param: %+v", d.Params)
 	}
 
-	// guard: `if (shell{}.ok == want) { return ok.already }`
-	gif, ok := d.Phases[0].Stmts[0].(IfStmt)
+	// guard: `if r { … }` — truthy on a ShellResult (bare Ident cond).
+	gif, ok := d.Phases[0].Stmts[1].(IfStmt)
 	if !ok {
-		t.Fatalf("guard stmt: %T", d.Phases[0].Stmts[0])
+		t.Fatalf("guard stmt1: %T", d.Phases[0].Stmts[1])
 	}
-	bin, ok := gif.Cond.(Binary)
-	if !ok || bin.Op != "==" {
-		t.Fatalf("guard cond not a binary: %+v", gif.Cond)
-	}
-	f, ok := bin.L.(Field)
-	if !ok || f.Name != "ok" {
-		t.Fatalf("lhs not field .ok: %+v", bin.L)
-	}
-	if _, ok := f.Recv.(ShellExpr); !ok {
-		t.Fatalf("field recv not shell: %T", f.Recv)
+	if id, ok := gif.Cond.(Ident); !ok || id.Name != "r" {
+		t.Fatalf("guard cond not `r`: %+v", gif.Cond)
 	}
 
-	// apply: LetStmt + `if r.exit != 0 { return err.runtime(r) }`
-	apply := d.Phases[1]
-	if _, ok := apply.Stmts[0].(LetStmt); !ok {
-		t.Fatalf("first apply stmt not let: %T", apply.Stmts[0])
+	// apply: `if !r { return err.runtime(r) }` — unary `!` + err payload.
+	aif := d.Phases[1].Stmts[1].(IfStmt)
+	un, ok := aif.Cond.(Unary)
+	if !ok || un.Op != "!" {
+		t.Fatalf("apply cond not `!r`: %+v", aif.Cond)
 	}
-	aif := apply.Stmts[1].(IfStmt)
-	if b := aif.Cond.(Binary); b.Op != "!=" {
-		t.Fatalf("if cond op: %s", b.Op)
+	if id, ok := un.X.(Ident); !ok || id.Name != "r" {
+		t.Fatalf("unary operand not `r`: %+v", un.X)
 	}
 	ret := aif.Body[0].(ReturnStmt)
 	if ret.Outcome.Tag != "runtime" || ret.Outcome.Payload == nil {
