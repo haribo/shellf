@@ -66,6 +66,40 @@ useful *with* an ecosystem, it dies of cold-start like its predecessors.
   supply-chain risk than Ansible's structured modules. SHA pinning (never a
   mutable tag) is mandatory; signing/audit may follow if sharing goes public.
 
+## Rejected alternative — a separate stdlib repo with `import core`
+
+*(Amendment 2026-08-01: debated and rejected; recorded so it is not
+re-litigated. Same decision clarified — Status unchanged, per ADR-0001 §4.)*
+
+Proposal: move the stdlib to a separate `shellf-stdlib` repo, fetched via an
+`import core` mechanism from GitHub. **Rejected**, because:
+
+- The agent binary **embeds** the stdlib. An external repo means either re-embed
+  at build time (the split is just repo plumbing) or fetch at runtime — which
+  kills the air-gap / agentless story and adds supply-chain surface *on the
+  targets*.
+- `import core` needs the full phase-3 import design (resolution, lockfile,
+  integrity/SHA, wire-shipping of defs) — a package manager, premature with zero
+  third-party modules and zero users.
+- The def grammar is still unstable (three breaking changes in one month:
+  grammar v2, outcome matching, `?` catch), each migrating the stdlib **in the
+  same commit**. A split turns every language change into lockstep PRs across two
+  repos plus a shellf×libs compatibility matrix.
+- The stdlib is the language's de-facto conformance suite: a language change that
+  breaks a def must fail CI **in the same PR**.
+- Precedent: Go/Rust/Python keep their stdlib in the toolchain repo even though
+  it is written in the target language and maintained by different people;
+  Terraform's provider split needed a registry + protocol and a massive user base
+  to amortise it. Different-maintainer needs are covered in-repo by CODEOWNERS on
+  `std/`.
+
+**North star (locked):** the stdlib stays *extractable* — pure `.shellf`, zero Go
+adhesion (#107 removed the last coupling), a documented contract. **Extraction
+trigger:** the def grammar stable across N releases **and** the phase-3
+import/distribution design done. `import core` as forward-compatible syntax
+resolving to the embedded stdlib may be evaluated *within* that import design —
+not before.
+
 ## Consequences
 
 - 0.2+ needs: import syntax, a resolver, and a lockfile. Local imports first.
