@@ -1,7 +1,7 @@
 # shellf — document de design
 
 > Document vivant. Miroir markdown de l'artefact : https://claude.ai/code/artifact/978f0176-274b-444c-940c-8734141e7bd2
-> Statut : exploration du meta-langage. Aucun code. Nom `shellf` (de travail, dispo).
+> Statut : langage **implémenté** (interpréteur, transport SSH, agent résident, stdlib embarquée) — ce document garde l'historique de design ; décisions actées dans `docs/adr/`. Nom `shellf` (de travail, dispo).
 
 Légende statut : ✅ **résolu** · 🟠 **à trancher** · 🔴 **risque / problème dur**
 
@@ -15,7 +15,7 @@ Chez Ansible/Puppet/Chef, tomber dans le `shell` est la défaite (perte d'idempo
 
 ### Les trois paris d'architecture (✅)
 - **Agentless, un seul binaire.** L'utilisateur n'a besoin que du binaire + accès SSH. Rien à installer sur les cibles.
-- **Agent éphémère qui évalue sur la cible.** Poussé par SSH à la première connexion, il interprète le programme **sur la machine** (une connexion, vitesse quasi-locale). C'est le minion Salt/Puppet, mais sans install permanente. **≠ pyinfra**, qui évalue en local et n'envoie que du shell.
+- **Agent résident auto-nettoyé qui évalue sur la cible.** Poussé par SSH, mis en cache par hash et laissé **résident** entre les jobs ; il s'auto-efface après un TTL d'inactivité (rien ne survit à un reboot) — pas d'install permanente durable (ADR-0005). Il interprète le programme **sur la machine** (une connexion, vitesse quasi-locale). C'est le minion Salt/Puppet. **≠ pyinfra**, qui évalue en local et n'envoie que du shell.
 - **Deux plans.** Plan d'**orchestration** (côté contrôle : « sur ces 40 hôtes, dans cet ordre ») + plan d'**exécution** (l'agent, sur la cible). Ne pas les mélanger — c'est le péché de Jinja d'Ansible.
 
 ### Philosophie (✅)
