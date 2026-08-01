@@ -10,6 +10,7 @@ import "strings"
 type Shell struct {
 	Cmd    string
 	Unless string // read-only guard; empty = no guard
+	Env    Env    // per-host variables, injected as $name (injection-safe) (#106)
 }
 
 func (s Shell) Name() string       { return "shell" }
@@ -28,7 +29,7 @@ func (s Shell) Guard(ex Executor) *Result {
 	if s.Unless == "" {
 		return nil // no guard → always run
 	}
-	if ex.Shell(s.Unless, nil).OK() {
+	if ex.Shell(s.Unless, s.Env).OK() {
 		r := Ok("alreadySatisfied")
 		return &r
 	}
@@ -36,7 +37,7 @@ func (s Shell) Guard(ex Executor) *Result {
 }
 
 func (s Shell) Apply(ex Executor) Result {
-	r := ex.Shell(s.Cmd, nil)
+	r := ex.Shell(s.Cmd, s.Env)
 	if !r.OK() {
 		return ErrShell("runtime", r)
 	}
