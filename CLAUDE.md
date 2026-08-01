@@ -17,8 +17,8 @@ Rules must be concise. One rule per line when possible.
 
 ## Project status
 
-- Meta-language design phase. **No code yet.** `shellf` = working name, verified available.
-- Thesis: "Raw shell, but idempotent, previewable, fast." The shell is a first-class citizen, not the shameful escape hatch. Full spec: `DESIGN.md`.
+- **Implemented, integration phase.** The interpreter (lexer/parser/evaluator), SSH transport, the detached **resident** agent (ADR-0005), and an embedded stdlib all exist and are exercised end-to-end. `shellf` = working name, verified available.
+- Thesis: "Raw shell, but idempotent, previewable, fast." The shell is a first-class citizen, not the shameful escape hatch. Full spec: `DESIGN.md`; resolved decisions in `docs/adr/`.
 
 ## Design ↔ code
 
@@ -29,8 +29,8 @@ Rules must be concise. One rule per line when possible.
 ## Discipline (user-requested)
 
 - Do NOT design imports / ecosystem / sharing yet (phase 3).
-- Do NOT invent a language from scratch if avoidable — decision open.
-- First milestone = engine + ONE hardcoded instruction in Go, pushed over SSH via the ephemeral agent, in apply AND check mode. NOT the parser/lexer (the trap). `Executor` (shell) = injectable interface from commit 1 (testability).
+- The language is now real (grammar, lexer, parser, evaluator) — the "don't invent a language" caution is **resolved**; grammar changes go through an ADR.
+- The first milestone (engine + instructions over SSH via the agent, apply AND check) is **done**; the stdlib is now self-hosted (`def` in shellf, embedded). `Executor` (shell) stays an injectable interface (testability).
 
 ## Docs — read in order
 
