@@ -75,8 +75,7 @@ func processJob(workdir, reqPath string, ex engine.Executor) {
 	if err := json.Unmarshal(data, &req); err != nil {
 		resp.Error = "decode: " + err.Error()
 	} else {
-		results, halted := runSteps(req.Steps, ex, mode(req.Mode), map[string]engine.Result{})
-		resp = proto.Response{Results: results, Halted: halted}
+		resp = runRequest(req, ex) // shared path: pre-flight + run (ADR-0012)
 	}
 
 	out, _ := json.Marshal(resp)

@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
+	"strings"
 	"sync"
 
 	"shellf/internal/engine"
@@ -26,8 +28,53 @@ func Serve(in io.Reader, out io.Writer, ex engine.Executor) error {
 		return write(out, proto.Response{Error: fmt.Sprintf("decode: %v", err)})
 	}
 
+	return write(out, runRequest(req, ex))
+}
+
+// runRequest pre-flights the interpreters, then runs the steps. Shared by Serve
+// (one-shot) and the resident agent's processJob, so both enforce the pre-flight.
+func runRequest(req proto.Request, ex engine.Executor) proto.Response {
+	// Pre-flight: fail before running if a required interpreter is absent, rather
+	// than mid-apply at the first `shell(<interp>)` (ADR-0012).
+	if missing := missingInterpreters(req.Steps, ex); len(missing) > 0 {
+		r := proto.StepResult{Label: "pre-flight", Category: "err", Tag: "interpreterMissing",
+			Shell: &engine.ShellResult{Stderr: "interpreter not found on target: " + strings.Join(missing, ", ")}}
+		return proto.Response{Results: []proto.StepResult{r}, Halted: true}
+	}
 	results, halted := runSteps(req.Steps, ex, mode(req.Mode), map[string]engine.Result{})
-	return write(out, proto.Response{Results: results, Halted: halted})
+	return proto.Response{Results: results, Halted: halted}
+}
+
+// missingInterpreters returns the shell interpreters used by the steps that are
+// not available on this target. sh/raw map to /bin/sh and are never checked.
+func missingInterpreters(steps []proto.Step, ex engine.Executor) []string {
+	need := map[string]bool{}
+	collectInterpreters(steps, need)
+	var missing []string
+	for interp := range need {
+		if !ex.Shell("command -v "+interp, nil).OK() {
+			missing = append(missing, interp)
+		}
+	}
+	sort.Strings(missing)
+	return missing
+}
+
+func collectInterpreters(steps []proto.Step, need map[string]bool) {
+	for _, s := range steps {
+		if s.Instruction == "shell" && s.Interp != "" && s.Interp != "sh" && s.Interp != "raw" {
+			need[s.Interp] = true
+		}
+		if s.If != nil {
+			if s.If.Cond != nil {
+				collectInterpreters([]proto.Step{*s.If.Cond}, need)
+			}
+			collectInterpreters(s.If.Then, need)
+			collectInterpreters(s.If.Else, need)
+		}
+		collectInterpreters(s.Block, need)
+		collectInterpreters(s.Parallel, need)
+	}
 }
 
 // runSteps executes a sequence, halting on the first err (the halting rule).
