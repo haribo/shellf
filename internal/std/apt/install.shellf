@@ -1,4 +1,4 @@
-def install(pkg: str) {
+def install(pkg: str) as root {
     pre-check {
         if pkg == "" { return err.pkgMustNotBeNull }
     }

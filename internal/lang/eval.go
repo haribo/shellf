@@ -25,7 +25,9 @@ func EvalDef(def Def, args map[string]string, ex engine.Executor, mode engine.Mo
 		}
 	}()
 
-	ev := &evaluator{ex: ex, vars: map[string]value{}}
+	// A def's own `as <user>` escalates all its shells; it wins over an enclosing
+	// block's become (applied last). `As("")` is a no-op (ADR-0011).
+	ev := &evaluator{ex: ex.As(def.Become), vars: map[string]value{}}
 	for k, v := range args {
 		ev.vars[k] = v
 	}

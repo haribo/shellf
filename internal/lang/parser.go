@@ -233,8 +233,17 @@ func (p *parser) plan() orchestrator.Plan {
 			continue
 		}
 		target := p.expect(tIdent, "group or host").val
+		become := ""
+		if p.tok.kind == tIdent && p.tok.val == "as" { // `on <target> as <user> { … }` (ADR-0011)
+			p.adv()
+			become = p.expect(tIdent, "user after 'as'").val
+		}
 		p.caught = map[string]bool{} // caught vars are scoped to their `on` block
-		plan = append(plan, orchestrator.Block{Target: target, Steps: p.block()})
+		steps := p.block()
+		if become != "" { // escalate the whole block by wrapping it
+			steps = []proto.Step{{Become: become, Block: steps}}
+		}
+		plan = append(plan, orchestrator.Block{Target: target, Steps: steps})
 	}
 	return plan
 }

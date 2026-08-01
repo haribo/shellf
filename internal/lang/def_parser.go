@@ -24,6 +24,10 @@ func (p *parser) def() Def {
 	}
 	d := Def{Name: p.expect(tIdent, "def name").val, Params: p.params()}
 
+	if p.tok.kind == tIdent && p.tok.val == "as" { // `def name(params) as <user> { … }` (ADR-0011)
+		p.adv()
+		d.Become = p.expect(tIdent, "user after 'as'").val
+	}
 	p.expect(tLBrace, "{")
 	for p.tok.kind != tRBrace {
 		switch {

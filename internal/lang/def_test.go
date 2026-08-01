@@ -116,6 +116,21 @@ def svc(name: str, want: bool) {
 	}
 }
 
+func TestParseDef_Become(t *testing.T) {
+	defs, err := ParseDefs(`def install(pkg: str) as root { apply { return ok.installed } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defs[0].Become != "root" {
+		t.Fatalf("def become: %q", defs[0].Become)
+	}
+	// no `as` → empty become
+	plain, _ := ParseDefs(`def q(p: str) { check { return ok.yes } }`)
+	if plain[0].Become != "" {
+		t.Fatalf("unmarked def become: %q", plain[0].Become)
+	}
+}
+
 func TestParseDef_Errors(t *testing.T) {
 	cases := []string{
 		`def x(pkg str) { return ok.a }`,                 // missing colon in param

@@ -18,6 +18,22 @@ type fakeExec struct {
 
 func (f *fakeExec) As(string) engine.Executor { return f }
 
+func TestStd_IntrinsicBecome(t *testing.T) {
+	// Intrinsic `as root` defs (need root regardless of arguments).
+	for _, name := range []string{"apt.install", "service", "ufw.enable", "ufw.open", "docker.install", "docker.network", "user-group", "dir-owner"} {
+		def, ok := Lookup(name)
+		if !ok || def.Become != "root" {
+			t.Fatalf("%s should be intrinsic `as root`: ok=%v become=%q", name, ok, def.Become)
+		}
+	}
+	// Path-dependent defs stay un-escalated; the caller decides.
+	for _, name := range []string{"dir-ensure", "file-write", "dir-exists"} {
+		if def, _ := Lookup(name); def.Become != "" {
+			t.Fatalf("%s should not be intrinsic: become=%q", name, def.Become)
+		}
+	}
+}
+
 func (f *fakeExec) Shell(script string, _ engine.Env) engine.ShellResult {
 	f.calls = append(f.calls, script)
 	f.n++

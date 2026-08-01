@@ -1,4 +1,4 @@
-def install() {
+def install() as root {
     guard {
         r = shell { command -v docker }
         if r { return ok.already }

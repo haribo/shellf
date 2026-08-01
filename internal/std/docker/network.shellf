@@ -1,4 +1,4 @@
-def network(name: str) {
+def network(name: str) as root {
     guard {
         r = shell { docker network inspect "$name" }
         if r { return ok.already }
