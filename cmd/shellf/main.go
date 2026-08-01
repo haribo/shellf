@@ -1,8 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -13,7 +11,6 @@ import (
 
 	"shellf/internal/agent"
 	"shellf/internal/engine"
-	"shellf/internal/inventory"
 	"shellf/internal/lang"
 	"shellf/internal/orchestrator"
 	"shellf/internal/proto"
@@ -59,66 +56,10 @@ func main() {
 		return
 	}
 
-	targets := flag.String("targets", "", "comma-separated user@host list (empty = run locally)")
-	port := flag.String("port", "", "ssh port (shared by all targets)")
-	key := flag.String("key", "", "ssh identity file")
-	knownHosts := flag.String("known-hosts", "", "known_hosts path (default ~/.ssh/known_hosts)")
-	insecure := flag.Bool("insecure", false, "skip host-key verification (dev only)")
-	par := flag.String("par", "", "extra packages to install in a parallel block")
-	cp := flag.String("copy", "", "append a file-copy step, as src:dst")
-	check := flag.Bool("check", false, "dry-run: decide without mutating")
-	flag.Parse()
-
-	// Build the step sequence: positional pkgs sequential, --par as one parallel block.
-	steps := buildSteps(flag.Args(), *par, *cp)
-	if len(steps) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: shellf [--targets u@h1,u@h2] [--par p1,p2] [--check] <pkg>...")
-		os.Exit(2)
-	}
-
-	modeStr := "apply"
-	if *check {
-		modeStr = "check"
-	}
-
-	// Local path: run the sequence here via the same agent code.
-	if *targets == "" {
-		req, _ := json.Marshal(proto.Request{Mode: modeStr, Steps: steps})
-		var out bytes.Buffer
-		if err := agent.Serve(bytes.NewReader(req), &out, engine.ShellExecutor{}); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		var resp proto.Response
-		json.Unmarshal(out.Bytes(), &resp)
-		anyErr := false
-		for _, s := range resp.Results {
-			printStep(s, "  ")
-			anyErr = anyErr || s.Category == "err"
-		}
-		exitFor(anyErr)
-		return
-	}
-
-	// Fleet path: build a one-group inventory from --targets, run one `on` block.
-	inv := inventoryFrom(splitList(*targets), *port, *key)
-	dial := func(alias string) transport.Transport {
-		h, _ := inv.Resolve(alias)
-		return transport.SSH{
-			User: h.User, Host: h.Address, Port: h.Port, Key: h.Key,
-			KnownHosts: *knownHosts, Insecure: *insecure,
-		}
-	}
-
-	self, err := os.Executable()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	plan := orchestrator.Plan{{Target: "targets", Steps: steps}}
-	reports := orchestrator.Run(plan, inv, self, modeStr, dial, nil, nil)
-	printReports(reports)
+	fmt.Fprint(os.Stderr, "usage:\n"+
+		"  shellf run --inventory <hosts.shellf> [--vars <f>] [--set k=v] [--check] [--insecure] <plan.shellf>\n"+
+		"  shellf clean --inventory <hosts.shellf> [--insecure] [target...]\n")
+	os.Exit(2)
 }
 
 // runCmd: shellf run <plan.shellf> --inventory <hosts.shellf> [--check] [flags].
@@ -280,45 +221,6 @@ func cleanCmd(args []string) {
 	exitFor(anyErr)
 }
 
-func buildSteps(pkgs []string, par, copy string) []proto.Step {
-	var steps []proto.Step
-	for _, p := range pkgs {
-		steps = append(steps, aptStep(p))
-	}
-	if branches := splitList(par); len(branches) > 0 {
-		var block []proto.Step
-		for _, p := range branches {
-			block = append(block, aptStep(p))
-		}
-		steps = append(steps, proto.Step{Parallel: block})
-	}
-	if copy != "" {
-		src, dst, _ := strings.Cut(copy, ":")
-		steps = append(steps, proto.Step{
-			Instruction: "file-copy",
-			Args:        map[string]string{"src": src, "dst": dst},
-		})
-	}
-	return steps
-}
-
-func aptStep(pkg string) proto.Step {
-	return proto.Step{Instruction: "apt.install", Args: map[string]string{"pkg": pkg}}
-}
-
-func inventoryFrom(list []string, port, key string) inventory.Inventory {
-	inv := inventory.Inventory{
-		Hosts:  map[string]inventory.Host{},
-		Groups: map[string][]string{},
-	}
-	for _, t := range list {
-		user, addr, _ := strings.Cut(t, "@")
-		inv.Hosts[t] = inventory.Host{Address: addr, User: user, Port: port, Key: key}
-		inv.Groups["targets"] = append(inv.Groups["targets"], t)
-	}
-	return inv
-}
-
 func printReports(reports []orchestrator.BlockReport) {
 	anyErr := false
 	for _, b := range reports {
@@ -362,16 +264,6 @@ func printStep(s proto.StepResult, indent string) {
 	for _, sub := range s.Sub {
 		printStep(sub, indent+"  ")
 	}
-}
-
-func splitList(csv string) []string {
-	var out []string
-	for _, p := range strings.Split(csv, ",") {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
 }
 
 func exitFor(isErr bool) {
