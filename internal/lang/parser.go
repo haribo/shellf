@@ -9,32 +9,16 @@ import (
 	"shellf/internal/proto"
 )
 
-// instructionArgs maps an instruction (bare or qualified) to its positional
-// argument names, so the parser can turn `apt.install("nginx")` into
-// Step{Instruction:"apt.install", Args:{"pkg":"nginx"}}. A known smell: this
-// duplicates each def's params; resolving positional args at eval time (where
-// the def is known) is the cleaner future.
-var instructionArgs = map[string][]string{
-	"apt.install":     {"pkg"},
-	"file-copy":       {"src", "dst"},
-	"service":         {"name", "running", "enabled"},
-	"file-download":   {"url", "dst", "sha256"},
-	"archive-extract": {"src", "dst"},
-	"git-clone":       {"url", "dst"},
-	"dir-ensure":      {"path"},
-	"dir-exists":      {"path"},
-	"dir-owner":       {"path", "owner"},
-	"file-exists":     {"path"},
-	"user-group":      {"user", "group"},
-	"file-write":      {"path", "content"},
-	"file-line":       {"path", "line"},
-	"file-delete":     {"path"},
-	"docker.install":    {},
-	"docker.network":    {"name"},
-	"docker.compose-up": {"dir"},
-	"ufw.open":          {"port", "proto"},
-	"ufw.enable":        {},
-}
+// InstructionSig reports an instruction's positional parameter names, so the
+// parser can turn `apt.install("nginx")` into Step{Args:{"pkg":"nginx"}}. The
+// caller supplies it (from `std.Lookup` + builtins), so signatures live with the
+// defs, not a duplicated map here (#107).
+type InstructionSig func(name string) (params []string, ok bool)
+
+// defaultSig backs ParsePlan (the no-vars convenience used by tests, which set
+// it — see sig_test.go). Production goes through ParsePlanWithVars with an
+// explicit std-backed sig.
+var defaultSig InstructionSig
 
 // ParseInventory parses an inventory file into an Inventory.
 func ParseInventory(src string) (inv inventory.Inventory, err error) {
@@ -46,18 +30,20 @@ func ParseInventory(src string) (inv inventory.Inventory, err error) {
 
 // ParsePlan parses a plan file into an orchestration Plan.
 func ParsePlan(src string) (orchestrator.Plan, error) {
-	return ParsePlanWithVars(src, map[string]string{}, nil)
+	return ParsePlanWithVars(src, map[string]string{}, nil, defaultSig)
 }
 
 // ParsePlanWithVars parses a plan with pre-loaded global variables. `baseVars`
 // (from a --vars file) is the lower-precedence table; `setVars` (from --set) is
-// the highest. Plan-level bindings are appended to `baseVars` (which is mutated
-// in place), so the caller can pass the enriched table to the orchestrator for
-// per-host resolution of the Steps' Refs. Interpolation and binding values are
-// resolved here; bare-identifier arguments are left as Refs.
-func ParsePlanWithVars(src string, baseVars, setVars map[string]string) (plan orchestrator.Plan, err error) {
+// the highest. `sig` supplies instruction parameter names. Plan-level bindings
+// are appended to `baseVars` (mutated in place), so the caller can pass the
+// enriched table to the orchestrator for per-host resolution of the Steps'
+// Refs. Interpolation and binding values are resolved here; bare-identifier
+// arguments are left as Refs.
+func ParsePlanWithVars(src string, baseVars, setVars map[string]string, sig InstructionSig) (plan orchestrator.Plan, err error) {
 	defer catch(&err)
 	p := newParser(src)
+	p.sig = sig
 	if baseVars != nil {
 		p.baseVars = baseVars
 	}
@@ -99,6 +85,7 @@ type parser struct {
 	baseVars map[string]string // --vars + plan bindings (lower precedence)
 	setVars  map[string]string // --set overrides (highest precedence)
 	caught   map[string]bool   // vars bound with `?` in the current `on` block (ADR-0009)
+	sig      InstructionSig    // instruction parameter names, supplied by the caller (#107)
 }
 
 func newParser(src string) *parser {
@@ -425,7 +412,11 @@ func (p *parser) asBlock() proto.Step {
 }
 
 func (p *parser) call(name string) proto.Step {
-	argNames, ok := instructionArgs[name]
+	var argNames []string
+	ok := false
+	if p.sig != nil {
+		argNames, ok = p.sig(name)
+	}
 	if !ok {
 		p.fail("unknown instruction %q", name)
 	}

@@ -71,7 +71,7 @@ on server {
 }
 `
 	base := map[string]string{}
-	plan, err := ParsePlanWithVars(src, base, nil)
+	plan, err := ParsePlanWithVars(src, base, nil, defaultSig)
 	if err != nil {
 		t.Fatal(err)
 	}
