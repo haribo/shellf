@@ -382,8 +382,9 @@ func (p *parser) inlineCond(s proto.Step) (*proto.Step, *proto.ResultRef, bool) 
 // `unless { … }` guard. When p.tok is the `shell`/`unless` keyword, the lexer
 // sits right after it, so raw capture reads from there.
 func (p *parser) shellStep() proto.Step {
-	// Optional `shell as <user> { … }` — read from the raw stream, since the
-	// shell body itself is raw-captured (ADR-0011).
+	// `shell(<interp>) as <user> { … }` — both read from the raw stream, since
+	// the shell body itself is raw-captured (ADR-0012 / ADR-0011).
+	interp := p.shellInterp()
 	become := ""
 	if p.lex.tryRawWord("as") {
 		if become = p.lex.rawIdent(); become == "" {
@@ -400,7 +401,30 @@ func (p *parser) shellStep() proto.Step {
 	if p.tok.kind == tIdent && p.tok.val == "unless" {
 		p.fail("`unless` was removed from plans; use `if !shell { <guard> } { shell { <cmd> } }`")
 	}
-	return proto.Step{Instruction: "shell", Args: args, Become: become}
+	return proto.Step{Instruction: "shell", Args: args, Become: become, Interp: interp}
+}
+
+// shellInterp parses an optional `(<interp>)` after `shell` (ADR-0012).
+func (p *parser) shellInterp() string {
+	if !p.lex.tryRawByte('(') {
+		return ""
+	}
+	name := p.lex.rawIdent()
+	if !p.lex.tryRawByte(')') {
+		p.fail("expected `)` after shell interpreter")
+	}
+	if !validInterp(name) {
+		p.fail("unknown shell interpreter %q (want sh/bash/dash/nu/raw)", name)
+	}
+	return name
+}
+
+func validInterp(name string) bool {
+	switch name {
+	case "sh", "bash", "dash", "nu", "raw":
+		return true
+	}
+	return false
 }
 
 // asBlock parses `as <user> { <steps> }` — a sequential block whose shells run

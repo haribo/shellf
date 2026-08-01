@@ -189,7 +189,7 @@ func runStep(step proto.Step, ex engine.Executor, m engine.Mode, scope map[strin
 		return proto.StepResult{Label: "parallel", Category: cat, Sub: subs}
 	}
 
-	res, err := runInstruction(step, ex.As(step.Become), m) // step-level `as <user>` (e.g. `shell as root {}`)
+	res, err := runInstruction(step, ex.As(step.Become).Using(step.Interp), m) // step-level `as <user>` + `shell(<interp>)`
 	if err != nil {
 		return proto.StepResult{Label: step.Label(), Category: "err", Tag: "agent"}
 	}

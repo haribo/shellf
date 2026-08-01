@@ -309,6 +309,17 @@ func (l *lexer) tryRawWord(w string) bool {
 	return true
 }
 
+// tryRawByte consumes the byte c from the raw stream (after inline spaces) if
+// present, e.g. the `(` / `)` around `shell(bash)`.
+func (l *lexer) tryRawByte(c byte) bool {
+	l.skipInline()
+	if l.pos < len(l.src) && l.src[l.pos] == c {
+		l.adv()
+		return true
+	}
+	return false
+}
+
 // rawIdent reads an identifier from the raw stream (after inline spaces).
 func (l *lexer) rawIdent() string {
 	l.skipInline()
