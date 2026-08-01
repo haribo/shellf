@@ -1,23 +1,24 @@
-# A small web server, provisioned idempotently over SSH.
+# A small web server, provisioned idempotently over SSH as a non-root user.
 #
 #   shellf run examples/webserver/plan.shellf --inventory inventory.shellf --check
 #   shellf run examples/webserver/plan.shellf --inventory inventory.shellf
 #
 # `--check` previews without touching anything; a second real run changes nothing
-# (every instruction is idempotent).
+# (every instruction is idempotent). Instructions that need root escalate via
+# `as root` — either intrinsically (the def declares it) or by wrapping.
 on web {
-    # Install the web server. `pkg` is a per-host variable from the inventory.
+    # These defs declare `as root` themselves, so they escalate automatically
+    # even when you SSH as a non-root user.
     apt.install(pkg)
-
-    # A content directory (also a per-host variable) and an index page.
-    dir-ensure(webroot)
-    file-write("/opt/dogfood/index.html", "hello from shellf")
-
-    # The service: running and enabled.
     service("nginx", "true", "true")
 
-    # Drop a marker only once the directory really exists (a read-only question).
-    if dir-exists(webroot) { file-write("/opt/dogfood/ready", "ok") }
+    # `dir-ensure` / `file-write` are generic (they might target a home dir or a
+    # system path), so the caller escalates when the path needs root.
+    as root {
+        dir-ensure(webroot)
+        file-write("/opt/dogfood/index.html", "hello from shellf")
+        if dir-exists(webroot) { file-write("/opt/dogfood/ready", "ok") }
+    }
 
     # Error handling: an optional package that may not exist. `?` catches its
     # failure so it does not halt the run; anything uncaught would.

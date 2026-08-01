@@ -6,6 +6,7 @@ package lang
 type Def struct {
 	Name   string
 	Params []Param
+	Become string // intrinsic escalation user from `def … as <user>` (ADR-0011)
 	Phases []Phase
 	Return *Outcome // derived: apply's trailing `return`, for `would` in check (ADR-0007)
 }

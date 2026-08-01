@@ -117,6 +117,20 @@ func TestParseAsBlock(t *testing.T) {
 	}
 }
 
+func TestParseOnAsBlock(t *testing.T) {
+	plan, err := ParsePlan(`on web as root { dir-ensure("/opt") }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := plan[0].Steps
+	if len(steps) != 1 || steps[0].Become != "root" || len(steps[0].Block) != 1 {
+		t.Fatalf("`on … as root` should wrap the block: %+v", steps)
+	}
+	if steps[0].Block[0].Instruction != "dir-ensure" {
+		t.Fatalf("wrapped step: %+v", steps[0].Block[0])
+	}
+}
+
 func TestParseIfQualifiedCallStaysCall(t *testing.T) {
 	// docker.install() as a condition is a qualified call, not a ref
 	plan, err := ParsePlan(`on s { if docker.install() { apt.install("x") } }`)

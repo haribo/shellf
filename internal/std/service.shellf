@@ -1,4 +1,4 @@
-def service(name: str, running: str, enabled: str) {
+def service(name: str, running: str, enabled: str) as root {
     guard {
         r = shell {
             a=$(systemctl is-active --quiet "$name" && echo true || echo false)

@@ -1,4 +1,4 @@
-def compose-up(dir: str) {
+def compose-up(dir: str) as root {
     apply {
         r = shell {
             cd "$dir"

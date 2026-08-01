@@ -1,4 +1,4 @@
-def user-group(user: str, group: str) {
+def user-group(user: str, group: str) as root {
     guard {
         r = shell { id -nG "$user" | tr ' ' '\n' | grep -qx "$group" }
         if r { return ok.already }

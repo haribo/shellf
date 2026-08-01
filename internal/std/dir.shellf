@@ -10,7 +10,7 @@ def dir-ensure(path: str) {
     }
 }
 
-def dir-owner(path: str, owner: str) {
+def dir-owner(path: str, owner: str) as root {
     guard {
         r = shell { test "$(stat -c '%U:%G' "$path")" = "$owner" }
         if r { return ok.already }

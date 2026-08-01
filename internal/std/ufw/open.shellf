@@ -1,4 +1,4 @@
-def open(port: str, proto: str) {
+def open(port: str, proto: str) as root {
     guard {
         r = shell { ufw status | grep -q "$port/$proto" }
         if r { return ok.already }

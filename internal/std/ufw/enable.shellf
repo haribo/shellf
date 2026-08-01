@@ -1,4 +1,4 @@
-def enable() {
+def enable() as root {
     guard {
         r = shell { ufw status | grep -q "Status: active" }
         if r { return ok.already }

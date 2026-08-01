@@ -115,6 +115,16 @@ func TestAgentBecome_BlockEscalates(t *testing.T) {
 	}
 }
 
+func TestAgentBecome_DefIntrinsic(t *testing.T) {
+	// apt.install is marked `as root` → its shells escalate with no wrapper.
+	f := newFake()
+	f.set(`dpkg -s "$pkg"`, "nginx", 0)
+	serve(t, f, proto.Request{Mode: "apply", Steps: []proto.Step{apt("nginx")}})
+	if got := f.becameAs(`dpkg -s "$pkg"`, "nginx"); got != "root" {
+		t.Fatalf("intrinsic apt.install should escalate to root, got %q", got)
+	}
+}
+
 func TestAgentBecome_ShellStepEscalates(t *testing.T) {
 	// `shell as root { id }` → that shell escalates.
 	f := newFake()
