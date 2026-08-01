@@ -31,6 +31,66 @@ type SSH struct {
 	AgentTTL    time.Duration // resident agent inactivity TTL; 0 = 2h
 	KnownHosts  string        // known_hosts path; empty = ~/.ssh/known_hosts
 	Insecure    bool          // bypass host-key verification (dev only)
+
+	dialFn func() (conn, error) // test seam: overrides the real SSH dial
+}
+
+// conn is a live connection that runs one command per session. The real one
+// wraps *ssh.Client; a fake drives the push/deposit/poll sequencing tests (#116).
+type conn interface {
+	run(cmd string, stdin []byte) (stdout []byte, err error) // like session.Run; nil err = exit 0
+	start(cmd string) error                                  // like session.Start (detached agent)
+	close() error
+}
+
+// clientConn is the real conn over a golang.org/x/crypto/ssh client.
+type clientConn struct{ c *ssh.Client }
+
+func (cc clientConn) run(cmd string, stdin []byte) ([]byte, error) {
+	sess, err := cc.c.NewSession()
+	if err != nil {
+		return nil, err
+	}
+	defer sess.Close()
+	if stdin != nil {
+		sess.Stdin = bytes.NewReader(stdin)
+	}
+	var stdout, stderr bytes.Buffer
+	sess.Stdout, sess.Stderr = &stdout, &stderr
+	if err := sess.Run(cmd); err != nil {
+		return stdout.Bytes(), fmt.Errorf("%v: %s", err, stderr.String())
+	}
+	return stdout.Bytes(), nil
+}
+
+// start runs cmd detached: Start (not Run) then close after a brief pause, so
+// the setsid'd process survives while we do not block on the open channel.
+func (cc clientConn) start(cmd string) error {
+	sess, err := cc.c.NewSession()
+	if err != nil {
+		return err
+	}
+	if err := sess.Start(cmd); err != nil {
+		sess.Close()
+		return err
+	}
+	time.Sleep(300 * time.Millisecond) // let the agent write agent.pid and detach
+	sess.Close()                        // best-effort: closing on a detached process may EOF
+	return nil
+}
+
+func (cc clientConn) close() error { return cc.c.Close() }
+
+// dialConn opens a conn — the injected fake in tests, else a real SSH client.
+func (s SSH) dialConn() (conn, error) {
+	if s.dialFn != nil {
+		return s.dialFn()
+	}
+	c, err := s.dial()
+	if err != nil {
+		return nil, err
+	}
+	return clientConn{c}, nil
 }
 
 // agentTTLSecs is the inactivity TTL passed to the launched resident agent.
@@ -145,27 +205,27 @@ func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
 	deadline := time.Now().Add(s.execTimeout())
 
 	// One connection: push (if not cached), ensure a resident agent, deposit the job.
-	client, err := s.dial()
+	cn, err := s.dialConn()
 	if err != nil {
 		return nil, err
 	}
-	if !s.cached(client, path) {
-		if err := s.push(client, bin, path); err != nil {
-			client.Close()
+	if !cached(cn, path) {
+		if err := push(cn, bin, path); err != nil {
+			cn.close()
 			return nil, err
 		}
 	}
-	if err := s.deposit(client, wd, jobid, req); err != nil {
-		client.Close()
+	if err := deposit(cn, wd, jobid, req); err != nil {
+		cn.close()
 		return nil, err
 	}
-	if !s.agentAlive(client, wd) {
-		if err := s.launchAgent(client, path, wd); err != nil {
-			client.Close()
+	if !agentAlive(cn, wd) {
+		if err := cn.start(launchCmd(path, wd, s.agentTTLSecs())); err != nil {
+			cn.close()
 			return nil, err
 		}
 	}
-	client.Close()
+	cn.close()
 
 	// Poll for the result, re-dialing on a dropped session, until the deadline.
 	// The detached agent keeps running across drops, so a long job survives.
@@ -175,33 +235,22 @@ func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
 // Clean kills any resident agent on the target and removes every shellf file
 // from /tmp (binaries and workdirs). Safe: it only touches /tmp/shellf-* paths.
 func (s SSH) Clean() error {
-	client, err := s.dial()
+	cn, err := s.dialConn()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
-	sess, err := client.NewSession()
-	if err != nil {
-		return err
-	}
-	defer sess.Close()
-	var stderr bytes.Buffer
-	sess.Stderr = &stderr
-	if err := sess.Run(cleanCmd()); err != nil {
-		return fmt.Errorf("clean: %v: %s", err, stderr.String())
+	defer cn.close()
+	if _, err := cn.run(cleanCmd(), nil); err != nil {
+		return fmt.Errorf("clean: %w", err)
 	}
 	return nil
 }
 
 // cached reports whether the agent binary is already present and executable on
 // the target (a cache hit → skip the transfer).
-func (s SSH) cached(client *ssh.Client, path string) bool {
-	sess, err := client.NewSession()
-	if err != nil {
-		return false
-	}
-	defer sess.Close()
-	return sess.Run("test -x "+path) == nil
+func cached(cn conn, path string) bool {
+	_, err := cn.run("test -x "+path, nil)
+	return err == nil
 }
 
 func (s SSH) dial() (*ssh.Client, error) {
@@ -252,40 +301,22 @@ func (s SSH) hostKeyCallback() (ssh.HostKeyCallback, error) {
 	}, nil
 }
 
-// push streams the binary to the target (stdin of a `cat` session), writing to
-// a temp then renaming: an interrupted push never leaves a partial binary at
-// path, and a concurrent run sees either the old file or none (atomic mv).
-func (s SSH) push(client *ssh.Client, bin []byte, path string) error {
-	sess, err := client.NewSession()
-	if err != nil {
-		return err
-	}
-	defer sess.Close()
+var pollWait = time.Second // poll cadence; a var so tests can shrink it
 
-	sess.Stdin = bytes.NewReader(bin)
-	var stderr bytes.Buffer
-	sess.Stderr = &stderr
-	if err := sess.Run(pushCmd(path)); err != nil {
-		return fmt.Errorf("push agent: %v: %s", err, stderr.String())
+// push streams the binary (stdin) to a temp then renames onto path (atomic, +x):
+// an interrupted push never leaves a partial binary, and a concurrent run sees
+// either the old file or none.
+func push(cn conn, bin []byte, path string) error {
+	if _, err := cn.run(pushCmd(path), bin); err != nil {
+		return fmt.Errorf("push agent: %w", err)
 	}
 	return nil
 }
 
-const pollWait = time.Second
-
-// deposit writes the request atomically (tmp + mv) — a blocking Run that closes
-// cleanly (no backgrounded process to hold the channel open).
-func (s SSH) deposit(client *ssh.Client, wd, jobid string, req []byte) error {
-	sess, err := client.NewSession()
-	if err != nil {
-		return err
-	}
-	defer sess.Close()
-	sess.Stdin = bytes.NewReader(req)
-	var stderr bytes.Buffer
-	sess.Stderr = &stderr
-	if err := sess.Run(depositCmd(wd, jobid)); err != nil {
-		return fmt.Errorf("deposit: %v: %s", err, stderr.String())
+// deposit writes the request atomically (tmp + mv).
+func deposit(cn conn, wd, jobid string, req []byte) error {
+	if _, err := cn.run(depositCmd(wd, jobid), req); err != nil {
+		return fmt.Errorf("deposit: %w", err)
 	}
 	return nil
 }
@@ -293,64 +324,41 @@ func (s SSH) deposit(client *ssh.Client, wd, jobid string, req []byte) error {
 // agentAlive reports whether OUR resident agent is running. It checks the pid's
 // /proc/<pid>/cmdline, not just kill -0: a dead agent's pid can be recycled by
 // an unrelated process (common in a container), which kill -0 would accept — a
-// false positive that would skip the relaunch and hang the poll.
-func (s SSH) agentAlive(client *ssh.Client, wd string) bool {
-	sess, err := client.NewSession()
-	if err != nil {
-		return false
-	}
-	defer sess.Close()
-	return sess.Run(agentAliveCmd(wd)) == nil
-}
-
-// launchAgent starts a detached resident agent. It uses Start (not Run) and
-// closes our side after a brief pause: a detached process keeps the exec
-// channel open, so Run would block waiting for it. The setsid'd agent survives
-// the Close (it is in its own session/process-group). No lock: a rare double
-// launch (concurrent runs) is harmless — the agent claims each request
-// atomically, so no request is run twice, and idle duplicates self-kill.
-func (s SSH) launchAgent(client *ssh.Client, path, wd string) error {
-	sess, err := client.NewSession()
-	if err != nil {
-		return err
-	}
-	if err := sess.Start(launchCmd(path, wd, s.agentTTLSecs())); err != nil {
-		sess.Close()
-		return err
-	}
-	time.Sleep(300 * time.Millisecond) // let the agent write agent.pid and detach
-	sess.Close()                        // best-effort: closing a channel with a detached process may EOF
-	return nil
+// false positive that would skip the relaunch and hang the poll. The detached
+// launch itself (cn.start of launchCmd) is in Run, since it needs s.agentTTLSecs.
+func agentAlive(cn conn, wd string) bool {
+	_, err := cn.run(agentAliveCmd(wd), nil)
+	return err == nil
 }
 
 // poll waits for the job's result, re-dialing on a dropped session until the
 // deadline. Because the agent is detached, the job keeps running across drops.
 func (s SSH) poll(wd, jobid string, deadline time.Time) ([]byte, error) {
-	var client *ssh.Client
+	var cn conn
 	defer func() {
-		if client != nil {
-			client.Close()
+		if cn != nil {
+			cn.close()
 		}
 	}()
 
 	for time.Now().Before(deadline) {
-		if client == nil {
-			c, err := s.dial()
+		if cn == nil {
+			c, err := s.dialConn()
 			if err != nil {
 				time.Sleep(pollWait)
 				continue // survive: retry the dial
 			}
-			client = c
+			cn = c
 		}
-		data, ready, err := s.checkDone(client, wd, jobid)
+		data, ready, err := checkDone(cn, wd, jobid)
 		if err != nil {
-			client.Close()
-			client = nil // dropped → re-dial next iteration
+			cn.close()
+			cn = nil // dropped → re-dial next iteration
 			time.Sleep(pollWait)
 			continue
 		}
 		if ready {
-			s.rmJob(client, wd, jobid)
+			rmJob(cn, wd, jobid)
 			return data, nil
 		}
 		time.Sleep(pollWait)
@@ -358,31 +366,20 @@ func (s SSH) poll(wd, jobid string, deadline time.Time) ([]byte, error) {
 	return nil, fmt.Errorf("agent job %s timed out after %s", jobid, s.execTimeout())
 }
 
-// checkDone returns the result if done exists; a session error means a dropped
+// checkDone returns the result if done exists; a run error means a dropped
 // connection (distinct from "not done yet").
-func (s SSH) checkDone(client *ssh.Client, wd, jobid string) (out []byte, ready bool, err error) {
-	sess, err := client.NewSession()
+func checkDone(cn conn, wd, jobid string) (out []byte, ready bool, err error) {
+	stdout, err := cn.run(checkDoneCmd(wd, jobid), nil)
 	if err != nil {
 		return nil, false, err
 	}
-	defer sess.Close()
-	var stdout bytes.Buffer
-	sess.Stdout = &stdout
-	if err := sess.Run(checkDoneCmd(wd, jobid)); err != nil {
-		return nil, false, err
-	}
-	out, ready = parseDone(stdout.Bytes())
+	out, ready = parseDone(stdout)
 	return out, ready, nil
 }
 
 // rmJob removes the consumed result/done files (best-effort).
-func (s SSH) rmJob(client *ssh.Client, wd, jobid string) {
-	sess, err := client.NewSession()
-	if err != nil {
-		return
-	}
-	defer sess.Close()
-	_ = sess.Run(rmJobCmd(wd, jobid))
+func rmJob(cn conn, wd, jobid string) {
+	_, _ = cn.run(rmJobCmd(wd, jobid), nil)
 }
 
 func (s SSH) signer() (ssh.Signer, error) {
