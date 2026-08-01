@@ -14,8 +14,30 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go vet ./...
-      - run: go test ./...
+      - run: go test ./... # fast feedback run
       - run: go build ./...
+
+  race:
+    # Data-race detector for the concurrent paths (agent `parallel`, fleet
+    # fan-out). Separate from the fast run so it never slows first feedback.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test -race ./...
+
+  coverage:
+    # Ratchet: total statement coverage must stay at or above the committed
+    # floor (.github/coverage-floor.txt). Guards against silent erosion.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: bash test/coverage-ratchet.sh
 
   e2e:
     # Real SSH transport + resident agent against a throwaway sshd container:
