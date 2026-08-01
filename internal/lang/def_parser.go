@@ -24,9 +24,18 @@ func (p *parser) def() Def {
 	}
 	d := Def{Name: p.expect(tIdent, "def name").val, Params: p.params()}
 
-	if p.tok.kind == tIdent && p.tok.val == "as" { // `def name(params) as <user> { … }` (ADR-0011)
+	// Optional `as <user>` (ADR-0011) and `using <interp>` (ADR-0012), either order.
+	for p.tok.kind == tIdent && (p.tok.val == "as" || p.tok.val == "using") {
+		kw := p.tok.val
 		p.adv()
-		d.Become = p.expect(tIdent, "user after 'as'").val
+		if kw == "as" {
+			d.Become = p.expect(tIdent, "user after 'as'").val
+		} else {
+			d.Interp = p.expect(tIdent, "interpreter after 'using'").val
+			if !validInterp(d.Interp) {
+				p.fail("unknown interpreter %q (want sh/bash/dash/nu/raw)", d.Interp)
+			}
+		}
 	}
 	p.expect(tLBrace, "{")
 	for p.tok.kind != tRBrace {
@@ -209,12 +218,13 @@ func (p *parser) primary() Expr {
 }
 
 func (p *parser) shellExpr() Expr {
-	body, err := p.lex.rawShellBody() // lexer sits right after "shell"
+	interp := p.shellInterp() // optional `shell(<interp>)` (ADR-0012)
+	body, err := p.lex.rawShellBody() // lexer sits right after "shell" / its interp
 	if err != nil {
 		panic(parseErr{err})
 	}
 	p.adv()
-	e := ShellExpr{Cmd: body}
+	e := ShellExpr{Cmd: body, Interp: interp}
 	if p.tok.kind == tIdent && p.tok.val == "unless" {
 		guard, err := p.lex.rawBracesRequired()
 		if err != nil {

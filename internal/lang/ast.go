@@ -7,6 +7,7 @@ type Def struct {
 	Name   string
 	Params []Param
 	Become string // intrinsic escalation user from `def … as <user>` (ADR-0011)
+	Interp string // def-declared interpreter from `def … using <interp>` (ADR-0012)
 	Phases []Phase
 	Return *Outcome // derived: apply's trailing `return`, for `would` in check (ADR-0007)
 }
@@ -83,9 +84,10 @@ type Call struct { // apt-cache-show(pkg)
 	Name string
 	Args []Expr
 }
-type ShellExpr struct { // shell { … } [unless { … }] or shell <line>
+type ShellExpr struct { // shell(<interp>) { … } [unless { … }] or shell <line>
 	Cmd    string
 	Unless string
+	Interp string // shell(<interp>) block annotation (ADR-0012)
 }
 
 func (StrLit) isExpr()    {}

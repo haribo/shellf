@@ -27,7 +27,7 @@ func EvalDef(def Def, args map[string]string, ex engine.Executor, mode engine.Mo
 
 	// A def's own `as <user>` escalates all its shells; it wins over an enclosing
 	// block's become (applied last). `As("")` is a no-op (ADR-0011).
-	ev := &evaluator{ex: ex.As(def.Become), vars: map[string]value{}}
+	ev := &evaluator{ex: ex.As(def.Become).Using(def.Interp), vars: map[string]value{}}
 	for k, v := range args {
 		ev.vars[k] = v
 	}
@@ -162,7 +162,8 @@ func (ev *evaluator) evalExpr(e Expr) value {
 	case Unary: // `!x` — negate truthiness (ADR-0010)
 		return !truthy(ev.evalExpr(x.X))
 	case ShellExpr:
-		res := ev.ex.Shell(x.Cmd, ev.shellEnv())
+		// A per-block `shell(<interp>)` overrides the def-declared interpreter.
+		res := ev.ex.Using(x.Interp).Shell(x.Cmd, ev.shellEnv())
 		ev.last = res
 		return res
 	case Call:

@@ -29,12 +29,37 @@ const (
 )
 
 type evalFake struct {
-	resp  map[string]engine.ShellResult
-	calls map[string]bool
+	resp       map[string]engine.ShellResult
+	calls      map[string]bool
+	lastInterp string // interpreter of the last shell (ADR-0012 threading)
 }
 
-func (f *evalFake) As(string) engine.Executor    { return f }
-func (f *evalFake) Using(string) engine.Executor { return f }
+func (f *evalFake) As(string) engine.Executor { return f }
+
+func (f *evalFake) Using(interp string) engine.Executor {
+	if interp == "" {
+		return f
+	}
+	return interpFake{f, interp}
+}
+
+// interpFake records the interpreter each shell runs under, then delegates.
+type interpFake struct {
+	inner  *evalFake
+	interp string
+}
+
+func (i interpFake) Shell(script string, env engine.Env) engine.ShellResult {
+	i.inner.lastInterp = i.interp
+	return i.inner.Shell(script, env)
+}
+func (i interpFake) As(string) engine.Executor { return i }
+func (i interpFake) Using(interp string) engine.Executor {
+	if interp == "" {
+		return i
+	}
+	return interpFake{i.inner, interp}
+}
 
 func (f *evalFake) Shell(script string, _ engine.Env) engine.ShellResult {
 	if f.calls == nil {
@@ -111,6 +136,29 @@ func TestEvalDef_Check_WouldNotMutate(t *testing.T) {
 	}
 	if f.calls[aptS] {
 		t.Fatal("check mode ran apt-get")
+	}
+}
+
+// ADR-0012: a def `using <interp>` runs its shells under that interpreter; a
+// per-block `shell(<interp>)` overrides it.
+func TestEvalDef_Interp(t *testing.T) {
+	defs, err := ParseDefs(`def q(p: str) using bash { apply { r = shell { echo hi }  if !r { return err.x(r) }  return ok.done } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &evalFake{resp: map[string]engine.ShellResult{"echo hi": {Exit: 0}}}
+	if _, err := EvalDef(defs[0], map[string]string{"p": "x"}, f, engine.Apply); err != nil {
+		t.Fatal(err)
+	}
+	if f.lastInterp != "bash" {
+		t.Fatalf("def `using bash` should run its shells under bash, got %q", f.lastInterp)
+	}
+
+	over, _ := ParseDefs(`def q(p: str) using bash { apply { r = shell(sh) { echo hi }  if !r { return err.x(r) }  return ok.done } }`)
+	f2 := &evalFake{resp: map[string]engine.ShellResult{"echo hi": {Exit: 0}}}
+	EvalDef(over[0], map[string]string{"p": "x"}, f2, engine.Apply)
+	if f2.lastInterp != "sh" {
+		t.Fatalf("shell(sh) must override the def interpreter, got %q", f2.lastInterp)
 	}
 }
 
