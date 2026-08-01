@@ -49,9 +49,9 @@ Describe what to do in a **plan** file (`plan.shellf`):
 
 ```
 on web {
-  apt-install("nginx")
+  apt.install("nginx")
   file-copy("/tmp/nginx.conf", "/etc/nginx/nginx.conf")
-  service("nginx", true, true)          # running now, enabled at boot
+  service("nginx", "true", "true")       # running now, enabled at boot
 }
 ```
 
@@ -91,13 +91,102 @@ Omitted host fields fall back to `defaults`, then to `22` for the port. Only
 Blocks target a group (or a single host). A host that errors is dropped from
 later blocks.
 
-## Builtin instructions
+## Writing shellf
+
+A worked tour. The full example is in [`examples/webserver/`](examples/webserver/).
+
+**Variables** come from the inventory (per-host) or `--set`. Use them as bare
+identifiers, or `${name}` inside strings:
+
+```
+host web = { address: "10.0.0.1", pkg: "nginx", webroot: "/var/www/app" }
+```
+```
+on web {
+  apt.install(pkg)                 # `pkg` resolves per host
+  dir-ensure(webroot)
+}
+```
+
+**Control flow.** `if` takes an instruction (or a captured result); the branch is
+taken on its outcome. `dir-exists` is a read-only *question*, so it stays honest
+in `--check`:
+
+```
+if dir-exists("/opt/app") { service("app", "true", "true") }
+if !dir-exists("/opt/app") { dir-ensure("/opt/app") }   # act only when absent
+```
+
+**Capture and match outcomes.** An instruction returns a `Result`: a tagged
+outcome (`ok`/`err` + a tag), plus a `changed` flag.
+
+```
+x = file-write("/etc/app.conf", cfg)
+if x { restart() }               # `if x` = it succeeded; `if !x` = it failed
+if x == ok.written { reload() }  # match a specific tag
+if x.changed { … }               # did it actually act (not a guard-skip)?
+```
+
+**Error handling.** By default the first `err` halts the host. To handle a
+*specific* error, mark the instruction `?` and test it — testing `== err` without
+a `?` is a compile error (the branch would be unreachable):
+
+```
+x = apt.install("nginx")?
+if x == err.dbLocked { retry() } else { report() }
+```
+
+**Privilege escalation.** shellf runs as the SSH user. `as <user>` escalates a
+block (via sudo/doas); many stdlib defs (`apt.install`, `service`, …) declare
+`as root` themselves and escalate on their own:
+
+```
+on web {
+  apt.install("nginx")           # escalates itself (intrinsic `as root`)
+  as root {                      # escalate a block of generic instructions
+    dir-ensure("/opt/app")
+    file-write("/etc/app.conf", cfg)
+  }
+}
+```
+
+**Custom instructions** are `def`s written in shellf. A def has phases (`guard`
+read-only, `apply` effectful) and returns an outcome. Inside a def, a `shell {}`
+is a struct — read `.exit`/`.stdout`, and `if r` / `if !r` test its success:
+
+```
+def install(pkg: str) as root {
+  guard {
+    r = shell { dpkg -s "$pkg" }
+    if r { return ok.alreadyInstalled }
+  }
+  apply {
+    r = shell { apt-get install -y "$pkg" }
+    if !r { return err.runtime(r) }
+    return ok.installed
+  }
+}
+```
+
+**Preview, then apply.** `--check` runs only the read-only guards, never mutates,
+and prints `would.<tag>` for what would change. A second real run is idempotent
+(everything reads `ok.already*`).
+
+## Instructions
+
+Most instructions are `def`s written in shellf and embedded in the binary
+(`apt.install`, `service`, `dir-ensure`, `file-write`, `ufw.*`, `docker.*`, …);
+`file-copy` is a Go builtin. A few of the common ones:
 
 | Instruction | Call | Guard (idempotence) |
 |---|---|---|
-| `apt-install` | `apt-install("nginx")` | package already installed |
+| `apt.install` | `apt.install("nginx")` | package already installed |
 | `file-copy` | `file-copy("src", "dst")` | contents already match (check shows the diff) |
-| `service` | `service("nginx", true, true)` | already running / enabled as desired |
+| `service` | `service("nginx", "true", "true")` | already running / enabled as desired |
+| `dir-ensure` | `dir-ensure("/opt/app")` | directory already exists |
+| `file-write` | `file-write("/etc/app.conf", cfg)` | content already matches |
+
+Write your own — see [Writing shellf](#writing-shellf).
 
 ## Raw shell
 
@@ -112,17 +201,17 @@ on server {
     curl -fsSL https://get.docker.com | sh
   }
 
-  shell {                                 # with a guard → idempotent + previewable
-    docker network create web
-  } unless {
-    docker network inspect web
+  # idempotent + previewable: gate the effect on a read-only guard
+  if !shell { docker network inspect web } {
+    shell { docker network create web }
   }
 }
 ```
 
-- No `unless` → the command always runs (raw, like bash; not previewable).
-- With `unless` → guard exits 0 = `ok.already` (skip); otherwise it runs; `--check`
-  runs only the guard, never the command.
+- A bare `shell` always runs (raw, like bash; not previewable).
+- To make it idempotent and previewable, gate it: `if !shell { <guard> } { shell { <cmd> } }`
+  — the guard is read-only, so `--check` runs only the guard, never the command.
+- Escalate with `shell as root { … }` (see [Writing shellf](#writing-shellf)).
 - A block ends at its balanced `}`. A lone unbalanced `}` in a string ends it
   early — use a heredoc or the one-line form.
 
@@ -142,10 +231,11 @@ shellf run --inventory <hosts.shellf> [flags] <plan.shellf>
 ## How it works
 
 Two planes, kept separate. The **orchestration** plane (control host) decides
-which hosts run what, in what order. The **execution** plane is the ephemeral
-agent: the binary is pushed over SSH, re-invoked on the target, runs the plan
-there, and is removed. Guards are read-only, which is what makes `--check`
-honest across a whole fleet.
+which hosts run what, in what order. The **execution** plane is the agent: the
+binary is pushed over SSH (cached by hash, skipped on re-runs), evaluates the
+plan **on the target**, and stays resident between jobs — then self-erases after
+an idle TTL, leaving nothing after a reboot. Guards are read-only, which is what
+makes `--check` honest across a whole fleet.
 
 Shell values are passed to the target via the environment, never concatenated
 into commands — so a value like `nginx; rm -rf /` cannot inject a command.
