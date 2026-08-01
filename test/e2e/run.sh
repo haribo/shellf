@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# Self-spinning end-to-end test for shellf's real SSH transport + resident agent.
+#
+# It stands up a throwaway Debian container running sshd, then drives the actual
+# `shellf run` binary against it and asserts the three properties that matter:
+#   1. --check is inert   (nothing is created on the target)
+#   2. apply provisions   (the marker tree appears)
+#   3. re-apply is idempotent (a second real run reports zero changes)
+#
+# Opt-in because it needs Docker and pulls an image: it runs only when SHELLF_E2E
+# is set. Everything (keypair, container, workdir) is ephemeral and torn down.
+set -euo pipefail
+
+: "${SHELLF_E2E:?set SHELLF_E2E=1 to run the end-to-end harness (needs Docker)}"
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$(cd "$here/../.." && pwd)"
+work="$(mktemp -d)"
+cname="shellf-e2e-$$"
+image="debian:stable-slim"
+
+cleanup() { docker rm -f "$cname" >/dev/null 2>&1 || true; rm -rf "$work"; }
+trap cleanup EXIT
+
+say() { printf '\n\033[1;36m== %s\033[0m\n' "$*"; }
+fail() { printf '\033[1;31mFAIL: %s\033[0m\n' "$*" >&2; exit 1; }
+
+say "build shellf"
+( cd "$root" && go build -o "$work/shellf" ./cmd/shellf )
+
+say "start throwaway sshd container ($image)"
+docker run -d --name "$cname" "$image" sleep 600 >/dev/null
+docker exec "$cname" sh -c '
+  set -e
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq
+  apt-get install -y -qq openssh-server >/dev/null
+  useradd -m -s /bin/bash deploy
+  mkdir -p /home/deploy/.ssh /run/sshd
+  chmod 700 /home/deploy/.ssh
+'
+
+say "install an ephemeral key"
+ssh-keygen -t ed25519 -N '' -f "$work/id" -q
+docker cp "$work/id.pub" "$cname:/home/deploy/.ssh/authorized_keys"
+docker exec "$cname" sh -c '
+  chown -R deploy:deploy /home/deploy/.ssh
+  chmod 600 /home/deploy/.ssh/authorized_keys
+  /usr/sbin/sshd
+'
+
+ip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$cname")"
+[ -n "$ip" ] || fail "could not read container IP"
+
+# Wait for sshd to accept connections (image boot + first apt can lag).
+for i in $(seq 1 30); do
+  if docker exec "$cname" sh -c 'pgrep sshd >/dev/null'; then break; fi
+  sleep 1
+done
+
+cat > "$work/inventory.shellf" <<EOF
+host target = {
+    address: "$ip",
+    user: "deploy",
+    key: "$work/id"
+}
+EOF
+
+run() { "$work/shellf" run --inventory "$work/inventory.shellf" --insecure "$@" "$here/plan.shellf"; }
+
+say "1. check mode is inert (previews 'would', touches nothing)"
+out="$(run --check 2>&1)"; printf '%s\n' "$out"
+printf '%s' "$out" | grep -q 'would' || fail "check mode should preview a 'would' outcome"
+docker exec "$cname" test -e /tmp/shellf-e2e && fail "check mode created state on the target"
+
+say "2. apply provisions the marker tree (created/written)"
+out="$(run 2>&1)"; printf '%s\n' "$out"
+printf '%s' "$out" | grep -q 'created' || fail "apply should report dir 'created'"
+printf '%s' "$out" | grep -q 'written' || fail "apply should report file 'written'"
+docker exec "$cname" test -f /tmp/shellf-e2e/marker || fail "apply did not write the marker"
+docker exec "$cname" test -f /tmp/shellf-e2e/ready  || fail "apply did not write ready"
+
+say "3. re-apply is idempotent (guards skip → 'already', nothing (re)created)"
+out="$(run 2>&1)"; printf '%s\n' "$out"
+printf '%s' "$out" | grep -q 'already' || fail "re-apply should report 'already' (guard skip)"
+if printf '%s' "$out" | grep -qE 'created|written'; then
+  fail "re-apply mutated; expected a no-op"
+fi
+
+say "PASS — check inert, apply provisioned, re-apply idempotent"
