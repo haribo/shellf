@@ -36,7 +36,7 @@ func TestInterpolationUndefined(t *testing.T) {
 func TestInterpolationInBinding(t *testing.T) {
 	// a binding's value may itself interpolate an earlier binding (at parse)
 	base := map[string]string{}
-	plan, err := ParsePlanWithVars("owner = \"haribo\"\npair = \"${owner}:${owner}\"\non s { dir-owner(\"/opt\", pair) }", base, nil)
+	plan, err := ParsePlanWithVars("owner = \"haribo\"\npair = \"${owner}:${owner}\"\non s { dir-owner(\"/opt\", pair) }", base, nil, defaultSig)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -14,6 +14,7 @@ import (
 	"shellf/internal/lang"
 	"shellf/internal/orchestrator"
 	"shellf/internal/proto"
+	"shellf/internal/std"
 	"shellf/internal/transport"
 )
 
@@ -98,7 +99,7 @@ func runCmd(args []string) {
 	}
 	// ParsePlanWithVars enriches baseVars in place with the plan's top-level
 	// bindings, so the same table drives per-host resolution below.
-	plan, err := lang.ParsePlanWithVars(string(planSrc), baseVars, setVars)
+	plan, err := lang.ParsePlanWithVars(string(planSrc), baseVars, setVars, stdSignatures())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", fs.Arg(0), err)
 		os.Exit(1)
@@ -129,6 +130,26 @@ func runCmd(args []string) {
 	}
 
 	printReports(orchestrator.Run(plan, inv, self, mode, dial, baseVars, setVars))
+}
+
+// stdSignatures resolves an instruction's parameter names from the embedded
+// stdlib (signatures live with the defs, self-hosting) plus the Go builtins —
+// so adding a def needs no parser-side edit (#107).
+func stdSignatures() lang.InstructionSig {
+	builtins := map[string][]string{"file-copy": {"src", "dst"}}
+	return func(name string) ([]string, bool) {
+		if p, ok := builtins[name]; ok {
+			return p, true
+		}
+		if def, ok := std.Lookup(name); ok {
+			names := make([]string, len(def.Params))
+			for i, p := range def.Params {
+				names[i] = p.Name
+			}
+			return names, true
+		}
+		return nil, false
+	}
 }
 
 // kvFlags collects repeatable --set k=v flags.
