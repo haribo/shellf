@@ -51,7 +51,7 @@ func (cc clientConn) run(cmd string, stdin []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer sess.Close()
+	defer func() { _ = sess.Close() }()
 	if stdin != nil {
 		sess.Stdin = bytes.NewReader(stdin)
 	}
@@ -71,11 +71,11 @@ func (cc clientConn) start(cmd string) error {
 		return err
 	}
 	if err := sess.Start(cmd); err != nil {
-		sess.Close()
+		_ = sess.Close()
 		return err
 	}
 	time.Sleep(300 * time.Millisecond) // let the agent write agent.pid and detach
-	sess.Close()                        // best-effort: closing on a detached process may EOF
+	_ = sess.Close()                    // best-effort: closing on a detached process may EOF
 	return nil
 }
 
@@ -211,21 +211,21 @@ func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
 	}
 	if !cached(cn, path) {
 		if err := push(cn, bin, path); err != nil {
-			cn.close()
+			_ = cn.close()
 			return nil, err
 		}
 	}
 	if err := deposit(cn, wd, jobid, req); err != nil {
-		cn.close()
+		_ = cn.close()
 		return nil, err
 	}
 	if !agentAlive(cn, wd) {
 		if err := cn.start(launchCmd(path, wd, s.agentTTLSecs())); err != nil {
-			cn.close()
+			_ = cn.close()
 			return nil, err
 		}
 	}
-	cn.close()
+	_ = cn.close()
 
 	// Poll for the result, re-dialing on a dropped session, until the deadline.
 	// The detached agent keeps running across drops, so a long job survives.
@@ -239,7 +239,7 @@ func (s SSH) Clean() error {
 	if err != nil {
 		return err
 	}
-	defer cn.close()
+	defer func() { _ = cn.close() }()
 	if _, err := cn.run(cleanCmd(), nil); err != nil {
 		return fmt.Errorf("clean: %w", err)
 	}
@@ -337,7 +337,7 @@ func (s SSH) poll(wd, jobid string, deadline time.Time) ([]byte, error) {
 	var cn conn
 	defer func() {
 		if cn != nil {
-			cn.close()
+			_ = cn.close()
 		}
 	}()
 
@@ -352,7 +352,7 @@ func (s SSH) poll(wd, jobid string, deadline time.Time) ([]byte, error) {
 		}
 		data, ready, err := checkDone(cn, wd, jobid)
 		if err != nil {
-			cn.close()
+			_ = cn.close()
 			cn = nil // dropped → re-dial next iteration
 			time.Sleep(pollWait)
 			continue

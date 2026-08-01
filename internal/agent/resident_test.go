@@ -47,7 +47,7 @@ func TestServeResident_ProcessesThenSelfKills(t *testing.T) {
 		t.Fatalf("no result written: %v", err)
 	}
 	var resp proto.Response
-	json.Unmarshal(out, &resp)
+	_ = json.Unmarshal(out, &resp)
 	if len(resp.Results) != 1 || resp.Results[0].Category != "ok" {
 		t.Fatalf("unexpected response: %+v", resp)
 	}

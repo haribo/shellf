@@ -156,7 +156,7 @@ func TestEvalDef_Interp(t *testing.T) {
 
 	over, _ := ParseDefs(`def q(p: str) using bash { apply { r = shell(sh) { echo hi }  if !r { return err.x(r) }  return ok.done } }`)
 	f2 := &evalFake{resp: map[string]engine.ShellResult{"echo hi": {Exit: 0}}}
-	EvalDef(over[0], map[string]string{"p": "x"}, f2, engine.Apply)
+	_, _ = EvalDef(over[0], map[string]string{"p": "x"}, f2, engine.Apply)
 	if f2.lastInterp != "sh" {
 		t.Fatalf("shell(sh) must override the def interpreter, got %q", f2.lastInterp)
 	}

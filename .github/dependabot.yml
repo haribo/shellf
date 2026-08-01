@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # Go module dependencies (x/crypto is the security-critical one). Weekly so a
+  # patched release surfaces quickly through the normal develop PR flow.
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    target-branch: develop
+    commit-message:
+      prefix: build
+
+  # GitHub Actions used in the workflows. Less volatile, so monthly.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    target-branch: develop
+    commit-message:
+      prefix: ci

@@ -101,10 +101,10 @@ var punctuation = map[byte]tokKind{
 
 func (l *lexer) skip() {
 	for l.pos < len(l.src) {
-		switch c := l.src[l.pos]; {
-		case c == ' ' || c == '\t' || c == '\r' || c == '\n':
+		switch l.src[l.pos] {
+		case ' ', '\t', '\r', '\n':
 			l.adv()
-		case c == '#':
+		case '#':
 			for l.pos < len(l.src) && l.src[l.pos] != '\n' {
 				l.adv()
 			}

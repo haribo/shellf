@@ -68,7 +68,7 @@ func processJob(workdir, reqPath string, ex engine.Executor) {
 	var resp proto.Response
 	data, err := os.ReadFile(reqPath)
 	if err != nil {
-		os.Remove(reqPath)
+		_ = os.Remove(reqPath)
 		return
 	}
 	var req proto.Request
@@ -90,8 +90,8 @@ func processJob(workdir, reqPath string, ex engine.Executor) {
 // binary → zero trace of shellf after inactivity (ADR-0005). The long, settable
 // TTL — not a kept binary — is what avoids re-transfer during activity.
 func cleanup(workdir, binPath string) {
-	os.RemoveAll(workdir)
+	_ = os.RemoveAll(workdir)
 	if binPath != "" {
-		os.Remove(binPath)
+		_ = os.Remove(binPath)
 	}
 }

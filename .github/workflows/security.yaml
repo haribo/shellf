@@ -1,0 +1,21 @@
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+  schedule:
+    # Weekly: a CVE in a dependency (x/crypto/ssh is the whole attack surface,
+    # cf. Terrapin/CVE-2023-48795) can land with no commit of ours to trigger CI.
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - run: govulncheck ./...

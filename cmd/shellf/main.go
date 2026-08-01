@@ -74,7 +74,7 @@ func runCmd(args []string) {
 	insecure := fs.Bool("insecure", false, "skip host-key verification (dev only)")
 	knownHosts := fs.String("known-hosts", "", "known_hosts path (default ~/.ssh/known_hosts)")
 	agentTTL := fs.Duration("agent-ttl", 0, "resident agent inactivity TTL before it self-erases (0 = 2h)")
-	fs.Parse(args)
+	_ = fs.Parse(args) // flag.ExitOnError already exits on a parse error
 
 	if fs.NArg() < 1 || *invPath == "" {
 		fmt.Fprintln(os.Stderr, "usage: shellf run --inventory <hosts.shellf> [--vars <f>] [--set k=v] [--check] [--insecure] <plan.shellf>")
@@ -191,7 +191,7 @@ func cleanCmd(args []string) {
 	invPath := fs.String("inventory", "", "inventory file (required)")
 	insecure := fs.Bool("insecure", false, "skip host-key verification (dev only)")
 	knownHosts := fs.String("known-hosts", "", "known_hosts path (default ~/.ssh/known_hosts)")
-	fs.Parse(args)
+	_ = fs.Parse(args) // flag.ExitOnError already exits on a parse error
 	if *invPath == "" {
 		fmt.Fprintln(os.Stderr, "usage: shellf clean --inventory <hosts.shellf> [--insecure] [target...]")
 		os.Exit(2)
