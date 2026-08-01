@@ -289,6 +289,36 @@ func (l *lexer) rawBraces() (string, error) {
 	return "", fmt.Errorf("unterminated shell block")
 }
 
+// tryRawWord consumes the whole word w from the raw stream (after inline
+// spaces), used for the `shell as <user>` prefix. Returns false without
+// advancing if w is not next.
+func (l *lexer) tryRawWord(w string) bool {
+	save, sl, sc := l.pos, l.line, l.col
+	l.skipInline()
+	if !strings.HasPrefix(l.src[l.pos:], w) {
+		l.pos, l.line, l.col = save, sl, sc
+		return false
+	}
+	if end := l.pos + len(w); end < len(l.src) && isIdentPart(l.src[end]) {
+		l.pos, l.line, l.col = save, sl, sc // not a whole word (e.g. "assign")
+		return false
+	}
+	for i := 0; i < len(w); i++ {
+		l.adv()
+	}
+	return true
+}
+
+// rawIdent reads an identifier from the raw stream (after inline spaces).
+func (l *lexer) rawIdent() string {
+	l.skipInline()
+	start := l.pos
+	for l.pos < len(l.src) && isIdentPart(l.src[l.pos]) {
+		l.adv()
+	}
+	return l.src[start:l.pos]
+}
+
 func isIdentStart(c byte) bool {
 	return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }

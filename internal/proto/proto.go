@@ -37,6 +37,14 @@ func ResolveRefs(steps []Step, env map[string]string) ([]Step, error) {
 			out[i] = Step{If: &IfBlock{Cond: cond, Match: s.If.Match, CondRef: s.If.CondRef, Negate: s.If.Negate, Then: then, Else: els}}
 			continue
 		}
+		if len(s.Block) > 0 {
+			sub, err := ResolveRefs(s.Block, env)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = Step{Block: sub, Become: s.Become}
+			continue
+		}
 		if len(s.Parallel) > 0 {
 			sub, err := ResolveRefs(s.Parallel, env)
 			if err != nil {
@@ -56,7 +64,7 @@ func ResolveRefs(steps []Step, env map[string]string) ([]Step, error) {
 			}
 			args[argName] = v
 		}
-		out[i] = Step{Instruction: s.Instruction, Args: args, Bind: s.Bind, Caught: s.Caught}
+		out[i] = Step{Instruction: s.Instruction, Args: args, Bind: s.Bind, Caught: s.Caught, Become: s.Become}
 	}
 	return out, nil
 }
@@ -71,6 +79,8 @@ type Step struct {
 	Refs        map[string]string `json:"refs,omitempty"`
 	Bind        string            `json:"bind,omitempty"` // capture this step's Result under this name
 	Caught      bool              `json:"caught,omitempty"` // `?` — an err here is handled, not an automatic halt (ADR-0009)
+	Become      string            `json:"become,omitempty"` // escalate this step's shells to this user (ADR-0011)
+	Block       []Step            `json:"block,omitempty"`  // an `as <user> { … }` sequential group (ADR-0011)
 	Parallel    []Step            `json:"parallel,omitempty"`
 	If          *IfBlock          `json:"if,omitempty"`
 }

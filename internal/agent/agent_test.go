@@ -22,10 +22,11 @@ type fakeExec struct {
 	mu        sync.Mutex
 	responses map[string]engine.ShellResult
 	calls     map[string]bool
+	becomes   map[string]string // script-key → the user a shell escalated to (ADR-0011)
 }
 
 func newFake() *fakeExec {
-	return &fakeExec{responses: map[string]engine.ShellResult{}, calls: map[string]bool{}}
+	return &fakeExec{responses: map[string]engine.ShellResult{}, calls: map[string]bool{}, becomes: map[string]string{}}
 }
 
 func key(script, pkg string) string { return script + "\x00" + pkg }
@@ -39,6 +40,39 @@ func (f *fakeExec) Shell(script string, env engine.Env) engine.ShellResult {
 		return r
 	}
 	return engine.ShellResult{Exit: 127}
+}
+
+func (f *fakeExec) As(user string) engine.Executor {
+	if user == "" {
+		return f
+	}
+	return becomeExec{f, user}
+}
+
+// becomeExec records the escalation user for each shell it runs, then delegates.
+type becomeExec struct {
+	inner  *fakeExec
+	become string
+}
+
+func (b becomeExec) Shell(script string, env engine.Env) engine.ShellResult {
+	b.inner.mu.Lock()
+	b.inner.becomes[key(script, env["pkg"])] = b.become
+	b.inner.mu.Unlock()
+	return b.inner.Shell(script, env)
+}
+
+func (b becomeExec) As(user string) engine.Executor {
+	if user == "" {
+		return b
+	}
+	return becomeExec{b.inner, user}
+}
+
+func (f *fakeExec) becameAs(script, pkg string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.becomes[key(script, pkg)]
 }
 
 func (f *fakeExec) set(script, pkg string, exit int) {
@@ -67,6 +101,30 @@ func serve(t *testing.T, f *fakeExec, req proto.Request) proto.Response {
 		t.Fatal(err)
 	}
 	return resp
+}
+
+func TestAgentBecome_BlockEscalates(t *testing.T) {
+	// `as root { apt.install(nginx) }` → the def's shells run escalated to root.
+	f := newFake()
+	f.set(`dpkg -s "$pkg"`, "nginx", 0) // guard: already installed → skip apply
+	serve(t, f, proto.Request{Mode: "apply", Steps: []proto.Step{
+		{Become: "root", Block: []proto.Step{apt("nginx")}},
+	}})
+	if got := f.becameAs(`dpkg -s "$pkg"`, "nginx"); got != "root" {
+		t.Fatalf("shell in `as root` block should escalate to root, got %q", got)
+	}
+}
+
+func TestAgentBecome_ShellStepEscalates(t *testing.T) {
+	// `shell as root { id }` → that shell escalates.
+	f := newFake()
+	f.set("id", "", 0)
+	serve(t, f, proto.Request{Mode: "apply", Steps: []proto.Step{
+		{Instruction: "shell", Args: map[string]string{"cmd": "id"}, Become: "root"},
+	}})
+	if got := f.becameAs("id", ""); got != "root" {
+		t.Fatalf("`shell as root` should escalate, got %q", got)
+	}
 }
 
 func TestServe_Sequential_HaltsOnErr(t *testing.T) {
