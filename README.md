@@ -19,10 +19,12 @@ dry-run shows what *would* change, without touching anything), and **fast**. It
 is agentless: a single static binary pushes an **ephemeral agent** over SSH that
 evaluates the plan **on the target**, then vanishes. Nothing stays installed.
 
-> Status: experimental (0.1.0). Ships **builtin instructions** (`apt-install`,
-> `file-copy`, `service`) plus a raw **`shell`** form for everything else; you
-> write the plan and inventory. Custom instructions, cross-distro, and cross-arch
-> agents are not there yet. Debian/systemd targets, `linux/amd64` control host.
+> Status: experimental (0.1.0). Ships a **stdlib of instructions** (`apt.install`,
+> `service`, `dir-ensure`, `file-*`, `ufw.*`, `docker.*`, …) written as shellf
+> `def`s, plus `file-copy` and a raw **`shell`** form; you write the plan and
+> inventory. User-supplied instruction libraries (imports), cross-distro, and
+> cross-arch agents are not there yet. Debian/systemd targets, `linux/amd64`
+> control host.
 
 ## Install
 
