@@ -230,6 +230,10 @@ shellf run --inventory <hosts.shellf> [flags] <plan.shellf>
 
 ## How it works
 
+![Isometric view: a control terminal pushes one static binary over SSH arcs to three servers, where it runs as an agent executing the plan locally; the finished agent dissolves into pixels, leaving the machine untouched.](docs/assets/how-it-works.png)
+
+*One static binary. The control host orchestrates; pushed over SSH, it re-runs as an ephemeral agent that executes the plan locally on each target — then vanishes.*
+
 Two planes, kept separate. The **orchestration** plane (control host) decides
 which hosts run what, in what order. The **execution** plane is the agent: the
 binary is pushed over SSH (cached by hash, skipped on re-runs), evaluates the
