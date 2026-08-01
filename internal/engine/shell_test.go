@@ -35,3 +35,28 @@ func TestShell_Check_WouldNotMutate(t *testing.T) {
 		t.Fatal("check mode ran the command")
 	}
 }
+
+// envFake records the env of the last shell it ran.
+type envFake struct {
+	gotEnv Env
+	result ShellResult
+}
+
+func (e *envFake) Shell(_ string, env Env) ShellResult { e.gotEnv = env; return e.result }
+func (e *envFake) As(string) Executor                  { return e }
+
+func TestShell_Apply_InjectsEnv(t *testing.T) {
+	f := &envFake{result: ShellResult{Exit: 0}}
+	Shell{Cmd: "echo $name", Env: Env{"name": "alice"}}.Apply(f)
+	if f.gotEnv["name"] != "alice" {
+		t.Fatalf("Apply must pass Env to the executor (#106), got %+v", f.gotEnv)
+	}
+}
+
+func TestShell_Guard_InjectsEnv(t *testing.T) {
+	f := &envFake{result: ShellResult{Exit: 1}} // guard fails → command would run
+	Shell{Cmd: "act", Unless: "test -f $path", Env: Env{"path": "/tmp/x"}}.Guard(f)
+	if f.gotEnv["path"] != "/tmp/x" {
+		t.Fatalf("Guard must pass Env to the executor (#106), got %+v", f.gotEnv)
+	}
+}

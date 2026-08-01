@@ -225,7 +225,7 @@ func dispatch(step proto.Step) (engine.Instruction, error) {
 	case "file-copy":
 		return engine.FileCopy{Src: step.Args["src"], Dst: step.Args["dst"]}, nil
 	case "shell":
-		return engine.Shell{Cmd: step.Args["cmd"], Unless: step.Args["unless"]}, nil
+		return engine.Shell{Cmd: step.Args["cmd"], Unless: step.Args["unless"], Env: engine.Env(step.Env)}, nil
 	default:
 		return nil, fmt.Errorf("unknown instruction: %q", step.Instruction)
 	}

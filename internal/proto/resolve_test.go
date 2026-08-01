@@ -45,6 +45,24 @@ func TestResolveRefs_PreservesBindAndCaught(t *testing.T) {
 	}
 }
 
+func TestResolveRefs_ShellStepGetsEnv(t *testing.T) {
+	// A plan-level shell step carries the per-host env so `$name` resolves (#106).
+	out, err := ResolveRefs([]Step{{Instruction: "shell", Args: map[string]string{"cmd": "echo $name"}}},
+		map[string]string{"name": "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out[0].Env["name"] != "alice" {
+		t.Fatalf("shell step should carry the per-host env: %+v", out[0].Env)
+	}
+	// A non-shell instruction gets its values via Args, not the env.
+	out, _ = ResolveRefs([]Step{{Instruction: "dir-ensure", Args: map[string]string{"path": "/x"}}},
+		map[string]string{"name": "alice"})
+	if out[0].Env != nil {
+		t.Fatalf("non-shell step should not carry env: %+v", out[0].Env)
+	}
+}
+
 func TestResolveRefs_Undefined(t *testing.T) {
 	steps := []Step{{Instruction: "dir-owner", Refs: map[string]string{"owner": "owner"}}}
 	if _, err := ResolveRefs(steps, map[string]string{}); err == nil {
