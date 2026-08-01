@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -62,11 +64,71 @@ func TestShellExecutor_Interp(t *testing.T) {
 	if b, _ := (ShellExecutor{Interp: "nu"}).shellBin(); b != "nu" {
 		t.Fatalf("nu bin: %s", b)
 	}
+	if b, _ := (ShellExecutor{Interp: "dash"}).shellBin(); b != "/bin/dash" {
+		t.Fatalf("dash bin: %s", b)
+	}
 	// Using sets/keeps the interpreter
 	if e := (ShellExecutor{}).Using("bash"); e.(ShellExecutor).Interp != "bash" {
 		t.Fatal("Using should set Interp")
 	}
 	if e := (ShellExecutor{Interp: "bash"}).Using(""); e.(ShellExecutor).Interp != "bash" {
 		t.Fatal(`Using("") must not clear Interp`)
+	}
+}
+
+// The following exercise the REAL /bin/sh executor (not a mock): the production
+// path that every remote step ultimately runs through.
+
+func TestShell_Real_ExitAndStreams(t *testing.T) {
+	r := ShellExecutor{}.Shell(`printf out; printf err >&2; exit 3`, nil)
+	if r.Exit != 3 {
+		t.Fatalf("exit code must be captured: %d", r.Exit)
+	}
+	if r.Stdout != "out" || r.Stderr != "err" {
+		t.Fatalf("stdout/stderr must be separated: out=%q err=%q", r.Stdout, r.Stderr)
+	}
+	if r.OK() {
+		t.Fatal("a non-zero exit is not OK()")
+	}
+}
+
+func TestShell_Real_EnvInjectionIsInert(t *testing.T) {
+	// A var whose value looks like shell must be data, never executed: `echo "$x"`
+	// prints the literal, and the injected `touch` never runs.
+	marker := t.TempDir() + "/pwned"
+	r := ShellExecutor{}.Shell(`printf '%s' "$x"`, Env{"x": "; touch " + marker})
+	if r.Exit != 0 {
+		t.Fatalf("unexpected failure: %+v", r)
+	}
+	if r.Stdout != "; touch "+marker {
+		t.Fatalf("the value must be passed as data, got %q", r.Stdout)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("env injection executed — the marker file was created")
+	}
+}
+
+func TestShell_Real_SetE_HaltsOnFirstFailure(t *testing.T) {
+	// Default prelude injects `set -e`: a failing command aborts the rest.
+	r := ShellExecutor{}.Shell("false\nprintf after", nil)
+	if r.Exit == 0 || r.Stdout == "after" {
+		t.Fatalf("set -e should abort before `after`: %+v", r)
+	}
+}
+
+func TestShell_Real_RawSkipsSetE(t *testing.T) {
+	// raw means "no net": no `set -e`, so a failure does not abort the sequence.
+	r := ShellExecutor{Interp: "raw"}.Shell("false\nprintf after", nil)
+	if r.Stdout != "after" {
+		t.Fatalf("raw mode should continue past a failure: %+v", r)
+	}
+}
+
+func TestShell_Real_MissingBinary(t *testing.T) {
+	// An absent interpreter binary cannot launch → Exit -1 (distinct from a
+	// non-zero script exit).
+	r := ShellExecutor{Interp: "nu"}.Shell("whatever", nil)
+	if _, err := exec.LookPath("nu"); err != nil && r.Exit != -1 {
+		t.Fatalf("a missing interpreter must yield exit -1, got %d", r.Exit)
 	}
 }
