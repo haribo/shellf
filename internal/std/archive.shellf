@@ -1,4 +1,7 @@
 def archive-extract(src: str, dst: str) {
+    # Guard: destination non-empty -> assume already extracted. Known limit: it
+    # does not verify the contents match the archive, so a stale or partial
+    # extraction still reads as done. Use a content sentinel if you need that.
     guard {
         r = shell { test -d "$dst" && test -n "$(ls -A "$dst" 2>/dev/null)" }
         if r { return ok.already }
@@ -14,9 +17,15 @@ def archive-extract(src: str, dst: str) {
 }
 
 def git-clone(url: str, dst: str) {
+    # Guard: a repo already present must be the SAME remote, else it is drift,
+    # not convergence -> err (do not silently accept a wrong-remote checkout).
     guard {
-        r = shell { test -d "$dst/.git" }
-        if r { return ok.already }
+        present = shell { test -d "$dst/.git" }
+        if present {
+            match = shell { test "$(git -C "$dst" remote get-url origin 2>/dev/null)" = "$url" }
+            if match { return ok.already }
+            return err.wrongRemote
+        }
     }
     apply {
         r = shell { git clone "$url" "$dst" }
