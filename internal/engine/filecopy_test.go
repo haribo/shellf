@@ -7,6 +7,8 @@ type fcFake struct {
 	calls     map[string]bool
 }
 
+func (f *fcFake) As(string) Executor { return f }
+
 func (f *fcFake) Shell(script string, _ Env) ShellResult {
 	if f.calls == nil {
 		f.calls = map[string]bool{}

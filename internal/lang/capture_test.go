@@ -95,6 +95,28 @@ func TestParseCatch_InlineErrTestRequiresCatch(t *testing.T) {
 	}
 }
 
+func TestParseAsBlock(t *testing.T) {
+	plan, err := ParsePlan(`on s {
+  as root { apt.install("nginx") }
+  shell as root { systemctl daemon-reload }
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := plan[0].Steps
+	// Anonymous escalated block: Become=root, Block holds the steps.
+	if steps[0].Become != "root" || len(steps[0].Block) != 1 || steps[0].Block[0].Instruction != "apt.install" {
+		t.Fatalf("as-block: %+v", steps[0])
+	}
+	// `shell as root { … }`: the shell step carries Become, body raw-captured.
+	if steps[1].Instruction != "shell" || steps[1].Become != "root" {
+		t.Fatalf("shell as root: %+v", steps[1])
+	}
+	if steps[1].Args["cmd"] != "systemctl daemon-reload" {
+		t.Fatalf("shell body: %q", steps[1].Args["cmd"])
+	}
+}
+
 func TestParseIfQualifiedCallStaysCall(t *testing.T) {
 	// docker.install() as a condition is a qualified call, not a ref
 	plan, err := ParsePlan(`on s { if docker.install() { apt.install("x") } }`)

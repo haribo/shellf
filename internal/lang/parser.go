@@ -257,6 +257,9 @@ func (p *parser) step() proto.Step {
 	if p.tok.kind == tIdent && p.tok.val == "if" {
 		return p.ifStep()
 	}
+	if p.tok.kind == tIdent && p.tok.val == "as" {
+		return p.asBlock()
+	}
 	name := p.expect(tIdent, "instruction or 'parallel'").val
 	if p.tok.kind == tEq { // capture: name = <call>
 		p.adv()
@@ -383,6 +386,14 @@ func (p *parser) inlineCond(s proto.Step) (*proto.Step, *proto.ResultRef, bool) 
 // `unless { … }` guard. When p.tok is the `shell`/`unless` keyword, the lexer
 // sits right after it, so raw capture reads from there.
 func (p *parser) shellStep() proto.Step {
+	// Optional `shell as <user> { … }` — read from the raw stream, since the
+	// shell body itself is raw-captured (ADR-0011).
+	become := ""
+	if p.lex.tryRawWord("as") {
+		if become = p.lex.rawIdent(); become == "" {
+			p.fail("expected a user after `as`")
+		}
+	}
 	body, err := p.lex.rawShellBody()
 	if err != nil {
 		panic(parseErr{err})
@@ -393,7 +404,15 @@ func (p *parser) shellStep() proto.Step {
 	if p.tok.kind == tIdent && p.tok.val == "unless" {
 		p.fail("`unless` was removed from plans; use `if !shell { <guard> } { shell { <cmd> } }`")
 	}
-	return proto.Step{Instruction: "shell", Args: args}
+	return proto.Step{Instruction: "shell", Args: args, Become: become}
+}
+
+// asBlock parses `as <user> { <steps> }` — a sequential block whose shells run
+// escalated to <user> (ADR-0011).
+func (p *parser) asBlock() proto.Step {
+	p.adv() // consume 'as'
+	user := p.expect(tIdent, "user after 'as'").val
+	return proto.Step{Become: user, Block: p.block()}
 }
 
 func (p *parser) call(name string) proto.Step {

@@ -161,6 +161,14 @@ func runStep(step proto.Step, ex engine.Executor, m engine.Mode, scope map[strin
 	if step.If != nil {
 		return runIf(step.If, ex, m, scope)
 	}
+	if len(step.Block) > 0 { // `as <user> { … }` — run the group escalated (ADR-0011)
+		subs, halted := runSteps(step.Block, ex.As(step.Become), m, scope)
+		cat := "ok"
+		if halted {
+			cat = "err"
+		}
+		return proto.StepResult{Label: "as " + step.Become, Category: cat, Sub: subs}
+	}
 	if len(step.Parallel) > 0 {
 		subs := make([]proto.StepResult, len(step.Parallel))
 		var wg sync.WaitGroup
@@ -181,7 +189,7 @@ func runStep(step proto.Step, ex engine.Executor, m engine.Mode, scope map[strin
 		return proto.StepResult{Label: "parallel", Category: cat, Sub: subs}
 	}
 
-	res, err := runInstruction(step, ex, m)
+	res, err := runInstruction(step, ex.As(step.Become), m) // step-level `as <user>` (e.g. `shell as root {}`)
 	if err != nil {
 		return proto.StepResult{Label: step.Label(), Category: "err", Tag: "agent"}
 	}

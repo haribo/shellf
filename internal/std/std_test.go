@@ -16,6 +16,8 @@ type fakeExec struct {
 	calls                []string
 }
 
+func (f *fakeExec) As(string) engine.Executor { return f }
+
 func (f *fakeExec) Shell(script string, _ engine.Env) engine.ShellResult {
 	f.calls = append(f.calls, script)
 	f.n++

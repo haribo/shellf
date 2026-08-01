@@ -20,4 +20,8 @@ type Env map[string]string
 // /bin/sh, the fake one is a lookup table for deterministic tests.
 type Executor interface {
 	Shell(script string, env Env) ShellResult
+	// As returns an executor that runs shells escalated to `user` (via the
+	// configured method, sudo by default). An empty user returns the receiver
+	// unchanged (no escalation). See ADR-0011.
+	As(user string) Executor
 }
