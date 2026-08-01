@@ -1,0 +1,10 @@
+# Hermetic end-to-end plan: no root, no network, no package manager. It only
+# provisions a marker tree under /tmp, so it runs on a barebones sshd target and
+# is fully idempotent — a second real run changes nothing.
+on target {
+    dir-ensure("/tmp/shellf-e2e")
+    file-write("/tmp/shellf-e2e/marker", "provisioned by shellf")
+    if file-exists("/tmp/shellf-e2e/marker") {
+        file-write("/tmp/shellf-e2e/ready", "ok")
+    }
+}
