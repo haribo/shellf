@@ -163,6 +163,11 @@ func (p *parser) host() inventory.Host {
 			h.Port = v
 		case "key":
 			h.Key = v
+		case "interpreter":
+			if !validInterp(v) {
+				p.fail("unknown interpreter %q (want sh/bash/dash/nu/raw)", v)
+			}
+			h.Interpreter = v
 		default:
 			// Any other field is a free-form per-host variable.
 			if h.Vars == nil {

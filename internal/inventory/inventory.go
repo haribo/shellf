@@ -5,11 +5,12 @@ package inventory
 
 // Host is connection coordinates under a logical alias.
 type Host struct {
-	Address string
-	User    string
-	Port    string
-	Key     string
-	Vars    map[string]string // free-form per-host variables
+	Address     string
+	User        string
+	Port        string
+	Key         string
+	Interpreter string            // shell interpreter for unannotated shells (ADR-0012)
+	Vars        map[string]string // free-form per-host variables
 }
 
 // Inventory maps aliases to hosts and names groups of aliases. Defaults fill
@@ -34,6 +35,9 @@ func (inv Inventory) Resolve(alias string) (Host, bool) {
 	}
 	if h.Key == "" {
 		h.Key = inv.Defaults.Key
+	}
+	if h.Interpreter == "" {
+		h.Interpreter = inv.Defaults.Interpreter
 	}
 	// Merge vars: defaults first, host overrides.
 	merged := map[string]string{}
