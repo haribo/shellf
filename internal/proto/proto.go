@@ -14,23 +14,23 @@ import (
 // ResolveRefs returns a copy of steps with every Ref resolved against env and
 // merged into Args (an unresolved ref is an error). Recurses into Parallel.
 // Called per host by the orchestrator, so the agent only ever sees Args.
-func ResolveRefs(steps []Step, env map[string]string) ([]Step, error) {
+func ResolveRefs(steps []Step, env map[string]string, interp string) ([]Step, error) {
 	out := make([]Step, len(steps))
 	for i, s := range steps {
 		if s.If != nil {
 			var cond *Step
 			if s.If.Cond != nil {
-				resolved, err := ResolveRefs([]Step{*s.If.Cond}, env)
+				resolved, err := ResolveRefs([]Step{*s.If.Cond}, env, interp)
 				if err != nil {
 					return nil, err
 				}
 				cond = &resolved[0]
 			}
-			then, err := ResolveRefs(s.If.Then, env)
+			then, err := ResolveRefs(s.If.Then, env, interp)
 			if err != nil {
 				return nil, err
 			}
-			els, err := ResolveRefs(s.If.Else, env)
+			els, err := ResolveRefs(s.If.Else, env, interp)
 			if err != nil {
 				return nil, err
 			}
@@ -38,7 +38,7 @@ func ResolveRefs(steps []Step, env map[string]string) ([]Step, error) {
 			continue
 		}
 		if len(s.Block) > 0 {
-			sub, err := ResolveRefs(s.Block, env)
+			sub, err := ResolveRefs(s.Block, env, interp)
 			if err != nil {
 				return nil, err
 			}
@@ -46,7 +46,7 @@ func ResolveRefs(steps []Step, env map[string]string) ([]Step, error) {
 			continue
 		}
 		if len(s.Parallel) > 0 {
-			sub, err := ResolveRefs(s.Parallel, env)
+			sub, err := ResolveRefs(s.Parallel, env, interp)
 			if err != nil {
 				return nil, err
 			}
@@ -67,6 +67,9 @@ func ResolveRefs(steps []Step, env map[string]string) ([]Step, error) {
 		step := Step{Instruction: s.Instruction, Args: args, Bind: s.Bind, Caught: s.Caught, Become: s.Become, Interp: s.Interp}
 		if s.Instruction == "shell" { // a plan-level shell sees the per-host env via $name (#106)
 			step.Env = env
+			if step.Interp == "" { // no block annotation → the host's interpreter (ADR-0012)
+				step.Interp = interp
+			}
 		}
 		out[i] = step
 	}
