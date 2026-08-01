@@ -174,17 +174,15 @@ and prints `would.<tag>` for what would change. A second real run is idempotent
 
 ## Instructions
 
-Most instructions are `def`s written in shellf and embedded in the binary
-(`apt.install`, `service`, `dir-ensure`, `file-write`, `ufw.*`, `docker.*`, …);
-`file-copy` is a Go builtin. A few of the common ones:
+Most instructions are `def`s written in shellf and embedded in the binary; only
+`shell` and `file-copy` are Go builtins. All are idempotent (a guard skips when
+the desired state already holds).
 
-| Instruction | Call | Guard (idempotence) |
-|---|---|---|
-| `apt.install` | `apt.install("nginx")` | package already installed |
-| `file-copy` | `file-copy("src", "dst")` | contents already match (check shows the diff) |
-| `service` | `service("nginx", "true", "true")` | already running / enabled as desired |
-| `dir-ensure` | `dir-ensure("/opt/app")` | directory already exists |
-| `file-write` | `file-write("/etc/app.conf", cfg)` | content already matches |
+- **Packages & services** — `apt.install(pkg)` · `service(name, running, enabled)` (running/enabled are `"true"`/`"false"`)
+- **Files & directories** — `file-copy(src, dst)` (content diff, previewable in `--check`) · `file-write(path, content)` · `file-line(path, line)` · `file-delete(path)` · `file-download(url, dst, sha256)` · `dir-ensure(path)` · `dir-owner(path, owner)` · `archive-extract(src, dst)` · `git-clone(url, dst)`
+- **Questions** (read-only, deterministic in `--check`) — `dir-exists(path)` · `file-exists(path)`
+- **Firewall** — `ufw.enable()` · `ufw.open(port, proto)`
+- **Docker** — `docker.install()` · `docker.network(name)` · `docker.compose-up(dir)`
 
 Write your own — see [Writing shellf](#writing-shellf).
 
