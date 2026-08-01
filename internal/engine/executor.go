@@ -24,4 +24,8 @@ type Executor interface {
 	// configured method, sudo by default). An empty user returns the receiver
 	// unchanged (no escalation). See ADR-0011.
 	As(user string) Executor
+	// Using returns an executor that runs shells under `interp` (sh/bash/dash/nu/
+	// raw), which decides the binary and the injected prelude. An empty interp
+	// returns the receiver unchanged (the sh default). See ADR-0012.
+	Using(interp string) Executor
 }

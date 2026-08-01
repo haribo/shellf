@@ -49,6 +49,8 @@ func (f *fakeExec) As(user string) engine.Executor {
 	return becomeExec{f, user}
 }
 
+func (f *fakeExec) Using(string) engine.Executor { return f }
+
 // becomeExec records the escalation user for each shell it runs, then delegates.
 type becomeExec struct {
 	inner  *fakeExec
@@ -68,6 +70,8 @@ func (b becomeExec) As(user string) engine.Executor {
 	}
 	return becomeExec{b.inner, user}
 }
+
+func (b becomeExec) Using(string) engine.Executor { return b }
 
 func (f *fakeExec) becameAs(script, pkg string) string {
 	f.mu.Lock()

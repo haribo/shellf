@@ -44,6 +44,7 @@ type envFake struct {
 
 func (e *envFake) Shell(_ string, env Env) ShellResult { e.gotEnv = env; return e.result }
 func (e *envFake) As(string) Executor                  { return e }
+func (e *envFake) Using(string) Executor               { return e }
 
 func TestShell_Apply_InjectsEnv(t *testing.T) {
 	f := &envFake{result: ShellResult{Exit: 0}}

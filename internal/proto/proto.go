@@ -64,7 +64,7 @@ func ResolveRefs(steps []Step, env map[string]string) ([]Step, error) {
 			}
 			args[argName] = v
 		}
-		step := Step{Instruction: s.Instruction, Args: args, Bind: s.Bind, Caught: s.Caught, Become: s.Become}
+		step := Step{Instruction: s.Instruction, Args: args, Bind: s.Bind, Caught: s.Caught, Become: s.Become, Interp: s.Interp}
 		if s.Instruction == "shell" { // a plan-level shell sees the per-host env via $name (#106)
 			step.Env = env
 		}
@@ -84,6 +84,7 @@ type Step struct {
 	Bind        string            `json:"bind,omitempty"` // capture this step's Result under this name
 	Caught      bool              `json:"caught,omitempty"` // `?` — an err here is handled, not an automatic halt (ADR-0009)
 	Become      string            `json:"become,omitempty"` // escalate this step's shells to this user (ADR-0011)
+	Interp      string            `json:"interp,omitempty"` // shell interpreter for a `shell(<interp>)` step (ADR-0012)
 	Env         map[string]string `json:"env,omitempty"`    // per-host env for a plan-level `shell` step (#106)
 	Block       []Step            `json:"block,omitempty"`  // an `as <user> { … }` sequential group (ADR-0011)
 	Parallel    []Step            `json:"parallel,omitempty"`

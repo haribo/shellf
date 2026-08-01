@@ -17,6 +17,7 @@ import (
 type ShellExecutor struct {
 	Become string // "" = run as the current user; else escalate to this user
 	Method string // "" defaults to sudo; also doas
+	Interp string // "" = sh; else sh/bash/dash/nu/raw (ADR-0012)
 }
 
 // As returns a copy escalated to `user` (empty = unchanged).
@@ -28,11 +29,47 @@ func (s ShellExecutor) As(user string) Executor {
 	return s
 }
 
+// Using returns a copy that runs under `interp` (empty = unchanged, the sh default).
+func (s ShellExecutor) Using(interp string) Executor {
+	if interp == "" {
+		return s
+	}
+	s.Interp = interp
+	return s
+}
+
+// prelude is the error-handling injected before the script, per interpreter.
+func (s ShellExecutor) prelude() string {
+	switch s.Interp {
+	case "bash":
+		return "set -e\nset -o pipefail\n" // pipefail is legitimate under bash (ADR-0012)
+	case "nu", "raw":
+		return "" // nu halts by default; raw means "no net"
+	default: // "", sh, dash
+		return "set -e\n"
+	}
+}
+
+// shellBin is the interpreter binary and its command flag.
+func (s ShellExecutor) shellBin() (bin, flag string) {
+	switch s.Interp {
+	case "bash":
+		return "/bin/bash", "-c"
+	case "dash":
+		return "/bin/dash", "-c"
+	case "nu":
+		return "nu", "-c"
+	default: // "", sh, raw
+		return "/bin/sh", "-c"
+	}
+}
+
 func (s ShellExecutor) Shell(script string, env Env) ShellResult {
-	full := "set -e\n" + script
+	full := s.prelude() + script
+	bin, flag := s.shellBin()
 
 	argv := s.escalate(env)
-	argv = append(argv, "/bin/sh", "-c", full)
+	argv = append(argv, bin, flag, full)
 
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = os.Environ()

@@ -16,7 +16,8 @@ type fakeExec struct {
 	calls                []string
 }
 
-func (f *fakeExec) As(string) engine.Executor { return f }
+func (f *fakeExec) As(string) engine.Executor    { return f }
+func (f *fakeExec) Using(string) engine.Executor { return f }
 
 func TestStd_IntrinsicBecome(t *testing.T) {
 	// Intrinsic `as root` defs (need root regardless of arguments).

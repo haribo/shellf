@@ -33,7 +33,8 @@ type evalFake struct {
 	calls map[string]bool
 }
 
-func (f *evalFake) As(string) engine.Executor { return f }
+func (f *evalFake) As(string) engine.Executor    { return f }
+func (f *evalFake) Using(string) engine.Executor { return f }
 
 func (f *evalFake) Shell(script string, _ engine.Env) engine.ShellResult {
 	if f.calls == nil {
