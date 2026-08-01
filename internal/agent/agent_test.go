@@ -119,6 +119,34 @@ func TestAgentBecome_BlockEscalates(t *testing.T) {
 	}
 }
 
+func TestMissingInterpreters(t *testing.T) {
+	f := newFake()
+	f.set("command -v bash", "", 0) // present
+	f.set("command -v nu", "", 1)   // absent
+	steps := []proto.Step{
+		{Instruction: "shell", Args: map[string]string{"cmd": "x"}, Interp: "bash"},
+		{Instruction: "shell", Args: map[string]string{"cmd": "y"}, Interp: "nu"},
+		{Instruction: "shell", Args: map[string]string{"cmd": "z"}}, // sh → never checked
+	}
+	if got := missingInterpreters(steps, f); len(got) != 1 || got[0] != "nu" {
+		t.Fatalf("expected [nu], got %v", got)
+	}
+}
+
+func TestServe_InterpreterPreflight(t *testing.T) {
+	f := newFake()
+	f.set("command -v nu", "", 1) // absent
+	resp := serve(t, f, proto.Request{Mode: "apply", Steps: []proto.Step{
+		{Instruction: "shell", Args: map[string]string{"cmd": "ls"}, Interp: "nu"},
+	}})
+	if !resp.Halted || len(resp.Results) != 1 || resp.Results[0].Tag != "interpreterMissing" {
+		t.Fatalf("a missing interpreter must pre-flight halt: %+v", resp)
+	}
+	if f.called("ls", "") {
+		t.Fatal("pre-flight must halt before running any step")
+	}
+}
+
 func TestAgentBecome_DefIntrinsic(t *testing.T) {
 	// apt.install is marked `as root` → its shells escalate with no wrapper.
 	f := newFake()
