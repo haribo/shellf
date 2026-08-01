@@ -70,9 +70,13 @@ func TestStdlib_AllPresent(t *testing.T) {
 }
 
 func TestComposeAndUfw(t *testing.T) {
-	// compose-up has no guard: its single shell is the apply (n==1 → guardExit here).
-	if got := eval(t, "docker.compose-up", map[string]string{"dir": "/opt/app"}, &fakeExec{guardExit: 0}, engine.Apply).String(); got != "ok.up" {
-		t.Fatalf("docker.compose-up: got %s, want ok.up", got)
+	// compose-up now guards on the stack being up (#117): guard ok → skip.
+	if got := eval(t, "docker.compose-up", map[string]string{"dir": "/opt/app"}, &fakeExec{guardExit: 0}, engine.Apply).String(); got != "ok.alreadyUp" {
+		t.Fatalf("docker.compose-up guard-ok: got %s, want ok.alreadyUp", got)
+	}
+	// stack not up → apply brings it up.
+	if got := eval(t, "docker.compose-up", map[string]string{"dir": "/opt/app"}, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.up" {
+		t.Fatalf("docker.compose-up apply: got %s, want ok.up", got)
 	}
 	// ufw.open: rule absent → allow
 	if got := eval(t, "ufw.open", map[string]string{"port": "443/tcp"}, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.opened" {
@@ -109,8 +113,13 @@ func TestArchiveAndClone(t *testing.T) {
 	if got := eval(t, "archive-extract", map[string]string{"src": "/a.tgz", "dst": "/opt"}, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.extracted" {
 		t.Fatalf("archive-extract: got %s, want ok.extracted", got)
 	}
-	if got := eval(t, "git-clone", map[string]string{"url": "http://x/r", "dst": "/opt/r"}, &fakeExec{guardExit: 0}, engine.Apply).String(); got != "ok.already" {
-		t.Fatalf("git-clone guard: got %s, want ok.already", got)
+	// present + remote matches → skip (guard shell 1 = present, shell 2 = remote match)
+	if got := eval(t, "git-clone", map[string]string{"url": "http://x/r", "dst": "/opt/r"}, &fakeExec{guardExit: 0, applyExit: 0}, engine.Apply).String(); got != "ok.already" {
+		t.Fatalf("git-clone matching remote: got %s, want ok.already", got)
+	}
+	// present but WRONG remote → err, not a silent skip (#117)
+	if got := eval(t, "git-clone", map[string]string{"url": "http://x/r", "dst": "/opt/r"}, &fakeExec{guardExit: 0, applyExit: 1}, engine.Apply).String(); got != "err.wrongRemote" {
+		t.Fatalf("git-clone wrong remote: got %s, want err.wrongRemote", got)
 	}
 }
 
