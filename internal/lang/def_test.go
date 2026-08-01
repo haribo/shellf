@@ -131,6 +131,36 @@ func TestParseDef_Become(t *testing.T) {
 	}
 }
 
+func TestParseDef_Interp(t *testing.T) {
+	defs, err := ParseDefs(`def build() using bash { apply { r = shell(bash) { false | true }  if !r { return err.runtime(r) }  return ok.built } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := defs[0]
+	if d.Interp != "bash" {
+		t.Fatalf("def-declared interp: %q", d.Interp)
+	}
+	let := d.Phases[0].Stmts[0].(LetStmt)
+	if se, ok := let.Value.(ShellExpr); !ok || se.Interp != "bash" {
+		t.Fatalf("shell(bash) block annotation: %+v", let.Value)
+	}
+	// `as` and `using` compose, either order
+	d2, _ := ParseDefs(`def x() as root using bash { apply { return ok.done } }`)
+	if d2[0].Become != "root" || d2[0].Interp != "bash" {
+		t.Fatalf("as+using: %+v", d2[0])
+	}
+	d3, _ := ParseDefs(`def x() using bash as root { apply { return ok.done } }`)
+	if d3[0].Become != "root" || d3[0].Interp != "bash" {
+		t.Fatalf("using+as: %+v", d3[0])
+	}
+}
+
+func TestParseDef_Interp_Unknown(t *testing.T) {
+	if _, err := ParseDefs(`def x() using fish { apply { return ok.a } }`); err == nil {
+		t.Fatal("an unknown def interpreter must error")
+	}
+}
+
 func TestParseDef_Errors(t *testing.T) {
 	cases := []string{
 		`def x(pkg str) { return ok.a }`,                 // missing colon in param
