@@ -82,6 +82,60 @@ func newJobID() string {
 	return fmt.Sprintf("%d-%d-%d", os.Getpid(), time.Now().UnixNano(), jobCounter.Add(1))
 }
 
+// --- pure command/path builders (no network; unit-tested in ssh_test.go) ---
+
+const notDone = "__NOTDONE__" // poll sentinel: the job's result is not ready yet
+
+func donePath(wd, jobid string) string { return fmt.Sprintf("%s/done-%s", wd, jobid) }
+func outPath(wd, jobid string) string  { return fmt.Sprintf("%s/out-%s.json", wd, jobid) }
+
+// pushCmd streams stdin to a temp then renames onto path (atomic, +x).
+func pushCmd(path string) string {
+	tmp := path + ".tmp"
+	return fmt.Sprintf("cat > %[1]s && chmod +x %[1]s && mv %[1]s %[2]s", tmp, path)
+}
+
+// depositCmd writes the request (stdin) atomically into the workdir.
+func depositCmd(wd, jobid string) string {
+	tmp := fmt.Sprintf("%s/req-%s.json.tmp", wd, jobid)
+	final := fmt.Sprintf("%s/req-%s.json", wd, jobid)
+	return fmt.Sprintf("mkdir -p %[1]s && cat > %[2]s && mv %[2]s %[3]s", wd, tmp, final)
+}
+
+// launchCmd starts a detached resident agent with an inactivity TTL.
+func launchCmd(path, wd string, ttlSecs int) string {
+	return fmt.Sprintf(`setsid %[1]s __agent-resident %[2]s %[3]d >/dev/null 2>&1 </dev/null &`, path, wd, ttlSecs)
+}
+
+// agentAliveCmd checks OUR agent is running via /proc (not kill -0: a recycled
+// pid would be a false positive).
+func agentAliveCmd(wd string) string {
+	return fmt.Sprintf(`p=$(cat %[1]s/agent.pid 2>/dev/null) && [ -n "$p" ] && grep -qa __agent-resident /proc/$p/cmdline 2>/dev/null`, wd)
+}
+
+func checkDoneCmd(wd, jobid string) string {
+	return fmt.Sprintf("if test -f %s; then cat %s; else printf %s; fi", donePath(wd, jobid), outPath(wd, jobid), notDone)
+}
+
+func rmJobCmd(wd, jobid string) string {
+	return fmt.Sprintf("rm -f %s %s", outPath(wd, jobid), donePath(wd, jobid))
+}
+
+// cleanCmd kills every resident agent (via its pid file) and removes all shellf
+// /tmp files. Only touches /tmp/shellf-* paths.
+func cleanCmd() string {
+	return `for d in /tmp/shellf-*/; do [ -e "$d/agent.pid" ] && kill "$(cat "$d/agent.pid")" 2>/dev/null; done; rm -rf /tmp/shellf-* 2>/dev/null; true`
+}
+
+// parseDone interprets a checkDone response: the sentinel means "not ready",
+// anything else is the result payload.
+func parseDone(stdout []byte) (out []byte, ready bool) {
+	if bytes.Equal(stdout, []byte(notDone)) {
+		return nil, false
+	}
+	return stdout, true
+}
+
 func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
 	bin, err := os.ReadFile(agentBin)
 	if err != nil {
@@ -133,8 +187,7 @@ func (s SSH) Clean() error {
 	defer sess.Close()
 	var stderr bytes.Buffer
 	sess.Stderr = &stderr
-	cmd := `for d in /tmp/shellf-*/; do [ -e "$d/agent.pid" ] && kill "$(cat "$d/agent.pid")" 2>/dev/null; done; rm -rf /tmp/shellf-* 2>/dev/null; true`
-	if err := sess.Run(cmd); err != nil {
+	if err := sess.Run(cleanCmd()); err != nil {
 		return fmt.Errorf("clean: %v: %s", err, stderr.String())
 	}
 	return nil
@@ -212,9 +265,7 @@ func (s SSH) push(client *ssh.Client, bin []byte, path string) error {
 	sess.Stdin = bytes.NewReader(bin)
 	var stderr bytes.Buffer
 	sess.Stderr = &stderr
-	tmp := path + ".tmp"
-	cmd := fmt.Sprintf("cat > %[1]s && chmod +x %[1]s && mv %[1]s %[2]s", tmp, path)
-	if err := sess.Run(cmd); err != nil {
+	if err := sess.Run(pushCmd(path)); err != nil {
 		return fmt.Errorf("push agent: %v: %s", err, stderr.String())
 	}
 	return nil
@@ -233,10 +284,7 @@ func (s SSH) deposit(client *ssh.Client, wd, jobid string, req []byte) error {
 	sess.Stdin = bytes.NewReader(req)
 	var stderr bytes.Buffer
 	sess.Stderr = &stderr
-	reqTmp := fmt.Sprintf("%s/req-%s.json.tmp", wd, jobid)
-	reqFinal := fmt.Sprintf("%s/req-%s.json", wd, jobid)
-	cmd := fmt.Sprintf("mkdir -p %[1]s && cat > %[2]s && mv %[2]s %[3]s", wd, reqTmp, reqFinal)
-	if err := sess.Run(cmd); err != nil {
+	if err := sess.Run(depositCmd(wd, jobid)); err != nil {
 		return fmt.Errorf("deposit: %v: %s", err, stderr.String())
 	}
 	return nil
@@ -252,8 +300,7 @@ func (s SSH) agentAlive(client *ssh.Client, wd string) bool {
 		return false
 	}
 	defer sess.Close()
-	cmd := fmt.Sprintf(`p=$(cat %[1]s/agent.pid 2>/dev/null) && [ -n "$p" ] && grep -qa __agent-resident /proc/$p/cmdline 2>/dev/null`, wd)
-	return sess.Run(cmd) == nil
+	return sess.Run(agentAliveCmd(wd)) == nil
 }
 
 // launchAgent starts a detached resident agent. It uses Start (not Run) and
@@ -267,10 +314,7 @@ func (s SSH) launchAgent(client *ssh.Client, path, wd string) error {
 	if err != nil {
 		return err
 	}
-	cmd := fmt.Sprintf(
-		`setsid %[1]s __agent-resident %[2]s %[3]d >/dev/null 2>&1 </dev/null &`,
-		path, wd, s.agentTTLSecs())
-	if err := sess.Start(cmd); err != nil {
+	if err := sess.Start(launchCmd(path, wd, s.agentTTLSecs())); err != nil {
 		sess.Close()
 		return err
 	}
@@ -282,9 +326,6 @@ func (s SSH) launchAgent(client *ssh.Client, path, wd string) error {
 // poll waits for the job's result, re-dialing on a dropped session until the
 // deadline. Because the agent is detached, the job keeps running across drops.
 func (s SSH) poll(wd, jobid string, deadline time.Time) ([]byte, error) {
-	donePath := fmt.Sprintf("%s/done-%s", wd, jobid)
-	outPath := fmt.Sprintf("%s/out-%s.json", wd, jobid)
-
 	var client *ssh.Client
 	defer func() {
 		if client != nil {
@@ -301,7 +342,7 @@ func (s SSH) poll(wd, jobid string, deadline time.Time) ([]byte, error) {
 			}
 			client = c
 		}
-		data, ready, err := s.checkDone(client, donePath, outPath)
+		data, ready, err := s.checkDone(client, wd, jobid)
 		if err != nil {
 			client.Close()
 			client = nil // dropped → re-dial next iteration
@@ -319,7 +360,7 @@ func (s SSH) poll(wd, jobid string, deadline time.Time) ([]byte, error) {
 
 // checkDone returns the result if done exists; a session error means a dropped
 // connection (distinct from "not done yet").
-func (s SSH) checkDone(client *ssh.Client, donePath, outPath string) (out []byte, ready bool, err error) {
+func (s SSH) checkDone(client *ssh.Client, wd, jobid string) (out []byte, ready bool, err error) {
 	sess, err := client.NewSession()
 	if err != nil {
 		return nil, false, err
@@ -327,15 +368,11 @@ func (s SSH) checkDone(client *ssh.Client, donePath, outPath string) (out []byte
 	defer sess.Close()
 	var stdout bytes.Buffer
 	sess.Stdout = &stdout
-	cmd := fmt.Sprintf("if test -f %s; then cat %s; else printf __NOTDONE__; fi", donePath, outPath)
-	if err := sess.Run(cmd); err != nil {
+	if err := sess.Run(checkDoneCmd(wd, jobid)); err != nil {
 		return nil, false, err
 	}
-	data := stdout.Bytes()
-	if bytes.Equal(data, []byte("__NOTDONE__")) {
-		return nil, false, nil
-	}
-	return data, true, nil
+	out, ready = parseDone(stdout.Bytes())
+	return out, ready, nil
 }
 
 // rmJob removes the consumed result/done files (best-effort).
@@ -345,7 +382,7 @@ func (s SSH) rmJob(client *ssh.Client, wd, jobid string) {
 		return
 	}
 	defer sess.Close()
-	_ = sess.Run(fmt.Sprintf("rm -f %s/out-%s.json %s/done-%s", wd, jobid, wd, jobid))
+	_ = sess.Run(rmJobCmd(wd, jobid))
 }
 
 func (s SSH) signer() (ssh.Signer, error) {
