@@ -41,13 +41,12 @@ func EvalDef(def Def, args map[string]string, ex engine.Executor, mode engine.Mo
 	}
 	desired := ev.desiredState(def) // the effective arguments, keyed by name
 
-	// Pass 1: read-only decision phases. First outcome wins (err → halt, or
-	// guard → skip — same control flow, the category carries the meaning). An
-	// `observe` phase reports current state; convergence (state == desired) is the
-	// derived skip, replacing a hand-written guard (ADR-0013).
+	// Pass 1: read-only decision phases. A `pre-check`/`check` outcome wins (err →
+	// halt, or a question's ok/err). An `observe` phase reports current state;
+	// convergence (state == desired) is the derived skip (ADR-0013).
 	for _, ph := range def.Phases {
 		switch ph.Name {
-		case "pre-check", "check", "guard":
+		case "pre-check", "check":
 			if o := ev.evalPhase(ph); o != nil {
 				return ev.toResult(*o), nil
 			}
@@ -150,19 +149,32 @@ func (ev *evaluator) evalObserve(stmts []Stmt) map[string]string {
 	return nil
 }
 
-// converged reports whether every observed field matches its desired value. A
-// desired that is empty/unset is "don't care" and excluded (ADR-0013).
+// converged reports whether the observed state is in sync with the desired
+// arguments (ADR-0013). A field with no same-named parameter is an assertion
+// that must hold (truthy); a parameter present but empty is "don't care"; a
+// parameter present and non-empty must equal the observed value.
 func converged(observed, desired map[string]string) bool {
 	for field, got := range observed {
 		want, ok := desired[field]
-		if !ok || want == "" {
-			continue
-		}
-		if got != want {
-			return false
+		switch {
+		case !ok:
+			if !truthyStr(got) { // no parameter → the condition must hold
+				return false
+			}
+		case want == "": // don't care
+		default:
+			if got != want {
+				return false
+			}
 		}
 	}
 	return true
+}
+
+// truthyStr reads an observed field as a satisfied condition: non-empty, and not
+// a false-ish value (a `.ok` bool renders as "true"/"false").
+func truthyStr(s string) bool {
+	return s != "" && s != "false" && s != "0"
 }
 
 // stringify renders a scalar value for the diff / the shell environment.

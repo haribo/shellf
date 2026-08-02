@@ -4,7 +4,7 @@ package lang
 // (adv/expect/fail/catch) from parser.go.
 
 var phaseNames = map[string]bool{
-	"pre-check": true, "check": true, "guard": true, "observe": true, "apply": true, "post": true,
+	"pre-check": true, "check": true, "observe": true, "apply": true, "post": true,
 }
 var categories = map[string]bool{"ok": true, "err": true, "would": true}
 

@@ -1,9 +1,6 @@
 def file-download(url: str, dst: str, sha256: str) {
-    guard {
-        r = shell {
-            test -f "$dst" && echo "$sha256  $dst" | sha256sum -c --status
-        }
-        if r { return ok.already }
+    observe {
+        return state(present: shell { test -f "$dst" && echo "$sha256  $dst" | sha256sum -c --status }.exit == 0)
     }
     apply {
         r = shell {
@@ -16,9 +13,8 @@ def file-download(url: str, dst: str, sha256: str) {
 }
 
 def file-write(path: str, content: str) {
-    guard {
-        r = shell { test -f "$path" && printf '%s' "$content" | cmp -s - "$path" }
-        if r { return ok.already }
+    observe {
+        return state(synced: shell { test -f "$path" && printf '%s' "$content" | cmp -s - "$path" }.exit == 0)
     }
     apply {
         r = shell { printf '%s' "$content" > "$path" }
@@ -28,10 +24,7 @@ def file-write(path: str, content: str) {
 }
 
 def file-line(path: str, line: str) {
-    guard {
-        r = shell { grep -qF -- "$line" "$path" }
-        if r { return ok.already }
-    }
+    observe { return state(present: shell { grep -qF -- "$line" "$path" }.exit == 0) }
     apply {
         r = shell { printf '%s\n' "$line" >> "$path" }
         if !r { return err.runtime(r) }
@@ -40,10 +33,7 @@ def file-line(path: str, line: str) {
 }
 
 def file-delete(path: str) {
-    guard {
-        r = shell { test ! -e "$path" }
-        if r { return ok.already }
-    }
+    observe { return state(absent: shell { test ! -e "$path" }.exit == 0) }
     apply {
         r = shell { rm -rf -- "$path" }
         if !r { return err.runtime(r) }

@@ -1,8 +1,5 @@
 def open(port: str, proto: str) as root {
-    guard {
-        r = shell { ufw status | grep -q "$port/$proto" }
-        if r { return ok.already }
-    }
+    observe { return state(allowed: shell { ufw status | grep -q "$port/$proto" }.exit == 0) }
     apply {
         r = shell { ufw allow "$port/$proto" }
         if !r { return err.runtime(r) }

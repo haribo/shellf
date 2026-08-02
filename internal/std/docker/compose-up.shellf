@@ -1,11 +1,8 @@
 def compose-up(dir: str) as root {
-    # Guard: the stack is already up (services running) -> skip. Known limit:
-    # this does not detect a change to the compose file while the stack is up
-    # (a config-hash guard would); bring the stack down to force a re-apply.
-    guard {
-        r = shell { cd "$dir" && docker compose ps --status running --quiet | grep -q . }
-        if r { return ok.alreadyUp }
-    }
+    # Observed: the stack is up (services running). Known limit: this does not
+    # detect a change to the compose file while the stack is up (a config-hash
+    # field would); bring the stack down to force a re-apply.
+    observe { return state(up: shell { cd "$dir" && docker compose ps --status running --quiet | grep -q . }.exit == 0) }
     apply {
         r = shell {
             cd "$dir"

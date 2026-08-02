@@ -1,47 +1,34 @@
 package std
 
 import (
+	"strings"
 	"testing"
 
 	"shellf/internal/engine"
 	"shellf/internal/lang"
 )
 
-// fakeExec returns guardExit for the first shell (the read-only guard, pass 1)
-// and applyExit for any later shell (the apply, pass 2). Robust for the simple
-// one-guard-one-apply defs here, no script pattern-matching.
+// fakeExec drives the ADR-0013 observe/apply split: any shell whose script
+// contains applyMatch is the apply (pass 2) and returns `apply`; every other
+// shell is an observe read (pass 1) and returns `observe`. A converged run has
+// its observe field satisfied (exit 0 for a truthy field, or a matching stdout
+// for a value field); a drift has it unsatisfied.
 type fakeExec struct {
-	guardExit, applyExit int
-	n                    int
-	calls                []string
+	observe    engine.ShellResult
+	apply      engine.ShellResult
+	applyMatch string
+	calls      []string
 }
 
 func (f *fakeExec) As(string) engine.Executor    { return f }
 func (f *fakeExec) Using(string) engine.Executor { return f }
 
-func TestStd_IntrinsicBecome(t *testing.T) {
-	// Intrinsic `as root` defs (need root regardless of arguments).
-	for _, name := range []string{"apt.install", "service", "ufw.enable", "ufw.open", "docker.install", "docker.network", "user-group", "dir-owner"} {
-		def, ok := Lookup(name)
-		if !ok || def.Become != "root" {
-			t.Fatalf("%s should be intrinsic `as root`: ok=%v become=%q", name, ok, def.Become)
-		}
-	}
-	// Path-dependent defs stay un-escalated; the caller decides.
-	for _, name := range []string{"dir-ensure", "file-write", "dir-exists"} {
-		if def, _ := Lookup(name); def.Become != "" {
-			t.Fatalf("%s should not be intrinsic: become=%q", name, def.Become)
-		}
-	}
-}
-
 func (f *fakeExec) Shell(script string, _ engine.Env) engine.ShellResult {
 	f.calls = append(f.calls, script)
-	f.n++
-	if f.n == 1 {
-		return engine.ShellResult{Exit: f.guardExit}
+	if f.applyMatch != "" && strings.Contains(script, f.applyMatch) {
+		return f.apply
 	}
-	return engine.ShellResult{Exit: f.applyExit}
+	return f.observe
 }
 
 func eval(t *testing.T, name string, args map[string]string, f *fakeExec, mode engine.Mode) engine.Result {
@@ -57,6 +44,26 @@ func eval(t *testing.T, name string, args map[string]string, f *fakeExec, mode e
 	return res
 }
 
+// converged is an observe result that satisfies a truthy field (exit 0).
+var converged = engine.ShellResult{Exit: 0}
+
+// drift is an observe result that fails a truthy field (exit 1).
+var drift = engine.ShellResult{Exit: 1}
+
+func TestStd_IntrinsicBecome(t *testing.T) {
+	for _, name := range []string{"apt.install", "service", "ufw.enable", "ufw.open", "docker.install", "docker.network", "user-group", "dir-owner"} {
+		def, ok := Lookup(name)
+		if !ok || def.Become != "root" {
+			t.Fatalf("%s should be intrinsic `as root`: ok=%v become=%q", name, ok, def.Become)
+		}
+	}
+	for _, name := range []string{"dir-ensure", "file-write", "dir-exists"} {
+		if def, _ := Lookup(name); def.Become != "" {
+			t.Fatalf("%s should not be intrinsic: become=%q", name, def.Become)
+		}
+	}
+}
+
 func TestStdlib_AllPresent(t *testing.T) {
 	for _, name := range []string{
 		"apt.install", "file-download", "archive-extract", "git-clone",
@@ -70,125 +77,119 @@ func TestStdlib_AllPresent(t *testing.T) {
 	}
 }
 
-func TestComposeAndUfw(t *testing.T) {
-	// compose-up now guards on the stack being up (#117): guard ok → skip.
-	if got := eval(t, "docker.compose-up", map[string]string{"dir": "/opt/app"}, &fakeExec{guardExit: 0}, engine.Apply).String(); got != "ok.alreadyUp" {
-		t.Fatalf("docker.compose-up guard-ok: got %s, want ok.alreadyUp", got)
+// A converged truthy-field resource skips apply with the uniform `ok.already`
+// (ADR-0013); drift runs apply to the def's own success tag.
+func TestTruthyResources(t *testing.T) {
+	cases := []struct {
+		name, apply, tag string
+		args             map[string]string
+	}{
+		{"apt.install", "apt-get install", "installed", map[string]string{"pkg": "nginx"}},
+		{"docker.compose-up", "compose up", "up", map[string]string{"dir": "/opt/app"}},
+		{"docker.install", "get.docker.com", "installed", nil},
+		{"docker.network", "network create", "created", map[string]string{"name": "web"}},
+		{"ufw.enable", "--force enable", "enabled", nil},
+		{"ufw.open", "ufw allow", "opened", map[string]string{"port": "443", "proto": "tcp"}},
+		{"dir-ensure", "mkdir", "created", map[string]string{"path": "/opt/x"}},
+		{"file-line", ">>", "added", map[string]string{"path": "/etc/x", "line": "z"}},
+		{"file-delete", "rm -rf", "deleted", map[string]string{"path": "/tmp/gone"}},
+		{"archive-extract", "tar", "extracted", map[string]string{"src": "/a.tgz", "dst": "/opt"}},
+		{"user-group", "usermod", "added", map[string]string{"user": "x", "group": "docker"}},
+		{"file-download", "curl", "downloaded", map[string]string{"url": "http://x", "dst": "/d", "sha256": "abc"}},
 	}
-	// stack not up → apply brings it up.
-	if got := eval(t, "docker.compose-up", map[string]string{"dir": "/opt/app"}, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.up" {
-		t.Fatalf("docker.compose-up apply: got %s, want ok.up", got)
-	}
-	// ufw.open: rule absent → allow
-	if got := eval(t, "ufw.open", map[string]string{"port": "443/tcp"}, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.opened" {
-		t.Fatalf("ufw.open apply: got %s, want ok.opened", got)
-	}
-	// ufw.open: rule present → skip
-	if got := eval(t, "ufw.open", map[string]string{"port": "443/tcp"}, &fakeExec{guardExit: 0}, engine.Apply).String(); got != "ok.already" {
-		t.Fatalf("ufw.open guard-ok: got %s, want ok.already", got)
-	}
-}
-
-func TestDownloadFile(t *testing.T) {
-	args := map[string]string{"url": "http://x/a.tgz", "dst": "/tmp/a.tgz", "sha256": "abc"}
-
-	if got := eval(t, "file-download", args, &fakeExec{guardExit: 0}, engine.Apply).String(); got != "ok.already" {
-		t.Fatalf("guard-ok: got %s, want ok.already", got)
-	}
-	if got := eval(t, "file-download", args, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.downloaded" {
-		t.Fatalf("apply: got %s, want ok.downloaded", got)
-	}
-	if got := eval(t, "file-download", args, &fakeExec{guardExit: 1, applyExit: 22}, engine.Apply).String(); got != "err.runtime" {
-		t.Fatalf("apply-fail: got %s, want err.runtime", got)
-	}
-	f := &fakeExec{guardExit: 1}
-	if got := eval(t, "file-download", args, f, engine.Check).String(); got != "would.downloaded" {
-		t.Fatalf("check: got %s, want would.downloaded", got)
-	}
-	if len(f.calls) != 1 { // only the guard ran; apply skipped in check
-		t.Fatalf("check mode ran %d shells, want 1 (guard only)", len(f.calls))
-	}
-}
-
-func TestArchiveAndClone(t *testing.T) {
-	if got := eval(t, "archive-extract", map[string]string{"src": "/a.tgz", "dst": "/opt"}, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.extracted" {
-		t.Fatalf("archive-extract: got %s, want ok.extracted", got)
-	}
-	// present + remote matches → skip (guard shell 1 = present, shell 2 = remote match)
-	if got := eval(t, "git-clone", map[string]string{"url": "http://x/r", "dst": "/opt/r"}, &fakeExec{guardExit: 0, applyExit: 0}, engine.Apply).String(); got != "ok.already" {
-		t.Fatalf("git-clone matching remote: got %s, want ok.already", got)
-	}
-	// present but WRONG remote → err, not a silent skip (#117)
-	if got := eval(t, "git-clone", map[string]string{"url": "http://x/r", "dst": "/opt/r"}, &fakeExec{guardExit: 0, applyExit: 1}, engine.Apply).String(); got != "err.wrongRemote" {
-		t.Fatalf("git-clone wrong remote: got %s, want err.wrongRemote", got)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			// converged → skip
+			if got := eval(t, c.name, c.args, &fakeExec{observe: converged, applyMatch: c.apply}, engine.Apply).String(); got != "ok.already" {
+				t.Fatalf("converged: got %s, want ok.already", got)
+			}
+			// drift → apply success
+			if got := eval(t, c.name, c.args, &fakeExec{observe: drift, apply: engine.ShellResult{Exit: 0}, applyMatch: c.apply}, engine.Apply).String(); got != "ok."+c.tag {
+				t.Fatalf("drift apply: got %s, want ok.%s", got, c.tag)
+			}
+			// drift + apply fails → err.runtime
+			if got := eval(t, c.name, c.args, &fakeExec{observe: drift, apply: engine.ShellResult{Exit: 1}, applyMatch: c.apply}, engine.Apply).String(); got != "err.runtime" {
+				t.Fatalf("drift apply-fail: got %s, want err.runtime", got)
+			}
+			// check + drift → would.<tag>, apply never runs
+			f := &fakeExec{observe: drift, applyMatch: c.apply}
+			if got := eval(t, c.name, c.args, f, engine.Check).String(); got != "would."+c.tag {
+				t.Fatalf("check drift: got %s, want would.%s", got, c.tag)
+			}
+			for _, s := range f.calls {
+				if strings.Contains(s, c.apply) {
+					t.Fatal("check must not run the apply shell")
+				}
+			}
+		})
 	}
 }
 
-func TestFileWriteDirDelete(t *testing.T) {
-	// file-write: content already matches → skip
-	if got := eval(t, "file-write", map[string]string{"path": "/etc/x", "content": "a\nb\n"}, &fakeExec{guardExit: 0}, engine.Apply).String(); got != "ok.already" {
-		t.Fatalf("file-write guard-ok: got %s, want ok.already", got)
-	}
-	// file-write: differs → write
-	if got := eval(t, "file-write", map[string]string{"path": "/etc/x", "content": "a\nb\n"}, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.written" {
-		t.Fatalf("file-write apply: got %s, want ok.written", got)
-	}
-	// dir-ensure: absent → create
-	if got := eval(t, "dir-ensure", map[string]string{"path": "/opt/x"}, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.created" {
-		t.Fatalf("dir-ensure: got %s, want ok.created", got)
-	}
-	// file-delete: already gone → skip
-	if got := eval(t, "file-delete", map[string]string{"path": "/tmp/gone"}, &fakeExec{guardExit: 0}, engine.Apply).String(); got != "ok.already" {
-		t.Fatalf("file-delete guard-ok: got %s, want ok.already", got)
-	}
-}
-
-func TestUserOwnerUfwEnable(t *testing.T) {
-	// user-group: already a member → skip
-	if got := eval(t, "user-group", map[string]string{"user": "haribo", "group": "docker"}, &fakeExec{guardExit: 0}, engine.Apply).String(); got != "ok.already" {
-		t.Fatalf("user-group guard-ok: got %s, want ok.already", got)
-	}
-	// dir-owner: differs → chown
-	if got := eval(t, "dir-owner", map[string]string{"path": "/opt", "owner": "haribo:haribo"}, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.changed" {
-		t.Fatalf("dir-owner apply: got %s, want ok.changed", got)
-	}
-	// ufw.enable: inactive → enable
-	if got := eval(t, "ufw.enable", nil, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.enabled" {
-		t.Fatalf("ufw.enable apply: got %s, want ok.enabled", got)
-	}
-}
-
-func TestServiceDef(t *testing.T) {
+func TestValueResource_Service(t *testing.T) {
 	args := map[string]string{"name": "nginx", "running": "true", "enabled": "true"}
-	if got := eval(t, "service", args, &fakeExec{guardExit: 0}, engine.Apply).String(); got != "ok.already" {
-		t.Fatalf("already converged: got %s, want ok.already", got)
+	// Both observe fields (is-active/is-enabled) true == desired → converged.
+	if got := eval(t, "service", args, &fakeExec{observe: converged, applyMatch: "systemctl start"}, engine.Apply).String(); got != "ok.already" {
+		t.Fatalf("service converged: got %s, want ok.already", got)
 	}
-	if got := eval(t, "service", args, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.converged" {
-		t.Fatalf("apply: got %s, want ok.converged", got)
+	// Not running → running "false" ≠ "true" → drift → apply.
+	if got := eval(t, "service", args, &fakeExec{observe: drift, apply: engine.ShellResult{Exit: 0}, applyMatch: "systemctl start"}, engine.Apply).String(); got != "ok.converged" {
+		t.Fatalf("service drift: got %s, want ok.converged", got)
 	}
-	if got := eval(t, "service", args, &fakeExec{guardExit: 1, applyExit: 1}, engine.Apply).String(); got != "err.runtime" {
-		t.Fatalf("apply-fail: got %s, want err.runtime", got)
+	if got := eval(t, "service", args, &fakeExec{observe: drift, apply: engine.ShellResult{Exit: 1}, applyMatch: "systemctl start"}, engine.Apply).String(); got != "err.runtime" {
+		t.Fatalf("service apply-fail: got %s, want err.runtime", got)
+	}
+}
+
+func TestValueResource_DirOwner(t *testing.T) {
+	args := map[string]string{"path": "/opt", "owner": "haribo:haribo"}
+	// observed owner matches the argument → converged.
+	if got := eval(t, "dir-owner", args, &fakeExec{observe: engine.ShellResult{Stdout: "haribo:haribo\n"}, applyMatch: "chown"}, engine.Apply).String(); got != "ok.already" {
+		t.Fatalf("dir-owner converged: got %s, want ok.already", got)
+	}
+	// observed owner differs → chown.
+	if got := eval(t, "dir-owner", args, &fakeExec{observe: engine.ShellResult{Stdout: "root:root\n"}, apply: engine.ShellResult{Exit: 0}, applyMatch: "chown"}, engine.Apply).String(); got != "ok.changed" {
+		t.Fatalf("dir-owner drift: got %s, want ok.changed", got)
+	}
+}
+
+func TestValueResource_GitClone(t *testing.T) {
+	args := map[string]string{"url": "http://x/r", "dst": "/opt/r"}
+	// origin remote matches the wanted url → converged.
+	if got := eval(t, "git-clone", args, &fakeExec{observe: engine.ShellResult{Stdout: "http://x/r\n"}, applyMatch: "git clone"}, engine.Apply).String(); got != "ok.already" {
+		t.Fatalf("git-clone matching: got %s, want ok.already", got)
+	}
+	// absent (empty remote) → clone.
+	if got := eval(t, "git-clone", args, &fakeExec{observe: engine.ShellResult{Stdout: ""}, apply: engine.ShellResult{Exit: 0}, applyMatch: "git clone"}, engine.Apply).String(); got != "ok.cloned" {
+		t.Fatalf("git-clone absent: got %s, want ok.cloned", got)
+	}
+	// wrong remote → drift → clone fails on an existing dst → err.runtime
+	// (the v1 tradeoff: no precise err.wrongRemote).
+	if got := eval(t, "git-clone", args, &fakeExec{observe: engine.ShellResult{Stdout: "http://other\n"}, apply: engine.ShellResult{Exit: 128}, applyMatch: "git clone"}, engine.Apply).String(); got != "err.runtime" {
+		t.Fatalf("git-clone wrong remote: got %s, want err.runtime", got)
+	}
+}
+
+func TestFileWrite_ContentSync(t *testing.T) {
+	args := map[string]string{"path": "/etc/x", "content": "a\nb\n"}
+	// synced (content matches) → skip.
+	if got := eval(t, "file-write", args, &fakeExec{observe: converged, applyMatch: " > "}, engine.Apply).String(); got != "ok.already" {
+		t.Fatalf("file-write synced: got %s, want ok.already", got)
+	}
+	// differs → write.
+	if got := eval(t, "file-write", args, &fakeExec{observe: drift, apply: engine.ShellResult{Exit: 0}, applyMatch: " > "}, engine.Apply).String(); got != "ok.written" {
+		t.Fatalf("file-write drift: got %s, want ok.written", got)
 	}
 }
 
 func TestReadOnlyQuestions(t *testing.T) {
 	// A question resolves in pass 1: deterministic even in CHECK (never `would`).
-	if got := eval(t, "dir-exists", map[string]string{"path": "/opt"}, &fakeExec{guardExit: 0}, engine.Check).String(); got != "ok.present" {
-		t.Fatalf("dir-exists present in check: got %s, want ok.present", got)
+	if got := eval(t, "dir-exists", map[string]string{"path": "/opt"}, &fakeExec{observe: converged}, engine.Check).String(); got != "ok.present" {
+		t.Fatalf("dir-exists present: got %s, want ok.present", got)
 	}
-	if got := eval(t, "dir-exists", map[string]string{"path": "/opt"}, &fakeExec{guardExit: 1}, engine.Check).String(); got != "err.absent" {
-		t.Fatalf("dir-exists absent in check: got %s, want err.absent (never would)", got)
+	if got := eval(t, "dir-exists", map[string]string{"path": "/opt"}, &fakeExec{observe: drift}, engine.Check).String(); got != "err.absent" {
+		t.Fatalf("dir-exists absent: got %s, want err.absent", got)
 	}
-	if got := eval(t, "file-exists", map[string]string{"path": "/etc/x"}, &fakeExec{guardExit: 0}, engine.Check).String(); got != "ok.present" {
-		t.Fatalf("file-exists present in check: got %s, want ok.present", got)
-	}
-}
-
-func TestDockerPackage(t *testing.T) {
-	if got := eval(t, "docker.install", nil, &fakeExec{guardExit: 0}, engine.Apply).String(); got != "ok.already" {
-		t.Fatalf("docker.install: got %s, want ok.already", got)
-	}
-	if got := eval(t, "docker.network", map[string]string{"name": "web"}, &fakeExec{guardExit: 1, applyExit: 0}, engine.Apply).String(); got != "ok.created" {
-		t.Fatalf("docker.network: got %s, want ok.created", got)
+	if got := eval(t, "file-exists", map[string]string{"path": "/etc/x"}, &fakeExec{observe: converged}, engine.Check).String(); got != "ok.present" {
+		t.Fatalf("file-exists present: got %s, want ok.present", got)
 	}
 }

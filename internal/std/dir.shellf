@@ -1,8 +1,5 @@
 def dir-ensure(path: str) {
-    guard {
-        r = shell { test -d "$path" }
-        if r { return ok.already }
-    }
+    observe { return state(present: shell { test -d "$path" }.exit == 0) }
     apply {
         r = shell { mkdir -p "$path" }
         if !r { return err.runtime(r) }
@@ -11,10 +8,7 @@ def dir-ensure(path: str) {
 }
 
 def dir-owner(path: str, owner: str) as root {
-    guard {
-        r = shell { test "$(stat -c '%U:%G' "$path")" = "$owner" }
-        if r { return ok.already }
-    }
+    observe { return state(owner: shell { stat -c '%U:%G' "$path" 2>/dev/null }.stdout) }
     apply {
         r = shell { chown -R "$owner" "$path" }
         if !r { return err.runtime(r) }

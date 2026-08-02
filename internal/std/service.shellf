@@ -1,11 +1,11 @@
 def service(name: str, running: str, enabled: str) as root {
-    guard {
-        r = shell {
-            a=$(systemctl is-active --quiet "$name" && echo true || echo false)
-            e=$(systemctl is-enabled --quiet "$name" && echo true || echo false)
-            [ "$a" = "$running" ] && [ "$e" = "$enabled" ]
-        }
-        if r { return ok.already }
+    # Value fields matching the `running`/`enabled` arguments: each is compared,
+    # so the same def converges a service up or down.
+    observe {
+        return state(
+            running: shell { systemctl is-active  --quiet "$name" }.exit == 0,
+            enabled: shell { systemctl is-enabled --quiet "$name" }.exit == 0,
+        )
     }
     apply {
         r = shell {

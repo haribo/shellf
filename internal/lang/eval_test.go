@@ -12,9 +12,8 @@ def apt-install(pkg: str) {
     pre-check {
         if pkg == "" { return err.pkgMustNotBeNull }
     }
-    guard {
-        r = shell { dpkg -s "$pkg" }
-        if r { return ok.pkgAlreadyInstalled }
+    observe {
+        return state(installed: shell { dpkg -s "$pkg" }.exit == 0)
     }
     apply {
         r = shell { apt-get install -y "$pkg" }
@@ -97,11 +96,12 @@ func TestEvalDef_PreCheckEmpty(t *testing.T) {
 
 func TestEvalDef_AlreadyInstalled(t *testing.T) {
 	f := &evalFake{resp: map[string]engine.ShellResult{dpkgS: {Exit: 0}}}
-	if got := runApt(t, f, "nginx", engine.Apply).String(); got != "ok.pkgAlreadyInstalled" {
-		t.Fatalf("got %s, want ok.pkgAlreadyInstalled", got)
+	// Converged (installed) → the uniform derived skip `ok.already` (ADR-0013).
+	if got := runApt(t, f, "nginx", engine.Apply).String(); got != "ok.already" {
+		t.Fatalf("got %s, want ok.already", got)
 	}
 	if f.calls[aptS] {
-		t.Fatal("apply ran despite guard skip")
+		t.Fatal("apply ran despite the converged skip")
 	}
 }
 
@@ -164,7 +164,7 @@ func TestEvalDef_Interp(t *testing.T) {
 
 // ADR-0010: `.ok` on a shell result is gone — success is `if r` / `.exit == 0`.
 func TestEvalDef_ShellDotOkRejected(t *testing.T) {
-	src := `def q(p: str) { guard { r = shell { test -d "$p" } if r.ok { return ok.yes } } }`
+	src := `def q(p: str) { apply { r = shell { test -d "$p" } if r.ok { return ok.yes } } }`
 	defs, err := ParseDefs(src) // `.ok` still parses as a Field; it fails at eval
 	if err != nil {
 		t.Fatal(err)
