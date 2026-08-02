@@ -52,6 +52,71 @@ func ParsePlanWithVars(src string, baseVars, setVars map[string]string, sig Inst
 	return
 }
 
+// ParsePackage parses a plan together with its package's sibling def files
+// (ADR-0014): the directory is the package, so user defs written in any file are
+// resolved by name across it. Sibling `libs` (name → source) are def-only; the
+// invoked `planSrc` carries the `on` blocks (and may also declare defs). Returns
+// the plan and the collected user defs (to ship to the agent). Duplicate names,
+// un-annotated stdlib shadowing, and overriding-nothing all error here — locally,
+// before any host is touched.
+func ParsePackage(planSrc string, libs map[string]string, baseVars, setVars map[string]string, stdSig InstructionSig) (plan orchestrator.Plan, userDefs []Def, err error) {
+	defer catch(&err)
+	defsByName := map[string]Def{}
+
+	// 1. Sibling library files: defs only (an `on` block belongs to the plan).
+	for fname, src := range libs {
+		lp := newParser(src)
+		lp.sig, lp.userDefs = stdSig, defsByName
+		for lp.tok.kind != tEOF {
+			if !isDefStart(lp.tok) {
+				lp.fail("package file %s may only contain defs, not %q", fname, lp.tok.val)
+			}
+			lp.registerDef(lp.def())
+		}
+	}
+
+	// 2. The invoked plan file: bindings + `on` blocks, plus any inline defs.
+	p := newParser(planSrc)
+	p.sig, p.userDefs = stdSig, defsByName
+	if baseVars != nil {
+		p.baseVars = baseVars
+	}
+	p.setVars = setVars
+	plan = p.plan()
+
+	for _, d := range defsByName {
+		userDefs = append(userDefs, d)
+	}
+	return
+}
+
+// registerDef adds a user def to the package, enforcing the ADR-0014 rules:
+// no duplicate name, no un-annotated shadowing of a stdlib def, and `override`
+// only where a stdlib def actually exists.
+func (p *parser) registerDef(d Def) {
+	if p.userDefs == nil {
+		p.userDefs = map[string]Def{}
+	}
+	if _, dup := p.userDefs[d.Name]; dup {
+		p.fail("duplicate def %q in the package", d.Name)
+	}
+	_, std := p.stdHas(d.Name)
+	switch {
+	case d.Override && !std:
+		p.fail("override def %q overrides nothing (no stdlib def by that name)", d.Name)
+	case !d.Override && std:
+		p.fail("def %q shadows a stdlib def; use `override def` to replace it", d.Name)
+	}
+	p.userDefs[d.Name] = d
+}
+
+func (p *parser) stdHas(name string) ([]string, bool) {
+	if p.sig == nil {
+		return nil, false
+	}
+	return p.sig(name)
+}
+
 // ParseVars parses a file of `name = value` bindings (a --vars file) into a
 // map. Later bindings may reference earlier ones (resolved in order).
 func ParseVars(src string) (vars map[string]string, err error) {
@@ -85,7 +150,34 @@ type parser struct {
 	baseVars map[string]string // --vars + plan bindings (lower precedence)
 	setVars  map[string]string // --set overrides (highest precedence)
 	caught   map[string]bool   // vars bound with `?` in the current `on` block (ADR-0009)
-	sig      InstructionSig    // instruction parameter names, supplied by the caller (#107)
+	sig      InstructionSig    // stdlib/builtin instruction parameter names (#107)
+	userDefs map[string]Def    // package user defs, resolved before the stdlib (ADR-0014)
+}
+
+// resolveSig looks up an instruction's parameter names: a package user def first
+// (ADR-0014), then the stdlib/builtins.
+func (p *parser) resolveSig(name string) ([]string, bool) {
+	if d, ok := p.userDefs[name]; ok {
+		return paramNames(d), true
+	}
+	if p.sig != nil {
+		return p.sig(name)
+	}
+	return nil, false
+}
+
+// isDefStart reports whether a token begins a def declaration (`def` or the
+// `override` that precedes it).
+func isDefStart(t token) bool {
+	return t.kind == tIdent && (t.val == "def" || t.val == "override")
+}
+
+func paramNames(d Def) []string {
+	names := make([]string, len(d.Params))
+	for i, par := range d.Params {
+		names[i] = par.Name
+	}
+	return names
 }
 
 func newParser(src string) *parser {
@@ -216,7 +308,12 @@ func (p *parser) identList() []string {
 func (p *parser) plan() orchestrator.Plan {
 	var plan orchestrator.Plan
 	for p.tok.kind != tEOF {
-		kw := p.expect(tIdent, "'on' or a binding").val
+		// `def …` / `override def …` — a package-local instruction (ADR-0014).
+		if isDefStart(p.tok) {
+			p.registerDef(p.def())
+			continue
+		}
+		kw := p.expect(tIdent, "'on', 'def', or a binding").val
 		if kw != "on" {
 			// Top-level binding: `name = value`. Appended to baseVars; --set still
 			// wins at resolution (via lookup order), so no pinning is needed here.
@@ -441,11 +538,7 @@ func (p *parser) asBlock() proto.Step {
 }
 
 func (p *parser) call(name string) proto.Step {
-	var argNames []string
-	ok := false
-	if p.sig != nil {
-		argNames, ok = p.sig(name)
-	}
+	argNames, ok := p.resolveSig(name)
 	if !ok {
 		p.fail("unknown instruction %q", name)
 	}

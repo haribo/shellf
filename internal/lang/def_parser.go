@@ -19,10 +19,16 @@ func ParseDefs(src string) (defs []Def, err error) {
 }
 
 func (p *parser) def() Def {
-	if kw := p.expect(tIdent, "'def'").val; kw != "def" {
+	override := false
+	kw := p.expect(tIdent, "'def' or 'override'").val
+	if kw == "override" { // `override def …` deliberately shadows a stdlib def (ADR-0014)
+		override = true
+		kw = p.expect(tIdent, "'def' after 'override'").val
+	}
+	if kw != "def" {
 		p.fail("expected 'def', got %q", kw)
 	}
-	d := Def{Name: p.expect(tIdent, "def name").val, Params: p.params()}
+	d := Def{Name: p.expect(tIdent, "def name").val, Params: p.params(), Override: override}
 
 	// Optional `as <user>` (ADR-0011) and `using <interp>` (ADR-0012), either order.
 	for p.tok.kind == tIdent && (p.tok.val == "as" || p.tok.val == "using") {
