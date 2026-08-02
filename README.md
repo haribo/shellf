@@ -191,7 +191,7 @@ Most instructions are `def`s written in shellf and embedded in the binary; only
 - **Files & directories** — `file-copy(src, dst)` (content diff, previewable in `--check`) · `file-write(path, content)` · `file-line(path, line)` · `file-delete(path)` · `file-download(url, dst, sha256)` · `dir-ensure(path)` · `dir-owner(path, owner)` · `archive-extract(src, dst)` · `git-clone(url, dst)`
 - **Questions** (read-only, deterministic in `--check`) — `dir-exists(path)` · `file-exists(path)`
 - **Firewall** — `ufw.enable()` · `ufw.open(port, proto)`
-- **Docker** — `docker.install()` · `docker.network(name)` · `docker.compose-up(dir)`
+- **Docker** — `docker.install()` · `docker.network(name)` · `docker.compose-up(dir, build)` (`build` `"true"` rebuilds local images; always re-applies — `up -d` is idempotent)
 
 Write your own — see [Writing shellf](#writing-shellf).
 

@@ -1,12 +1,17 @@
-def compose-up(dir: str) as root {
-    # Observed: the stack is up (services running). Known limit: this does not
-    # detect a change to the compose file while the stack is up (a config-hash
-    # field would); bring the stack down to force a re-apply.
-    observe { return state(up: shell { cd "$dir" && docker compose ps --status running --quiet | grep -q . }.exit == 0) }
+# Bring a compose stack up (ADR-0013 action-shaped). `docker compose up -d` is
+# itself idempotent — it recreates only the services whose image or config
+# changed, and is a no-op otherwise — so there is NO observe: a "≥1 service
+# running" guard would wrongly skip a compose/image change while the stack is up.
+# `build` = "true" rebuilds local images first (images built on the target).
+def compose-up(dir: str, build: str = "false") as root {
     apply {
         r = shell {
             cd "$dir"
-            docker compose up -d
+            if [ "$build" = true ]; then
+                docker compose up -d --build --remove-orphans
+            else
+                docker compose up -d --remove-orphans
+            fi
         }
         if !r { return err.runtime(r) }
         return ok.up
