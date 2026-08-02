@@ -94,9 +94,17 @@ ever re-stated params.
 For each field of the `observe` record, the engine compares it to the
 **same-named argument**:
 
-- an argument that is **empty/unset** excludes its field from the diff ("don't
-  care" — e.g. `apt.install("nginx")` ignores `version`);
-- otherwise the field is converged when `observed == argument`.
+- a field with **no same-named parameter** is an assertion that must **hold**:
+  it is converged when truthy (a non-empty, non-`false`, non-`0` value). Most
+  resources have no intent parameter — their desired is a constant condition
+  ("present"/"synced"), so `observe` reports the positive condition that holds
+  when converged and names the field for it (`dir-ensure` → `present`,
+  `file-delete` → `absent`, `user-group` → `member`). No fake parameter is
+  added to carry it;
+- a field whose parameter is present but **empty/unset** is excluded from the
+  diff ("don't care" — e.g. `apt.install("nginx")` ignores `version`);
+- otherwise (parameter present and non-empty) the field is converged when
+  `observed == argument` (`service` → `running`/`enabled`, `git-clone` → `url`).
 
 The comparison is typed with **string coercion**: `observe` fields are typed
 (bool/str/int) while arguments arrive as strings (the env-injection channel), so
