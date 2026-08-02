@@ -120,7 +120,7 @@ Put the effect **inside** the `if` (not a separate action followed by a `test`) 
 
 ```
 x = dir-ensure("/opt/app")   // capture the instruction's Result under `x`
-if x.changed {               // acted this run (apply ran, not a guard-skip)
+if x.changed {               // acted this run (apply ran, not a converged skip)
   service("nginx", true, true)
 }
 if x { … }                   // sugar for `if x == ok`
@@ -128,7 +128,7 @@ if x != ok { … }             // `!=` negates
 ```
 
 - **Outcome test** (ADR-0008): `x == ok` / `x == err` match the category; `x == ok.created` / `x == err.dbLocked` also match the tag (tag omitted = any tag of that category). `!=` negates; bare `if x` = `if x == ok`.
-- `.changed` = it actually acted (apply ran, not a guard-skip). It is **orthogonal** to the outcome category, so it stays a field, not a pattern.
+- `.changed` = it actually acted (apply ran, not a converged skip). It is **orthogonal** to the outcome category, so it stays a field, not a pattern.
 - The old `.ok` / `.err` field tests are **removed** — use `== ok` / `== err`.
 - In `--check`, a captured `would` result makes the branch **`undetermined`** — same never-lie rule.
 - A capture is block-scoped; capturing an `if`/`parallel` is rejected.
