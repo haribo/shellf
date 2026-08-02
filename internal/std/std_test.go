@@ -181,6 +181,26 @@ func TestFileWrite_ContentSync(t *testing.T) {
 	}
 }
 
+func TestStatusMode(t *testing.T) {
+	// A truthy field (dir-ensure `present`, no parameter): converged when the
+	// observe shell succeeds, drift otherwise — reported, never applied.
+	conv := &fakeExec{observe: converged, applyMatch: "mkdir"}
+	res := eval(t, "dir-ensure", map[string]string{"path": "/opt/x"}, conv, engine.Status)
+	if res.Category != engine.OK || len(res.Fields) != 1 || res.Fields[0].Name != "present" || !res.Fields[0].Converged {
+		t.Fatalf("dir-ensure status converged: %s %+v", res, res.Fields)
+	}
+	for _, s := range conv.calls {
+		if strings.Contains(s, "mkdir") {
+			t.Fatal("status must not run apply")
+		}
+	}
+	dr := &fakeExec{observe: drift, applyMatch: "mkdir"}
+	res = eval(t, "dir-ensure", map[string]string{"path": "/opt/x"}, dr, engine.Status)
+	if res.Category != engine.WOULD || res.Fields[0].Converged || res.Fields[0].Current != "false" || res.Fields[0].Desired != "true" {
+		t.Fatalf("dir-ensure status drift: %s %+v", res, res.Fields)
+	}
+}
+
 func TestReadOnlyQuestions(t *testing.T) {
 	// A question resolves in pass 1: deterministic even in CHECK (never `would`).
 	if got := eval(t, "dir-exists", map[string]string{"path": "/opt"}, &fakeExec{observe: converged}, engine.Check).String(); got != "ok.present" {

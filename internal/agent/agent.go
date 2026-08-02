@@ -243,7 +243,7 @@ func runStep(step proto.Step, ex engine.Executor, m engine.Mode, scope map[strin
 	if step.Bind != "" {
 		scope[step.Bind] = res
 	}
-	return proto.StepResult{Label: step.Label(), Category: res.Category.String(), Tag: res.Tag, Changed: res.Changed, Shell: res.Shell}
+	return proto.StepResult{Label: step.Label(), Category: res.Category.String(), Tag: res.Tag, Changed: res.Changed, Shell: res.Shell, Fields: res.Fields}
 }
 
 func copyScope(s map[string]engine.Result) map[string]engine.Result {
@@ -279,10 +279,14 @@ func dispatch(step proto.Step) (engine.Instruction, error) {
 }
 
 func mode(s string) engine.Mode {
-	if s == "check" {
+	switch s {
+	case "check":
 		return engine.Check
+	case "status":
+		return engine.Status
+	default:
+		return engine.Apply
 	}
-	return engine.Apply
 }
 
 func write(out io.Writer, r proto.Response) error {

@@ -87,6 +87,39 @@ func TestObserve_DriftOnVersion_RunsApply(t *testing.T) {
 	}
 }
 
+func TestObserve_StatusMode(t *testing.T) {
+	// Status reports observed vs desired and never runs apply.
+	f := &evalFake{resp: map[string]engine.ShellResult{
+		"probe-present": {Stdout: "present\n"},
+		"probe-version": {Stdout: "1.2.0\n"},
+	}}
+	// In sync (version is don't-care, unset) → OK, both fields converged.
+	res := evalObserveDef(t, f, map[string]string{"pkg": "nginx"}, engine.Status)
+	if res.Category != engine.OK || len(res.Fields) != 2 {
+		t.Fatalf("status converged: %s fields=%+v", res, res.Fields)
+	}
+	if f.calls["do-install"] {
+		t.Fatal("status must never run apply")
+	}
+	// Drift on version → WOULD, with the field carrying current → desired.
+	d := &evalFake{resp: map[string]engine.ShellResult{
+		"probe-present": {Stdout: "present\n"}, "probe-version": {Stdout: "1.2.0\n"},
+	}}
+	res = evalObserveDef(t, d, map[string]string{"pkg": "nginx", "version": "1.3.0"}, engine.Status)
+	if res.Category != engine.WOULD {
+		t.Fatalf("status drift should be would: %s", res)
+	}
+	var ver engine.FieldDiff
+	for _, fd := range res.Fields {
+		if fd.Name == "version" {
+			ver = fd
+		}
+	}
+	if ver.Current != "1.2.0" || ver.Desired != "1.3.0" || ver.Converged {
+		t.Fatalf("version field: %+v", ver)
+	}
+}
+
 func TestObserve_Check_ConvergedVsDrift(t *testing.T) {
 	// Converged in check → ok.already, and apply is never touched.
 	conv := &evalFake{resp: map[string]engine.ShellResult{

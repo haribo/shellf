@@ -2,6 +2,7 @@ package lang
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -40,6 +41,19 @@ func EvalDef(def Def, args map[string]string, ex engine.Executor, mode engine.Mo
 		}
 	}
 	desired := ev.desiredState(def) // the effective arguments, keyed by name
+
+	// Status: report observed vs desired without acting (ADR-0013). A pre-check
+	// error still surfaces; otherwise observe drives the field report.
+	if mode == engine.Status {
+		for _, ph := range def.Phases {
+			if ph.Name == "pre-check" {
+				if o := ev.evalPhase(ph); o != nil {
+					return ev.toResult(*o), nil
+				}
+			}
+		}
+		return ev.statusResult(def, desired), nil
+	}
 
 	// Pass 1: read-only decision phases. A `pre-check`/`check` outcome wins (err →
 	// halt, or a question's ok/err). An `observe` phase reports current state;
@@ -147,6 +161,48 @@ func (ev *evaluator) evalObserve(stmts []Stmt) map[string]string {
 		}
 	}
 	return nil
+}
+
+// statusResult builds the observed-vs-desired report of a resource (its observe
+// fields), or marks an action-shaped def (no observe) as having no state.
+func (ev *evaluator) statusResult(def Def, desired map[string]string) engine.Result {
+	for _, ph := range def.Phases {
+		if ph.Name == "observe" {
+			fields := diffFields(ev.evalObserve(ph.Stmts), desired)
+			cat := engine.OK
+			for _, f := range fields {
+				if !f.Converged {
+					cat = engine.WOULD // drift → it would change on apply
+					break
+				}
+			}
+			return engine.Result{Category: cat, Fields: fields}
+		}
+	}
+	return engine.Result{Category: engine.OK, Tag: "action"} // no observable state
+}
+
+// diffFields pairs each observed field with its desired value, using the same
+// three rules as converged (truthy assertion / don't-care / value match).
+func diffFields(observed, desired map[string]string) []engine.FieldDiff {
+	names := make([]string, 0, len(observed))
+	for name := range observed {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]engine.FieldDiff, 0, len(names))
+	for _, name := range names {
+		cur := observed[name]
+		switch want, ok := desired[name]; {
+		case !ok: // no parameter → the condition must hold
+			out = append(out, engine.FieldDiff{Name: name, Current: cur, Desired: "true", Converged: truthyStr(cur)})
+		case want == "": // don't care
+			out = append(out, engine.FieldDiff{Name: name, Current: cur, Desired: cur, Converged: true})
+		default:
+			out = append(out, engine.FieldDiff{Name: name, Current: cur, Desired: want, Converged: cur == want})
+		}
+	}
+	return out
 }
 
 // converged reports whether the observed state is in sync with the desired

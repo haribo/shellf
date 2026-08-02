@@ -51,6 +51,12 @@ func main() {
 		return
 	}
 
+	// Report current-vs-desired state per host, without acting (ADR-0013).
+	if len(os.Args) > 1 && os.Args[1] == "status" {
+		statusCmd(os.Args[2:])
+		return
+	}
+
 	// Clean shellf agents and files off the targets.
 	if len(os.Args) > 1 && os.Args[1] == "clean" {
 		cleanCmd(os.Args[2:])
@@ -59,6 +65,7 @@ func main() {
 
 	fmt.Fprint(os.Stderr, "usage:\n"+
 		"  shellf run --inventory <hosts.shellf> [--vars <f>] [--set k=v] [--check] [--insecure] <plan.shellf>\n"+
+		"  shellf status --inventory <hosts.shellf> [--insecure] <plan.shellf>\n"+
 		"  shellf clean --inventory <hosts.shellf> [--insecure] [target...]\n")
 	os.Exit(2)
 }
@@ -242,48 +249,159 @@ func cleanCmd(args []string) {
 	exitFor(anyErr)
 }
 
+// statusCmd: shellf status --inventory <hosts.shellf> <plan.shellf>. Reports
+// each declared resource's current-vs-desired state, read-only (ADR-0013).
+func statusCmd(args []string) {
+	fs := flag.NewFlagSet("status", flag.ExitOnError)
+	invPath := fs.String("inventory", "", "inventory file (required)")
+	insecure := fs.Bool("insecure", false, "skip host-key verification (dev only)")
+	knownHosts := fs.String("known-hosts", "", "known_hosts path (default ~/.ssh/known_hosts)")
+	_ = fs.Parse(args)
+
+	if fs.NArg() < 1 || *invPath == "" {
+		fmt.Fprintln(os.Stderr, "usage: shellf status --inventory <hosts.shellf> [--insecure] <plan.shellf>")
+		os.Exit(2)
+	}
+	planSrc, err := os.ReadFile(fs.Arg(0))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	invSrc, err := os.ReadFile(*invPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	base := map[string]string{}
+	plan, err := lang.ParsePlanWithVars(string(planSrc), base, map[string]string{}, stdSignatures())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", fs.Arg(0), err)
+		os.Exit(1)
+	}
+	inv, err := lang.ParseInventory(string(invSrc))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", *invPath, err)
+		os.Exit(1)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	dial := func(alias string) transport.Transport {
+		h, _ := inv.Resolve(alias)
+		return transport.SSH{
+			User: h.User, Host: h.Address, Port: h.Port, Key: h.Key,
+			KnownHosts: *knownHosts, Insecure: *insecure,
+		}
+	}
+	fmt.Print(statusReport(orchestrator.Run(plan, inv, self, "status", dial, base, map[string]string{})))
+}
+
+// statusReport renders the per-host state report: one line per resource, with a
+// `current → desired` diff on each field that has drifted. Pure (returns the
+// text) so it is unit-testable without capturing stdout.
+func statusReport(reports []orchestrator.BlockReport) string {
+	var b strings.Builder
+	for _, blk := range reports {
+		fmt.Fprintf(&b, "on %s:\n", blk.Target)
+		for _, h := range blk.Hosts {
+			if h.Err != nil {
+				fmt.Fprintf(&b, "  %s: unreachable (%v)\n", h.Host, h.Err)
+				continue
+			}
+			fmt.Fprintf(&b, "  %s:\n", h.Host)
+			for _, s := range h.Response.Results {
+				statusStep(&b, s, "    ")
+			}
+		}
+	}
+	return b.String()
+}
+
+func statusStep(b *strings.Builder, s proto.StepResult, indent string) {
+	switch {
+	case len(s.Fields) > 0:
+		fmt.Fprintf(b, "%s%s:\n", indent, s.Label)
+		for _, f := range s.Fields {
+			if f.Converged {
+				fmt.Fprintf(b, "%s  %s: %s\n", indent, f.Name, orDash(f.Current))
+			} else {
+				fmt.Fprintf(b, "%s  %s: %s → %s\n", indent, f.Name, orDash(f.Current), f.Desired)
+			}
+		}
+	case s.Tag == "action":
+		fmt.Fprintf(b, "%s%-28s action (no observable state)\n", indent, s.Label)
+	default: // control-flow wrappers, questions, pre-check errors — one line, no recursion
+		label := s.Category
+		if s.Tag != "" {
+			label += "." + s.Tag
+		}
+		fmt.Fprintf(b, "%s%-28s %s\n", indent, s.Label, label)
+	}
+	for _, sub := range s.Sub {
+		statusStep(b, sub, indent+"  ")
+	}
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
+}
+
 func printReports(reports []orchestrator.BlockReport) {
+	text, anyErr := reportText(reports)
+	fmt.Print(text)
+	exitFor(anyErr)
+}
+
+// reportText renders the run/check report and reports whether any host errored.
+// Pure (returns the text) so it is unit-testable without capturing stdout.
+func reportText(reports []orchestrator.BlockReport) (string, bool) {
+	var b strings.Builder
 	anyErr := false
-	for _, b := range reports {
-		fmt.Printf("on %s:\n", b.Target)
-		for _, h := range b.Hosts {
+	for _, blk := range reports {
+		fmt.Fprintf(&b, "on %s:\n", blk.Target)
+		for _, h := range blk.Hosts {
 			if h.Err != nil {
 				var re *orchestrator.ResolveError
 				if errors.As(h.Err, &re) {
-					fmt.Printf("  %s: %v\n", h.Host, h.Err) // resolution error, not unreachable
+					fmt.Fprintf(&b, "  %s: %v\n", h.Host, h.Err) // resolution error, not unreachable
 				} else {
-					fmt.Printf("  %s: unreachable (%v)\n", h.Host, h.Err)
+					fmt.Fprintf(&b, "  %s: unreachable (%v)\n", h.Host, h.Err)
 				}
 				anyErr = true
 				continue
 			}
-			fmt.Printf("  %s:\n", h.Host)
+			fmt.Fprintf(&b, "  %s:\n", h.Host)
 			for _, s := range h.Response.Results {
-				printStep(s, "    ")
+				stepText(&b, s, "    ")
 				anyErr = anyErr || s.Category == "err"
 			}
 			if h.Response.Halted {
-				fmt.Printf("    (halted)\n")
+				fmt.Fprintf(&b, "    (halted)\n")
 			}
 		}
 	}
-	exitFor(anyErr)
+	return b.String(), anyErr
 }
 
-func printStep(s proto.StepResult, indent string) {
+func stepText(b *strings.Builder, s proto.StepResult, indent string) {
 	label := s.Category
 	if s.Tag != "" {
 		label += "." + s.Tag
 	}
-	fmt.Printf("%s%-24s %s\n", indent, s.Label, label)
+	fmt.Fprintf(b, "%s%-24s %s\n", indent, s.Label, label)
 	// Show the preview/error payload (e.g. a file-copy diff in check mode).
 	if s.Shell != nil && s.Shell.Stdout != "" {
 		for _, line := range strings.Split(strings.TrimRight(s.Shell.Stdout, "\n"), "\n") {
-			fmt.Printf("%s    | %s\n", indent, line)
+			fmt.Fprintf(b, "%s    | %s\n", indent, line)
 		}
 	}
 	for _, sub := range s.Sub {
-		printStep(sub, indent+"  ")
+		stepText(b, sub, indent+"  ")
 	}
 }
 
