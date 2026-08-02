@@ -44,13 +44,13 @@ when apt-install nginx == ok.pkgInstalled -> service-restart nginx
 `== ok` matche la **catégorie** (idempotence). `== ok.pkgInstalled` matche le **tag exact** (changement précis). Le type `Result` supporte les deux.
 
 ### Dry-run = décisions, pas effets (✅)
-On ne prédit pas ce que fait une commande (impossible : lock apt, réseau…). On prédit les **décisions**, en exécutant `pre-check + check + guard` (read-only par contrat) et en **sautant** `apply/post`. Rapport 200 machines : « nginx s'installerait sur 12, déjà présent sur 188 ».
-**Contrat qui rend ça possible :** les gardes sont **sans effet de bord**. Sans ça, le dry-run est du flan.
+On ne prédit pas ce que fait une commande (impossible : lock apt, réseau…). On prédit les **décisions**, en exécutant `pre-check + check + observe` (read-only par contrat) et en **sautant** `apply/post`. Rapport 200 machines : « nginx s'installerait sur 12, déjà présent sur 188 ».
+**Contrat qui rend ça possible :** les phases de lecture (`check`/`observe`) sont **sans effet de bord**. Sans ça, le dry-run est du flan.
 
 ### Trois types de check distincts (✅)
 - **Précondition** — « ça *peut* marcher ? » (paquet existe, disque, droits) → échec = **ERREUR**.
-- **Garde d'idempotence** — « l'état voulu est-il *déjà* là ? » → succès = **SKIP**.
-- **Détection de changement** — « l'apply a-t-il *réellement* changé qqch ? » → rapport / drift (encodé dans le tag `ok`).
+- **Observation d'état** (`observe`, [ADR-0013](docs/adr/0013-observe-state-contract.md)) — l'état *courant*, comparé aux arguments voulus → convergé = **SKIP**. Remplace l'ancienne « garde d'idempotence » : au lieu d'un booléen écrit à la main, `observe` renvoie l'état et l'appareil dérive le skip *et* le rapport `status`.
+- **Détection de changement** — « l'apply a-t-il *réellement* changé qqch ? » → rapport / drift (encodé dans le tag `ok` + le flag `changed`).
 
 ### Parallélisme (✅)
 - **Inter-hôtes = pilier.** Même plan sur N machines en même temps. Gratuit, gros gain, zéro conflit.
@@ -65,8 +65,8 @@ Séparabilité = prévisualisabilité : le `check` doit être une **phase distin
 | Phase | Rôle |
 |-------|------|
 | `pre-check` | validation des arguments, pure/locale (nom non vide). Peut tourner côté contrôle, avant tout SSH. |
-| `check` | précondition environnementale (le paquet existe dans le dépôt). Nécessite la cible → l'agent. |
-| `guard` | état déjà atteint ? Si oui → `return ok.…AlreadyX` (skip). |
+| `check` | précondition environnementale, ou question read-only (`dir-exists`). Nécessite la cible → l'agent. |
+| `observe` | renvoie l'état *courant* (`state(...)`) ; l'appareil le compare aux arguments → convergé = skip, drift = apply. Remplace `guard` (ADR-0013). |
 | `apply` | l'action réelle. Seule phase avec effet de bord. |
 | `post` | après action (nettoyage). 🟠 sémantique à trancher (finally vs on-success). |
 | `return` | ensemble des outcomes possibles (union taguée). |
@@ -85,6 +85,13 @@ Non pas imaginées — **forcées** par ce qui a cassé en écrivant `apt-instal
 ---
 
 ## 04 · Exemple travaillé — `apt-install`
+
+> ⚠️ **Historique.** Cet exemple date de la conception initiale : la syntaxe
+> (`instruction … -> Result`, `when cond ->`, `sh "cmd" [args]`, `let`, la phase
+> `guard`) est **superseded** par la grammaire réelle. Forme actuelle : `def`,
+> `if`/`return`, `shell { }`, phase `observe` — voir [`docs/language.md`](docs/language.md),
+> les ADR-0006/0007/0009/0010, et [ADR-0013](docs/adr/0013-observe-state-contract.md)
+> (l'`observe` de `apt.install` vit dans `internal/std/apt/install.shellf`).
 
 La forme **la plus facile** (ressource binaire : installé / pas installé). Utile pour ancrer, **insuffisant** pour éprouver le langage (cf. §06).
 
@@ -137,7 +144,7 @@ Outil centré shell → l'injection est un risque **de conception**. `sh "apt-ge
 Dans l'exemple, guard/err sortent *avant* post → `post` = on-success-only, implicitement. Si le nettoyage doit tourner même sur échec, il faut un bloc `always {}` distinct. **L'ordre des blocs tranche à ta place** — danger de « coder pour affiner ».
 
 ### 🔴 Composite non-atomique — échec partiel
-Un `apply` multi-étapes (`git-clone; build; install`) n'est pas transactionnel. Si `build` échoue, le repo est cloné : relance → guard « pas installé » → re-clone dans un dossier existant → `err`. **Le guard unique en tête ne rend PAS un composite idempotent.** Ne pas résoudre le rollback maintenant — mais ne pas prétendre que le guard suffit. Piste : chaque sous-instruction porte sa propre garde.
+Un `apply` multi-étapes (`git-clone; build; install`) n'est pas transactionnel. Si `build` échoue, le repo est cloné : relance → `observe` « pas installé » → re-clone dans un dossier existant → `err`. **Un `observe` unique en tête ne rend PAS un composite idempotent.** Ne pas résoudre le rollback maintenant — mais ne pas prétendre qu'il suffit. Piste : chaque sous-instruction porte son propre `observe`.
 
 ### 🟠 Exécuteur mockable dès le jour 1
 « Retour structuré pour tester » n'a de sens que si l'`Executor` shell est une **interface injectable** (l'instruction ne fait pas `run "apt…"` en dur). Contrainte d'architecture **maintenant**, pas plus tard.
@@ -148,7 +155,7 @@ Un `apply` multi-étapes (`git-clone; build; install`) n'est pas transactionnel.
 
 Un langage ne se prouve pas sur un exemple — il **overfitte**. `apt-install` seul = un DSL d'installeur de paquets. Il faut trois **formes** différentes.
 
-- 🟠 **`file-copy(src, dst)`** — le guard n'est plus « présent/absent » mais « **le contenu correspond-il ?** » → hash/diff. Le mode check doit *differ* sans écrire.
+- 🟠 **`file-copy(src, dst)`** — l'`observe` n'est plus « présent/absent » mais « **le contenu correspond-il ?** » → hash/diff. Le mode check doit *differ* sans écrire.
 - 🟠 **`service(name, state, enabled)`** — **deux dimensions orthogonales** (tourne ? + activé au boot ?). Un seul `ok/err` ne suffit plus ; teste si `Result` encaisse la multi-dimension.
 
 Si le langage exprime **les trois** sans se tordre, il est éprouvé. Sinon = installeur de paquets déguisé.

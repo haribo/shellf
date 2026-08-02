@@ -126,7 +126,7 @@ outcome (`ok`/`err` + a tag), plus a `changed` flag.
 x = file-write("/etc/app.conf", cfg)
 if x { restart() }               # `if x` = it succeeded; `if !x` = it failed
 if x == ok.written { reload() }  # match a specific tag
-if x.changed { … }               # did it actually act (not a guard-skip)?
+if x.changed { … }               # did it actually act (not a converged skip)?
 ```
 
 **Error handling.** By default the first `err` halts the host. To handle a
@@ -152,15 +152,17 @@ on web {
 }
 ```
 
-**Custom instructions** are `def`s written in shellf. A def has phases (`guard`
-read-only, `apply` effectful) and returns an outcome. Inside a def, a `shell {}`
-is a struct — read `.exit`/`.stdout`, and `if r` / `if !r` test its success:
+**Custom instructions** are `def`s written in shellf. A def has phases (`observe`
+read-only, `apply` effectful) and returns an outcome. `observe` reports the
+current state as a `state(...)` record; shellf compares each field to the
+arguments and runs `apply` only on a mismatch — no hand-written skip. Inside a
+def, a `shell {}` is a struct — read `.exit`/`.stdout`, and `if r` / `if !r` test
+its success:
 
 ```
 def install(pkg: str) as root {
-  guard {
-    r = shell { dpkg -s "$pkg" }
-    if r { return ok.alreadyInstalled }
+  observe {
+    return state(installed: shell { dpkg -s "$pkg" >/dev/null 2>&1 }.exit == 0)
   }
   apply {
     r = shell { apt-get install -y "$pkg" }
@@ -170,15 +172,20 @@ def install(pkg: str) as root {
 }
 ```
 
-**Preview, then apply.** `--check` runs only the read-only guards, never mutates,
+A field with no same-named argument (like `installed`) must simply hold;
+fields that match a parameter (`service` → `running`, `git-clone` → `url`) are
+compared to it. See [ADR-0013](docs/adr/0013-observe-state-contract.md).
+
+**Preview, then apply.** `--check` runs only the read-only phases, never mutates,
 and prints `would.<tag>` for what would change. A second real run is idempotent
-(everything reads `ok.already*`).
+(everything reads `ok.already`). `shellf status` reports the same observed state
+as `current → desired`, without acting.
 
 ## Instructions
 
 Most instructions are `def`s written in shellf and embedded in the binary; only
-`shell` and `file-copy` are Go builtins. All are idempotent (a guard skips when
-the desired state already holds).
+`shell` and `file-copy` are Go builtins. All are idempotent (`observe` skips
+`apply` when the desired state already holds).
 
 - **Packages & services** — `apt.install(pkg)` · `service(name, running, enabled)` (running/enabled are `"true"`/`"false"`)
 - **Files & directories** — `file-copy(src, dst)` (content diff, previewable in `--check`) · `file-write(path, content)` · `file-line(path, line)` · `file-delete(path)` · `file-download(url, dst, sha256)` · `dir-ensure(path)` · `dir-owner(path, owner)` · `archive-extract(src, dst)` · `git-clone(url, dst)`
@@ -201,7 +208,7 @@ on server {
     curl -fsSL https://get.docker.com | sh
   }
 
-  # idempotent + previewable: gate the effect on a read-only guard
+  # idempotent + previewable: gate the effect on a read-only test
   if !shell { docker network inspect web } {
     shell { docker network create web }
   }
@@ -209,8 +216,8 @@ on server {
 ```
 
 - A bare `shell` always runs (raw, like bash; not previewable).
-- To make it idempotent and previewable, gate it: `if !shell { <guard> } { shell { <cmd> } }`
-  — the guard is read-only, so `--check` runs only the guard, never the command.
+- To make it idempotent and previewable, gate it: `if !shell { <test> } { shell { <cmd> } }`
+  — the test is read-only, so `--check` runs only the test, never the command.
 - Escalate with `shell as root { … }` (see [Writing shellf](#writing-shellf)).
 - A block ends at its balanced `}`. A lone unbalanced `}` in a string ends it
   early — use a heredoc or the one-line form.
