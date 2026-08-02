@@ -5,7 +5,7 @@ package lang
 // from std.Lookup + builtins in cmd/shellf (#107).
 func init() { defaultSig = testStdSig }
 
-func testStdSig(name string) ([]string, bool) {
+func testStdSig(name string) ([]string, int, bool) {
 	m := map[string][]string{
 		"apt.install":       {"pkg"},
 		"file-copy":         {"src", "dst"},
@@ -28,5 +28,5 @@ func testStdSig(name string) ([]string, bool) {
 		"ufw.enable":        {},
 	}
 	p, ok := m[name]
-	return p, ok
+	return p, len(p), ok // the fake models no optional params
 }
