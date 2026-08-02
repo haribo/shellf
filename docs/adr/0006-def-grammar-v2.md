@@ -2,7 +2,10 @@
 
 ## Status
 
-Active
+Active. The `guard` phase is superseded by the read-only `observe` phase in
+[ADR-0013](0013-observe-state-contract.md) (the skip decision is now derived
+from a diff, not a hand-written `guard`); the `if`/`return` grammar itself
+stands.
 
 ## Context
 
