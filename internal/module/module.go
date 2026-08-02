@@ -97,6 +97,9 @@ func resolveTag(url, version string) (string, error) {
 // fetch clones the module at `version` into a temp dir, verifies its HEAD is the
 // expected SHA, and moves it into the cache atomically.
 func fetch(url, version, sha, dir string) error {
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		return err
+	}
 	tmp, err := os.MkdirTemp(filepath.Dir(dir), "fetch-")
 	if err != nil {
 		return err
@@ -112,9 +115,6 @@ func fetch(url, version, sha, dir string) error {
 	}
 	if got := strings.TrimSpace(head); got != sha {
 		return fmt.Errorf("clone %s@%s: HEAD %s != resolved %s", url, version, got, sha)
-	}
-	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
-		return err
 	}
 	if err := os.Rename(tmp, dir); err != nil && !os.IsExist(err) {
 		return err
