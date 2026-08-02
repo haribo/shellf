@@ -53,18 +53,20 @@ func runRequest(req proto.Request, ex engine.Executor) proto.Response {
 	return proto.Response{Results: results, Halted: halted}
 }
 
-// userDefs re-parses the package's user def source into a name→def map (ADR-0014).
-func userDefs(src string) (map[string]lang.Def, error) {
-	if src == "" {
+// userDefs re-parses each shipped def source and registers it under its resolved
+// name — bare for the local package, qualified `alias.def` for imports
+// (ADR-0014/0015). The key, not the def's own name, is how the agent looks it up.
+func userDefs(srcByName map[string]string) (map[string]lang.Def, error) {
+	if len(srcByName) == 0 {
 		return nil, nil
 	}
-	defs, err := lang.ParseDefs(src)
-	if err != nil {
-		return nil, fmt.Errorf("user defs: %w", err)
-	}
-	m := make(map[string]lang.Def, len(defs))
-	for _, d := range defs {
-		m[d.Name] = d
+	m := make(map[string]lang.Def, len(srcByName))
+	for name, src := range srcByName {
+		defs, err := lang.ParseDefs(src)
+		if err != nil || len(defs) != 1 {
+			return nil, fmt.Errorf("user def %q: %v", name, err)
+		}
+		m[name] = defs[0]
 	}
 	return m, nil
 }

@@ -215,7 +215,7 @@ func TestServe_UserDef_Resolves(t *testing.T) {
 	f.set(`echo "$msg"`, "", 0)
 	resp := serve(t, f, proto.Request{
 		Mode:  "apply",
-		Defs:  `def greet(msg: str) { apply { shell { echo "$msg" } } }`,
+		Defs:  map[string]string{"greet": `def greet(msg: str) { apply { shell { echo "$msg" } } }`},
 		Steps: []proto.Step{{Instruction: "greet", Args: map[string]string{"msg": "hi"}}},
 	})
 	if len(resp.Results) != 1 || resp.Results[0].Category != "ok" {
@@ -223,6 +223,24 @@ func TestServe_UserDef_Resolves(t *testing.T) {
 	}
 	if !f.called(`echo "$msg"`, "") {
 		t.Fatal("the user def's shell must run")
+	}
+}
+
+func TestServe_ImportedDef_QualifiedName(t *testing.T) {
+	// An imported def ships keyed by its qualified name and resolves under it
+	// (ADR-0015). Its source is bare (`def deploy`); the key carries the alias.
+	f := newFake()
+	f.set(`run-deploy`, "", 0)
+	resp := serve(t, f, proto.Request{
+		Mode:  "apply",
+		Defs:  map[string]string{"web.deploy": `def deploy(port: str) { apply { shell { run-deploy } } }`},
+		Steps: []proto.Step{{Instruction: "web.deploy", Args: map[string]string{"port": "8080"}}},
+	})
+	if len(resp.Results) != 1 || resp.Results[0].Category != "ok" {
+		t.Fatalf("qualified imported def should run: %+v", resp.Results)
+	}
+	if !f.called(`run-deploy`, "") {
+		t.Fatal("the imported def's shell must run")
 	}
 }
 
@@ -235,7 +253,7 @@ func TestServe_UserDef_OverridesStdlib(t *testing.T) {
 	f.set(`my-mkdir "$path"`, "", 0)
 	resp := serve(t, f, proto.Request{
 		Mode:  "apply",
-		Defs:  `override def dir-ensure(path: str) { apply { shell { my-mkdir "$path" } } }`,
+		Defs:  map[string]string{"dir-ensure": `override def dir-ensure(path: str) { apply { shell { my-mkdir "$path" } } }`},
 		Steps: []proto.Step{{Instruction: "dir-ensure", Args: map[string]string{"path": "/opt"}}},
 	})
 	if resp.Results[0].Category != "ok" {

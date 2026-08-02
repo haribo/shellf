@@ -132,18 +132,18 @@ func runCmd(args []string) {
 // `*.shellf` file in the same directory (ADR-0014), so user defs written in a
 // sibling file resolve by name. Returns the plan and the concatenated user def
 // source to ship to the agent. baseVars is enriched in place with plan bindings.
-func loadPlanPackage(planPath, invPath string, baseVars, setVars map[string]string) (orchestrator.Plan, string, error) {
+func loadPlanPackage(planPath, invPath string, baseVars, setVars map[string]string) (orchestrator.Plan, map[string]string, error) {
 	planSrc, err := os.ReadFile(planPath)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	libs, err := packageLibs(planPath, invPath)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	plan, defs, err := lang.ParsePackage(string(planSrc), libs, nil, baseVars, setVars, stdSignatures())
 	if err != nil {
-		return nil, "", fmt.Errorf("%s: %v", planPath, err)
+		return nil, nil, fmt.Errorf("%s: %v", planPath, err)
 	}
 	return plan, defSource(defs), nil
 }
@@ -177,16 +177,15 @@ func packageLibs(planPath, invPath string) (map[string]string, error) {
 	return libs, nil
 }
 
-// defSource concatenates the package's user def sources into one blob for the
-// per-host Request (ADR-0014). Keyed by resolved name; the blob preserves the
-// sources (qualified transport is a later concern, ADR-0015).
-func defSource(defs map[string]lang.Def) string {
-	var b strings.Builder
-	for _, d := range defs {
-		b.WriteString(d.Source)
-		b.WriteString("\n\n")
+// defSource maps each resolved instruction name to its def source, for the
+// per-host Request — bare for the local package, qualified `alias.def` for
+// imports (ADR-0014/0015).
+func defSource(defs map[string]lang.Def) map[string]string {
+	m := make(map[string]string, len(defs))
+	for name, d := range defs {
+		m[name] = d.Source
 	}
-	return b.String()
+	return m
 }
 
 func loadInventory(invPath string) (inventory.Inventory, error) {
