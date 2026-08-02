@@ -2,10 +2,7 @@ def install(pkg: str) as root {
     pre-check {
         if pkg == "" { return err.pkgMustNotBeNull }
     }
-    guard {
-        r = shell { dpkg -s "$pkg" }
-        if r { return ok.alreadyInstalled }
-    }
+    observe { return state(installed: shell { dpkg -s "$pkg" >/dev/null 2>&1 }.exit == 0) }
     apply {
         r = shell { apt-get install -y "$pkg" }
         if !r { return err.runtime(r) }

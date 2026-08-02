@@ -1,8 +1,5 @@
 def install() as root {
-    guard {
-        r = shell { command -v docker }
-        if r { return ok.already }
-    }
+    observe { return state(installed: shell { command -v docker }.exit == 0) }
     apply {
         r = shell { curl -fsSL https://get.docker.com | sh }
         if !r { return err.runtime(r) }
