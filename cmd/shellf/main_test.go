@@ -209,6 +209,40 @@ func TestPackageLibs_ExcludesPlanAndInventory(t *testing.T) {
 	}
 }
 
+func TestReadImports(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "plan.shellf", "import lib \"sub\"\non web { lib.helper() }")
+	sub := filepath.Join(dir, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "h.shellf"), []byte(`def helper() { apply { shell { echo hi } } }`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	planSrc, _ := os.ReadFile(filepath.Join(dir, "plan.shellf"))
+	imports, err := readImports(filepath.Join(dir, "plan.shellf"), string(planSrc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(imports["lib"]) != 1 || !strings.Contains(imports["lib"][0], "def helper") {
+		t.Fatalf("import not resolved to its package sources: %v", imports)
+	}
+	// An import of a missing directory errors.
+	bad := "import ghost \"nope\"\non web { }"
+	if _, err := readImports(filepath.Join(dir, "plan.shellf"), bad); err == nil {
+		t.Fatal("importing a missing directory must error")
+	}
+	// The full path resolves through loadPlanPackage too.
+	writeFile(t, dir, "inv.shellf", `host web = { address: "x", user: "u" }`)
+	_, defs, err := loadPlanPackage(filepath.Join(dir, "plan.shellf"), filepath.Join(dir, "inv.shellf"), map[string]string{}, map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(defs["lib.helper"], "def helper") {
+		t.Fatalf("imported def not shipped under its qualified name: %v", defs)
+	}
+}
+
 func TestDefSource(t *testing.T) {
 	// Each def maps to its own source, keyed by resolved name.
 	got := defSource(map[string]lang.Def{
