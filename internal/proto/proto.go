@@ -180,8 +180,9 @@ func firstLine(cmd string) string {
 }
 
 type Request struct {
-	Mode  string `json:"mode"` // "apply" | "check"
+	Mode  string `json:"mode"`           // "apply" | "check" | "status"
 	Steps []Step `json:"steps"`
+	Defs  string `json:"defs,omitempty"` // package user def source, re-parsed on the agent (ADR-0014)
 }
 
 type StepResult struct {

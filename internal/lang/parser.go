@@ -71,7 +71,7 @@ func ParsePackage(planSrc string, libs map[string]string, baseVars, setVars map[
 			if !isDefStart(lp.tok) {
 				lp.fail("package file %s may only contain defs, not %q", fname, lp.tok.val)
 			}
-			lp.registerDef(lp.def())
+			lp.registerDef(lp.defWithSource())
 		}
 	}
 
@@ -88,6 +88,16 @@ func ParsePackage(planSrc string, libs map[string]string, baseVars, setVars map[
 		userDefs = append(userDefs, d)
 	}
 	return
+}
+
+// defWithSource parses a def and captures its own source text (from the `def`/
+// `override` token to just before the next token), so the package's user defs
+// can be shipped to the agent as text (ADR-0014).
+func (p *parser) defWithSource() Def {
+	start := p.lex.tokStart
+	d := p.def()
+	d.Source = strings.TrimSpace(p.lex.src[start:p.lex.tokStart])
+	return d
 }
 
 // registerDef adds a user def to the package, enforcing the ADR-0014 rules:
@@ -310,7 +320,7 @@ func (p *parser) plan() orchestrator.Plan {
 	for p.tok.kind != tEOF {
 		// `def …` / `override def …` — a package-local instruction (ADR-0014).
 		if isDefStart(p.tok) {
-			p.registerDef(p.def())
+			p.registerDef(p.defWithSource())
 			continue
 		}
 		kw := p.expect(tIdent, "'on', 'def', or a binding").val

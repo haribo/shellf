@@ -41,16 +41,18 @@ type token struct {
 }
 
 type lexer struct {
-	src  string
-	pos  int
-	line int
-	col  int
+	src      string
+	pos      int
+	line     int
+	col      int
+	tokStart int // byte offset where the last-returned token began (for source spans)
 }
 
 func newLexer(src string) *lexer { return &lexer{src: src, line: 1, col: 1} }
 
 func (l *lexer) next() (token, error) {
 	l.skip()
+	l.tokStart = l.pos
 	if l.pos >= len(l.src) {
 		return token{kind: tEOF, line: l.line, col: l.col}, nil
 	}

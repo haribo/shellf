@@ -209,6 +209,46 @@ func TestServe_Parallel_AggregatesAndRunsBoth(t *testing.T) {
 	}
 }
 
+func TestServe_UserDef_Resolves(t *testing.T) {
+	// A package user def (shipped as source in Request.Defs) resolves and runs.
+	f := newFake()
+	f.set(`echo "$msg"`, "", 0)
+	resp := serve(t, f, proto.Request{
+		Mode:  "apply",
+		Defs:  `def greet(msg: str) { apply { shell { echo "$msg" } } }`,
+		Steps: []proto.Step{{Instruction: "greet", Args: map[string]string{"msg": "hi"}}},
+	})
+	if len(resp.Results) != 1 || resp.Results[0].Category != "ok" {
+		t.Fatalf("user def should run to ok: %+v", resp.Results)
+	}
+	if !f.called(`echo "$msg"`, "") {
+		t.Fatal("the user def's shell must run")
+	}
+}
+
+func TestServe_UserDef_OverridesStdlib(t *testing.T) {
+	// `override def dir-ensure` replaces the stdlib one — the user shell runs, the
+	// stdlib's own observe/apply shells do not (ADR-0014). Only bare-named stdlib
+	// defs are overridable; a qualified name like `apt.install` has no def-name
+	// spelling.
+	f := newFake()
+	f.set(`my-mkdir "$path"`, "", 0)
+	resp := serve(t, f, proto.Request{
+		Mode:  "apply",
+		Defs:  `override def dir-ensure(path: str) { apply { shell { my-mkdir "$path" } } }`,
+		Steps: []proto.Step{{Instruction: "dir-ensure", Args: map[string]string{"path": "/opt"}}},
+	})
+	if resp.Results[0].Category != "ok" {
+		t.Fatalf("override def should run: %+v", resp.Results)
+	}
+	if !f.called(`my-mkdir "$path"`, "") {
+		t.Fatal("the override def's shell must run")
+	}
+	if f.called(`test -d "$path"`, "") {
+		t.Fatal("the stdlib dir-ensure must not run when overridden")
+	}
+}
+
 func TestServe_Check_NoMutation(t *testing.T) {
 	f := newFake()
 	f.set(dpkgScript, "nginx", 1) // not installed
