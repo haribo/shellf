@@ -14,6 +14,7 @@ import (
 	"shellf/internal/engine"
 	"shellf/internal/inventory"
 	"shellf/internal/lang"
+	"shellf/internal/module"
 	"shellf/internal/orchestrator"
 	"shellf/internal/proto"
 	"shellf/internal/std"
@@ -152,9 +153,10 @@ func loadPlanPackage(planPath, invPath string, baseVars, setVars map[string]stri
 	return plan, defSource(defs), nil
 }
 
-// readImports resolves each `import <alias> "<path>"` in the plan to the def
-// sources of that directory package (ADR-0015). Paths are relative to the plan
-// file. No network — local directories only.
+// readImports resolves each `import <alias> "<spec>"` in the plan to the def
+// sources of that package. A spec with `@version` is a remote git module
+// (ADR-0016), resolved through shellf.lock + the module cache; otherwise it is a
+// local directory relative to the plan file (ADR-0015).
 func readImports(planPath, planSrc string) (map[string][]string, error) {
 	imps, err := lang.ScanImports(planSrc)
 	if err != nil {
@@ -164,8 +166,22 @@ func readImports(planPath, planSrc string) (map[string][]string, error) {
 		return nil, nil
 	}
 	dir := filepath.Dir(planPath)
+	lock, err := module.LoadLock(dir)
+	if err != nil {
+		return nil, err
+	}
 	out := map[string][]string{}
+	lockChanged := false
 	for _, imp := range imps {
+		if spec, remote := module.ParseSpec(imp.Path); remote {
+			srcs, changed, err := module.ResolveLocked(spec, moduleCache(), lock)
+			if err != nil {
+				return nil, fmt.Errorf("import %q: %v", imp.Alias, err)
+			}
+			out[imp.Alias] = srcs
+			lockChanged = lockChanged || changed
+			continue
+		}
 		importDir := filepath.Join(dir, imp.Path)
 		info, err := os.Stat(importDir)
 		if err != nil || !info.IsDir() {
@@ -177,7 +193,22 @@ func readImports(planPath, planSrc string) (map[string][]string, error) {
 		}
 		out[imp.Alias] = srcs
 	}
+	if lockChanged {
+		if err := module.SaveLock(dir, lock); err != nil {
+			return nil, err
+		}
+	}
 	return out, nil
+}
+
+// moduleCache is where fetched remote modules live, content-addressed by SHA
+// (ADR-0016): ~/.cache/shellf/modules.
+func moduleCache() string {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		base = os.TempDir()
+	}
+	return filepath.Join(base, "shellf", "modules")
 }
 
 // shellfSources reads every `*.shellf` file in a directory (an imported package).

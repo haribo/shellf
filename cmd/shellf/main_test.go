@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -240,6 +241,59 @@ func TestReadImports(t *testing.T) {
 	}
 	if !strings.Contains(defs["lib.helper"], "def helper") {
 		t.Fatalf("imported def not shipped under its qualified name: %v", defs)
+	}
+}
+
+func TestReadImports_RemoteModule(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	t.Setenv("XDG_CACHE_HOME", t.TempDir()) // isolate the module cache
+
+	// A git repo module of one def, tagged v1.0.0.
+	repo := t.TempDir()
+	gitRun(t, repo, "init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(repo, "web.shellf"),
+		[]byte(`def deploy(port: str) { apply { shell { echo "$port" } } }`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, repo, "add", ".")
+	gitRun(t, repo, "commit", "-q", "-m", "init")
+	gitRun(t, repo, "tag", "v1.0.0")
+
+	// A plan that imports it remotely.
+	planDir := t.TempDir()
+	writeFile(t, planDir, "plan.shellf",
+		"import r \"file://"+repo+"@v1.0.0\"\non web { r.deploy(\"9090\") }")
+	writeFile(t, planDir, "inv.shellf", `host web = { address: "x", user: "u" }`)
+
+	plan, defs, err := loadPlanPackage(
+		filepath.Join(planDir, "plan.shellf"), filepath.Join(planDir, "inv.shellf"),
+		map[string]string{}, map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan[0].Steps[0].Instruction != "r.deploy" || plan[0].Steps[0].Args["port"] != "9090" {
+		t.Fatalf("remote import not resolved: %+v", plan[0].Steps[0])
+	}
+	if !strings.Contains(defs["r.deploy"], "def deploy") {
+		t.Fatalf("imported def not shipped qualified: %v", defs)
+	}
+	// The lockfile was written next to the plan.
+	if _, err := os.Stat(filepath.Join(planDir, "shellf.lock")); err != nil {
+		t.Fatalf("shellf.lock not written: %v", err)
+	}
+}
+
+func gitRun(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
 	}
 }
 
