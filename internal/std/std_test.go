@@ -85,7 +85,6 @@ func TestTruthyResources(t *testing.T) {
 		args             map[string]string
 	}{
 		{"apt.install", "apt-get install", "installed", map[string]string{"pkg": "nginx"}},
-		{"docker.compose-up", "compose up", "up", map[string]string{"dir": "/opt/app"}},
 		{"docker.install", "get.docker.com", "installed", nil},
 		{"docker.network", "network create", "created", map[string]string{"name": "web"}},
 		{"ufw.enable", "--force enable", "enabled", nil},
@@ -122,6 +121,25 @@ func TestTruthyResources(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestComposeUp_ActionShaped(t *testing.T) {
+	// No observe: `docker compose up -d` is itself idempotent, so it always runs
+	// (a "is it running" guard would wrongly skip a compose/image change).
+	if got := eval(t, "docker.compose-up", map[string]string{"dir": "/opt/app", "build": "false"},
+		&fakeExec{apply: converged, applyMatch: "compose up"}, engine.Apply).String(); got != "ok.up" {
+		t.Fatalf("compose-up should always apply: got %s, want ok.up", got)
+	}
+	// build=true rebuilds; a failing apply surfaces err.runtime.
+	if got := eval(t, "docker.compose-up", map[string]string{"dir": "/opt/app", "build": "true"},
+		&fakeExec{apply: drift, applyMatch: "compose up"}, engine.Apply).String(); got != "err.runtime" {
+		t.Fatalf("compose-up apply-fail: got %s, want err.runtime", got)
+	}
+	// Omitting the optional `build` still resolves (default) and runs.
+	if got := eval(t, "docker.compose-up", map[string]string{"dir": "/opt/app"},
+		&fakeExec{apply: converged, applyMatch: "compose up"}, engine.Apply).String(); got != "ok.up" {
+		t.Fatalf("compose-up without build: got %s, want ok.up", got)
 	}
 }
 

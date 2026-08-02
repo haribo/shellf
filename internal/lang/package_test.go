@@ -122,6 +122,26 @@ func TestImport_Errors(t *testing.T) {
 	}
 }
 
+func TestOptionalArgs(t *testing.T) {
+	def := `def f(a: str, b: str = "x") { apply { shell { echo hi } } }`
+	// Omitting the defaulted `b` is allowed; only `a` lands in Args.
+	plan, _, err := ParsePackage(def+"\non t { f(\"y\") }", nil, nil, map[string]string{}, map[string]string{}, testStdSig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := plan[0].Steps[0]
+	if step.Args["a"] != "y" || len(step.Args) != 1 {
+		t.Fatalf("optional arg not omitted: %+v", step.Args)
+	}
+	// Too few (a is required) and too many both error.
+	if _, _, err := ParsePackage(def+"\non t { f() }", nil, nil, map[string]string{}, map[string]string{}, testStdSig); err == nil {
+		t.Fatal("omitting a required arg must error")
+	}
+	if _, _, err := ParsePackage(def+"\non t { f(\"y\", \"z\", \"w\") }", nil, nil, map[string]string{}, map[string]string{}, testStdSig); err == nil {
+		t.Fatal("too many args must error")
+	}
+}
+
 func TestScanImports(t *testing.T) {
 	imps, err := ScanImports("import web \"../shared\"\nimport db \"../data\"\non t { }")
 	if err != nil {

@@ -288,18 +288,22 @@ func loadInventory(invPath string) (inventory.Inventory, error) {
 // so adding a def needs no parser-side edit (#107).
 func stdSignatures() lang.InstructionSig {
 	builtins := map[string][]string{"file-copy": {"src", "dst"}}
-	return func(name string) ([]string, bool) {
+	return func(name string) ([]string, int, bool) {
 		if p, ok := builtins[name]; ok {
-			return p, true
+			return p, len(p), true // builtins have no optional params
 		}
 		if def, ok := std.Lookup(name); ok {
 			names := make([]string, len(def.Params))
+			required := 0
 			for i, p := range def.Params {
 				names[i] = p.Name
+				if p.Default == nil {
+					required++
+				}
 			}
-			return names, true
+			return names, required, true
 		}
-		return nil, false
+		return nil, 0, false
 	}
 }
 

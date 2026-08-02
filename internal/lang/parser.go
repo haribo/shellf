@@ -9,11 +9,12 @@ import (
 	"shellf/internal/proto"
 )
 
-// InstructionSig reports an instruction's positional parameter names, so the
-// parser can turn `apt.install("nginx")` into Step{Args:{"pkg":"nginx"}}. The
-// caller supplies it (from `std.Lookup` + builtins), so signatures live with the
-// defs, not a duplicated map here (#107).
-type InstructionSig func(name string) (params []string, ok bool)
+// InstructionSig reports an instruction's positional parameter names and how
+// many are required (the leading params without a default), so the parser can
+// turn `apt.install("nginx")` into Step{Args:{"pkg":"nginx"}} and allow omitting
+// trailing defaulted params. The caller supplies it (from `std.Lookup` +
+// builtins), so signatures live with the defs, not a duplicated map here (#107).
+type InstructionSig func(name string) (params []string, required int, ok bool)
 
 // defaultSig backs ParsePlan (the no-vars convenience used by tests, which set
 // it — see sig_test.go). Production goes through ParsePlanWithVars with an
@@ -129,7 +130,7 @@ func (p *parser) registerImport(imp Import) {
 			if _, dup := p.userDefs[qname]; dup {
 				p.fail("duplicate imported instruction %q", qname)
 			}
-			if _, std := p.stdHas(qname); std {
+			if p.stdHas(qname) {
 				p.fail("imported %q collides with a stdlib instruction", qname)
 			}
 			p.userDefs[qname] = d
@@ -175,7 +176,7 @@ func (p *parser) registerDef(d Def) {
 	if _, dup := p.userDefs[d.Name]; dup {
 		p.fail("duplicate def %q in the package", d.Name)
 	}
-	_, std := p.stdHas(d.Name)
+	std := p.stdHas(d.Name)
 	switch {
 	case d.Override && !std:
 		p.fail("override def %q overrides nothing (no stdlib def by that name)", d.Name)
@@ -185,11 +186,12 @@ func (p *parser) registerDef(d Def) {
 	p.userDefs[d.Name] = d
 }
 
-func (p *parser) stdHas(name string) ([]string, bool) {
+func (p *parser) stdHas(name string) bool {
 	if p.sig == nil {
-		return nil, false
+		return false
 	}
-	return p.sig(name)
+	_, _, ok := p.sig(name)
+	return ok
 }
 
 // ParseVars parses a file of `name = value` bindings (a --vars file) into a
@@ -232,16 +234,27 @@ type parser struct {
 	importedAliases map[string]bool     // aliases already imported (duplicate check)
 }
 
-// resolveSig looks up an instruction's parameter names: a package user def first
-// (ADR-0014), then the stdlib/builtins.
-func (p *parser) resolveSig(name string) ([]string, bool) {
+// resolveSig looks up an instruction's parameter names and required count: a
+// package user def first (ADR-0014), then the stdlib/builtins.
+func (p *parser) resolveSig(name string) ([]string, int, bool) {
 	if d, ok := p.userDefs[name]; ok {
-		return paramNames(d), true
+		return paramNames(d), requiredCount(d), true
 	}
 	if p.sig != nil {
 		return p.sig(name)
 	}
-	return nil, false
+	return nil, 0, false
+}
+
+// requiredCount is the number of leading parameters without a default (ADR-0013).
+func requiredCount(d Def) int {
+	n := 0
+	for _, par := range d.Params {
+		if par.Default == nil {
+			n++
+		}
+	}
+	return n
 }
 
 // isDefStart reports whether a token begins a def declaration (`def` or the
@@ -626,7 +639,7 @@ func (p *parser) asBlock() proto.Step {
 }
 
 func (p *parser) call(name string) proto.Step {
-	argNames, ok := p.resolveSig(name)
+	argNames, required, ok := p.resolveSig(name)
 	if !ok {
 		p.fail("unknown instruction %q", name)
 	}
@@ -649,12 +662,18 @@ func (p *parser) call(name string) proto.Step {
 		caught = true
 	}
 
-	if len(vals) != len(argNames) {
-		p.fail("%s expects %d argument(s), got %d", name, len(argNames), len(vals))
+	if len(vals) < required || len(vals) > len(argNames) {
+		if required == len(argNames) {
+			p.fail("%s expects %d argument(s), got %d", name, required, len(vals))
+		}
+		p.fail("%s expects %d–%d argument(s), got %d", name, required, len(argNames), len(vals))
 	}
+	// Map the supplied args positionally; omitted trailing params (which must be
+	// defaulted) are filled by the def at eval (ADR-0013).
 	args := map[string]string{}
 	var refs map[string]string
-	for i, n := range argNames {
+	for i := 0; i < len(vals); i++ {
+		n := argNames[i]
 		if vals[i].ref != "" {
 			if refs == nil {
 				refs = map[string]string{}
