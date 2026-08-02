@@ -141,7 +141,7 @@ func loadPlanPackage(planPath, invPath string, baseVars, setVars map[string]stri
 	if err != nil {
 		return nil, "", err
 	}
-	plan, defs, err := lang.ParsePackage(string(planSrc), libs, baseVars, setVars, stdSignatures())
+	plan, defs, err := lang.ParsePackage(string(planSrc), libs, nil, baseVars, setVars, stdSignatures())
 	if err != nil {
 		return nil, "", fmt.Errorf("%s: %v", planPath, err)
 	}
@@ -178,8 +178,9 @@ func packageLibs(planPath, invPath string) (map[string]string, error) {
 }
 
 // defSource concatenates the package's user def sources into one blob for the
-// per-host Request (ADR-0014).
-func defSource(defs []lang.Def) string {
+// per-host Request (ADR-0014). Keyed by resolved name; the blob preserves the
+// sources (qualified transport is a later concern, ADR-0015).
+func defSource(defs map[string]lang.Def) string {
 	var b strings.Builder
 	for _, d := range defs {
 		b.WriteString(d.Source)

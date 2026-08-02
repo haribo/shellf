@@ -14,6 +14,14 @@ type Def struct {
 	Source   string   // the def's own source text, to ship to the agent (ADR-0014)
 }
 
+// Import binds an alias to a local package directory (ADR-0015): the alias
+// qualifies calls to that package's defs, e.g. `import web "../shared"` →
+// `web.deploy(...)`.
+type Import struct {
+	Alias string
+	Path  string
+}
+
 type Param struct {
 	Name    string
 	Type    string // "str" | "bool"

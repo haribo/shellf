@@ -59,7 +59,7 @@ func ParsePlanWithVars(src string, baseVars, setVars map[string]string, sig Inst
 // the plan and the collected user defs (to ship to the agent). Duplicate names,
 // un-annotated stdlib shadowing, and overriding-nothing all error here — locally,
 // before any host is touched.
-func ParsePackage(planSrc string, libs map[string]string, baseVars, setVars map[string]string, stdSig InstructionSig) (plan orchestrator.Plan, userDefs []Def, err error) {
+func ParsePackage(planSrc string, libs map[string]string, imports map[string][]string, baseVars, setVars map[string]string, stdSig InstructionSig) (plan orchestrator.Plan, userDefs map[string]Def, err error) {
 	defer catch(&err)
 	defsByName := map[string]Def{}
 
@@ -75,19 +75,84 @@ func ParsePackage(planSrc string, libs map[string]string, baseVars, setVars map[
 		}
 	}
 
-	// 2. The invoked plan file: bindings + `on` blocks, plus any inline defs.
+	// 2. The invoked plan file: imports (first), bindings, `on` blocks, inline defs.
 	p := newParser(planSrc)
-	p.sig, p.userDefs = stdSig, defsByName
+	p.sig, p.userDefs, p.imports = stdSig, defsByName, imports
 	if baseVars != nil {
 		p.baseVars = baseVars
 	}
 	p.setVars = setVars
 	plan = p.plan()
 
-	for _, d := range defsByName {
-		userDefs = append(userDefs, d)
+	return plan, defsByName, nil
+}
+
+// ScanImports extracts the leading `import <alias> "<path>"` statements of a
+// plan file, so the CLI knows which directories to load (ADR-0015). Imports must
+// come first; scanning stops at the first non-import top-level construct.
+func ScanImports(src string) (imports []Import, err error) {
+	defer catch(&err)
+	p := newParser(src)
+	for p.tok.kind == tIdent && p.tok.val == "import" {
+		imports = append(imports, p.importStmt())
 	}
-	return
+	return imports, nil
+}
+
+// importStmt parses `import <alias> "<path>"` (ADR-0015).
+func (p *parser) importStmt() Import {
+	p.expect(tIdent, "'import'")
+	alias := p.expect(tIdent, "import alias").val
+	path := p.expect(tString, "import path (a string)").val
+	return Import{Alias: alias, Path: path}
+}
+
+// registerImport qualifies an imported package's defs under its alias
+// (`alias.def`) and registers them (ADR-0015). The def sources come from the
+// caller (the CLI reads the directory); each must be a def-only library.
+func (p *parser) registerImport(imp Import) {
+	if p.importedAliases[imp.Alias] {
+		p.fail("duplicate import alias %q", imp.Alias)
+	}
+	srcs, ok := p.imports[imp.Alias]
+	if !ok {
+		p.fail("import %q (%s): package not loaded", imp.Alias, imp.Path)
+	}
+	p.importedAliases[imp.Alias] = true
+	for _, src := range srcs {
+		defs, derr := parseLibrary(src)
+		if derr != nil {
+			p.fail("import %q (%s): %v", imp.Alias, imp.Path, derr)
+		}
+		for _, d := range defs {
+			qname := imp.Alias + "." + d.Name
+			if _, dup := p.userDefs[qname]; dup {
+				p.fail("duplicate imported instruction %q", qname)
+			}
+			if _, std := p.stdHas(qname); std {
+				p.fail("imported %q collides with a stdlib instruction", qname)
+			}
+			p.userDefs[qname] = d
+		}
+	}
+}
+
+// parseLibrary parses a def-only file (an imported package file), capturing each
+// def's source. It rejects `on` blocks and nested `import`s (no transitive deps,
+// ADR-0015).
+func parseLibrary(src string) (defs []Def, err error) {
+	defer catch(&err)
+	p := newParser(src)
+	for p.tok.kind != tEOF {
+		if p.tok.kind == tIdent && p.tok.val == "import" {
+			p.fail("an imported package may not itself import (no transitive deps)")
+		}
+		if !isDefStart(p.tok) {
+			p.fail("an imported package may only contain defs, not %q", p.tok.val)
+		}
+		defs = append(defs, p.defWithSource())
+	}
+	return defs, nil
 }
 
 // defWithSource parses a def and captures its own source text (from the `def`/
@@ -161,7 +226,10 @@ type parser struct {
 	setVars  map[string]string // --set overrides (highest precedence)
 	caught   map[string]bool   // vars bound with `?` in the current `on` block (ADR-0009)
 	sig      InstructionSig    // stdlib/builtin instruction parameter names (#107)
-	userDefs map[string]Def    // package user defs, resolved before the stdlib (ADR-0014)
+	userDefs map[string]Def    // package + imported defs, resolved before the stdlib (ADR-0014/0015)
+
+	imports         map[string][]string // alias → imported package's def sources (ADR-0015)
+	importedAliases map[string]bool     // aliases already imported (duplicate check)
 }
 
 // resolveSig looks up an instruction's parameter names: a package user def first
@@ -191,7 +259,7 @@ func paramNames(d Def) []string {
 }
 
 func newParser(src string) *parser {
-	p := &parser{lex: newLexer(src), baseVars: map[string]string{}, caught: map[string]bool{}}
+	p := &parser{lex: newLexer(src), baseVars: map[string]string{}, caught: map[string]bool{}, importedAliases: map[string]bool{}}
 	p.adv()
 	return p
 }
@@ -317,7 +385,17 @@ func (p *parser) identList() []string {
 
 func (p *parser) plan() orchestrator.Plan {
 	var plan orchestrator.Plan
+	seenNonImport := false
 	for p.tok.kind != tEOF {
+		// `import <alias> "<path>"` — must come first, before any def/on/binding.
+		if p.tok.kind == tIdent && p.tok.val == "import" {
+			if seenNonImport {
+				p.fail("imports must come before defs, bindings, and `on` blocks")
+			}
+			p.registerImport(p.importStmt())
+			continue
+		}
+		seenNonImport = true
 		// `def …` / `override def …` — a package-local instruction (ADR-0014).
 		if isDefStart(p.tok) {
 			p.registerDef(p.defWithSource())

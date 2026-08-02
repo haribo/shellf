@@ -208,8 +208,9 @@ func TestPackageLibs_ExcludesPlanAndInventory(t *testing.T) {
 }
 
 func TestDefSource(t *testing.T) {
-	got := defSource([]lang.Def{{Source: "def a() {}"}, {Source: "def b() {}"}})
-	if got != "def a() {}\n\ndef b() {}\n\n" {
+	// Map iteration order is unspecified, so check both sources are present.
+	got := defSource(map[string]lang.Def{"a": {Source: "def a() {}"}, "b": {Source: "def b() {}"}})
+	if !strings.Contains(got, "def a() {}") || !strings.Contains(got, "def b() {}") {
 		t.Fatalf("defSource: %q", got)
 	}
 }
