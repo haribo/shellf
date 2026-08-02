@@ -84,6 +84,8 @@ printf '%s' "$out" | grep -q 'created' || fail "apply should report dir 'created
 printf '%s' "$out" | grep -q 'written' || fail "apply should report file 'written'"
 docker exec "$cname" test -f /tmp/shellf-e2e/marker || fail "apply did not write the marker"
 docker exec "$cname" test -f /tmp/shellf-e2e/ready  || fail "apply did not write ready"
+# the user def `mark` (sibling mark.shellf) ran on the target
+docker exec "$cname" grep -q "made by a user def" /tmp/shellf-e2e/custom || fail "the user def did not run on the target"
 
 say "3. re-apply is idempotent (observe converges → 'already', nothing (re)created)"
 out="$(run 2>&1)"; printf '%s\n' "$out"
