@@ -1,11 +1,13 @@
 package engine
 
-// Mode selects whether the engine actually acts (Apply) or only decides (Check).
+// Mode selects whether the engine acts (Apply), only decides (Check), or only
+// reports observed vs desired state without acting (Status, ADR-0013).
 type Mode int
 
 const (
 	Apply Mode = iota
 	Check
+	Status
 )
 
 // Instruction is phase-structured. Separability — guard (read-only) distinct

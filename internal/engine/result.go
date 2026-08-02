@@ -28,8 +28,18 @@ func (c Category) String() string {
 type Result struct {
 	Category Category
 	Tag      string
-	Changed  bool         // the action actually acted (apply ran); false on guard-skip or err
+	Changed  bool         // the action actually acted (apply ran); false on a converged skip or err
 	Shell    *ShellResult // optional diagnostics payload
+	Fields   []FieldDiff  // status mode: the observed-vs-desired state of a resource (ADR-0013)
+}
+
+// FieldDiff is one observed field of a resource in Status mode: its current
+// value, the desired value, and whether they agree.
+type FieldDiff struct {
+	Name      string
+	Current   string
+	Desired   string
+	Converged bool
 }
 
 // String renders "ok", "ok.installed", "would.installed", etc.
