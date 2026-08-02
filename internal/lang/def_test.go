@@ -30,7 +30,7 @@ def install(pkg: str) {
 	if d.Name != "install" {
 		t.Fatalf("name: %q", d.Name)
 	}
-	if len(d.Params) != 1 || d.Params[0] != (Param{"pkg", "str"}) {
+	if len(d.Params) != 1 || d.Params[0].Name != "pkg" || d.Params[0].Type != "str" {
 		t.Fatalf("params: %+v", d.Params)
 	}
 	if len(d.Phases) != 3 {
@@ -85,7 +85,7 @@ def svc(name: str, want: bool) {
 		t.Fatal(err)
 	}
 	d := defs[0]
-	if d.Params[1] != (Param{"want", "bool"}) {
+	if d.Params[1].Name != "want" || d.Params[1].Type != "bool" {
 		t.Fatalf("bool param: %+v", d.Params)
 	}
 

@@ -3,6 +3,7 @@ package lang
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"shellf/internal/engine"
 )
@@ -31,14 +32,30 @@ func EvalDef(def Def, args map[string]string, ex engine.Executor, mode engine.Mo
 	for k, v := range args {
 		ev.vars[k] = v
 	}
+	// Param defaults fill any argument the caller omitted (ADR-0013 intent params
+	// like `ensure = "present"`), so shells and the diff see the effective value.
+	for _, p := range def.Params {
+		if _, ok := ev.vars[p.Name]; !ok && p.Default != nil {
+			ev.vars[p.Name] = ev.evalExpr(p.Default)
+		}
+	}
+	desired := ev.desiredState(def) // the effective arguments, keyed by name
 
 	// Pass 1: read-only decision phases. First outcome wins (err → halt, or
-	// guard → skip — same control flow, the category carries the meaning).
+	// guard → skip — same control flow, the category carries the meaning). An
+	// `observe` phase reports current state; convergence (state == desired) is the
+	// derived skip, replacing a hand-written guard (ADR-0013).
 	for _, ph := range def.Phases {
-		if ph.Name == "pre-check" || ph.Name == "check" || ph.Name == "guard" {
+		switch ph.Name {
+		case "pre-check", "check", "guard":
 			if o := ev.evalPhase(ph); o != nil {
 				return ev.toResult(*o), nil
 			}
+		case "observe":
+			if converged(ev.evalObserve(ph.Stmts), desired) {
+				return engine.Ok("already"), nil // in sync → skip apply (not changed)
+			}
+			// drift → fall through: check yields `would`, apply runs
 		}
 	}
 
@@ -91,6 +108,76 @@ type evaluator struct {
 
 func (ev *evaluator) fail(format string, a ...any) {
 	panic(evalErr{fmt.Errorf(format, a...)})
+}
+
+// desiredState is the effective desired value of each parameter, as a string map
+// keyed by param name (defaults already applied into ev.vars). It is what an
+// `observe` field is diffed against (ADR-0013).
+func (ev *evaluator) desiredState(def Def) map[string]string {
+	d := map[string]string{}
+	for _, p := range def.Params {
+		if v, ok := ev.vars[p.Name]; ok {
+			d[p.Name] = stringify(v)
+		}
+	}
+	return d
+}
+
+// evalObserve runs an `observe` phase and returns its `state(...)` record as a
+// string map (field → observed value, trailing whitespace trimmed since shell
+// stdout carries a newline). Read-only by convention (ADR-0013).
+func (ev *evaluator) evalObserve(stmts []Stmt) map[string]string {
+	for _, s := range stmts {
+		switch st := s.(type) {
+		case LetStmt:
+			ev.vars[st.Name] = ev.evalExpr(st.Value)
+		case EffectStmt:
+			ev.evalExpr(st.Expr)
+		case IfStmt:
+			if truthy(ev.evalExpr(st.Cond)) {
+				if m := ev.evalObserve(st.Body); m != nil {
+					return m
+				}
+			}
+		case StateReturnStmt:
+			m := make(map[string]string, len(st.Fields))
+			for _, f := range st.Fields {
+				m[f.Name] = strings.TrimRight(stringify(ev.evalExpr(f.Value)), " \t\r\n")
+			}
+			return m
+		}
+	}
+	return nil
+}
+
+// converged reports whether every observed field matches its desired value. A
+// desired that is empty/unset is "don't care" and excluded (ADR-0013).
+func converged(observed, desired map[string]string) bool {
+	for field, got := range observed {
+		want, ok := desired[field]
+		if !ok || want == "" {
+			continue
+		}
+		if got != want {
+			return false
+		}
+	}
+	return true
+}
+
+// stringify renders a scalar value for the diff / the shell environment.
+func stringify(v value) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case bool:
+		return strconv.FormatBool(t)
+	case int:
+		return strconv.Itoa(t)
+	case engine.ShellResult:
+		return strings.TrimRight(t.Stdout, " \t\r\n") // a bare shell field → its output
+	}
+	return ""
 }
 
 func (ev *evaluator) evalPhase(ph Phase) *Outcome {

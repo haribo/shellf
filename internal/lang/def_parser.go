@@ -4,7 +4,7 @@ package lang
 // (adv/expect/fail/catch) from parser.go.
 
 var phaseNames = map[string]bool{
-	"pre-check": true, "check": true, "guard": true, "apply": true, "post": true,
+	"pre-check": true, "check": true, "guard": true, "observe": true, "apply": true, "post": true,
 }
 var categories = map[string]bool{"ok": true, "err": true, "would": true}
 
@@ -77,7 +77,12 @@ func (p *parser) params() []Param {
 	for p.tok.kind != tRParen {
 		name := p.expect(tIdent, "parameter name").val
 		p.expect(tColon, ":")
-		out = append(out, Param{Name: name, Type: p.expect(tIdent, "type").val})
+		par := Param{Name: name, Type: p.expect(tIdent, "type").val}
+		if p.tok.kind == tEq { // optional default: `ensure: str = "present"` (ADR-0013)
+			p.adv()
+			par.Default = p.primary() // a literal (string/bool/number)
+		}
+		out = append(out, par)
 		if p.tok.kind == tComma {
 			p.adv()
 		} else {
@@ -116,6 +121,11 @@ func (p *parser) stmt() Stmt {
 			return IfStmt{Cond: cond, Body: body}
 		case "return":
 			p.adv()
+			// `return state(...)` (an observe record) vs `return <outcome>`; `state`
+			// is not an outcome category, so the two never collide (ADR-0013).
+			if p.tok.kind == tIdent && p.tok.val == "state" {
+				return p.stateReturn()
+			}
 			return ReturnStmt{Outcome: p.outcome()}
 		}
 	}
@@ -131,6 +141,25 @@ func (p *parser) stmt() Stmt {
 		return LetStmt{Name: id.Name, Value: p.expr()}
 	}
 	return EffectStmt{Expr: lhs}
+}
+
+// stateReturn parses `state(field: expr, …)` — the observe record (ADR-0013).
+func (p *parser) stateReturn() StateReturnStmt {
+	p.expect(tIdent, "state") // the `state` keyword
+	p.expect(tLParen, "(")
+	var fields []StateField
+	for p.tok.kind != tRParen {
+		name := p.expect(tIdent, "field name").val
+		p.expect(tColon, ":")
+		fields = append(fields, StateField{Name: name, Value: p.expr()})
+		if p.tok.kind == tComma {
+			p.adv()
+		} else {
+			break
+		}
+	}
+	p.expect(tRParen, ")")
+	return StateReturnStmt{Fields: fields}
 }
 
 func (p *parser) outcome() Outcome {

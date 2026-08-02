@@ -13,12 +13,13 @@ type Def struct {
 }
 
 type Param struct {
-	Name string
-	Type string // "str" | "bool"
+	Name    string
+	Type    string // "str" | "bool"
+	Default Expr   // optional `= <literal>` default (nil if none); ADR-0013 intent params
 }
 
 type Phase struct {
-	Name  string // pre-check | check | guard | apply | post
+	Name  string // pre-check | check | guard | observe | apply | post
 	Stmts []Stmt
 }
 
@@ -48,10 +49,23 @@ type ReturnStmt struct {
 	Outcome Outcome
 }
 
-func (LetStmt) isStmt()    {}
-func (EffectStmt) isStmt() {}
-func (IfStmt) isStmt()     {}
-func (ReturnStmt) isStmt() {}
+// StateReturnStmt: `return state(field: expr, …)` — the observed-state record an
+// `observe` phase yields (ADR-0013). Distinct from ReturnStmt: it carries named
+// values, not an ok/err/would outcome.
+type StateReturnStmt struct {
+	Fields []StateField
+}
+
+type StateField struct {
+	Name  string
+	Value Expr
+}
+
+func (LetStmt) isStmt()         {}
+func (EffectStmt) isStmt()      {}
+func (IfStmt) isStmt()          {}
+func (ReturnStmt) isStmt()      {}
+func (StateReturnStmt) isStmt() {}
 
 // Outcome: `category.tag` or `category.tag(payload)` or bare `category`.
 type Outcome struct {
