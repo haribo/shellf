@@ -8,9 +8,8 @@ def install(pkg: str) {
     pre-check {
         if pkg == "" { return err.pkgMustNotBeNull }
     }
-    guard {
-        r = shell { dpkg -s "$pkg" }
-        if r { return ok.pkgAlreadyInstalled }
+    observe {
+        return state(installed: shell { dpkg -s "$pkg" }.exit == 0)
     }
     apply {
         r = shell { apt-get install -y "$pkg" }
@@ -52,16 +51,17 @@ def install(pkg: str) {
 		t.Fatalf("pre-check return: %+v", iff.Body)
 	}
 
-	// guard: `r = shell {…}` then `if r.ok { return ok.pkgAlreadyInstalled }`
-	if _, ok := d.Phases[1].Stmts[0].(LetStmt); !ok {
-		t.Fatalf("guard stmt0: %T", d.Phases[1].Stmts[0])
+	// observe: `return state(installed: shell {…}.ok)` — a StateReturnStmt whose
+	// single field is `installed`.
+	if d.Phases[1].Name != "observe" {
+		t.Fatalf("phase 1 should be observe: %q", d.Phases[1].Name)
 	}
-	gif, ok := d.Phases[1].Stmts[1].(IfStmt)
+	sr, ok := d.Phases[1].Stmts[0].(StateReturnStmt)
 	if !ok {
-		t.Fatalf("guard stmt1: %T", d.Phases[1].Stmts[1])
+		t.Fatalf("observe stmt0: %T", d.Phases[1].Stmts[0])
 	}
-	if r := gif.Body[0].(ReturnStmt); r.Outcome.Tag != "pkgAlreadyInstalled" {
-		t.Fatalf("guard return: %+v", r.Outcome)
+	if len(sr.Fields) != 1 || sr.Fields[0].Name != "installed" {
+		t.Fatalf("observe field: %+v", sr.Fields)
 	}
 }
 
@@ -69,13 +69,11 @@ func TestParseDef_TruthyUnaryPayload(t *testing.T) {
 	// ADR-0010: shell success is `if r` (truthy), failure is `if !r` (unary).
 	src := `
 def svc(name: str, want: bool) {
-    guard {
+    apply {
         r = shell { systemctl is-active --quiet "$name" }
         if r { return ok.already }
-    }
-    apply {
-        r = shell { systemctl start "$name" }
-        if !r { return err.runtime(r) }
+        s = shell { systemctl start "$name" }
+        if !s { return err.runtime(s) }
         return ok.changed
     }
 }
@@ -89,29 +87,29 @@ def svc(name: str, want: bool) {
 		t.Fatalf("bool param: %+v", d.Params)
 	}
 
-	// guard: `if r { … }` — truthy on a ShellResult (bare Ident cond).
+	// `if r { … }` — truthy on a ShellResult (bare Ident cond).
 	gif, ok := d.Phases[0].Stmts[1].(IfStmt)
 	if !ok {
-		t.Fatalf("guard stmt1: %T", d.Phases[0].Stmts[1])
+		t.Fatalf("apply stmt1: %T", d.Phases[0].Stmts[1])
 	}
 	if id, ok := gif.Cond.(Ident); !ok || id.Name != "r" {
-		t.Fatalf("guard cond not `r`: %+v", gif.Cond)
+		t.Fatalf("truthy cond not `r`: %+v", gif.Cond)
 	}
 
 	// apply: `if !r { return err.runtime(r) }` — unary `!` + err payload.
-	aif := d.Phases[1].Stmts[1].(IfStmt)
+	aif := d.Phases[0].Stmts[3].(IfStmt)
 	un, ok := aif.Cond.(Unary)
 	if !ok || un.Op != "!" {
-		t.Fatalf("apply cond not `!r`: %+v", aif.Cond)
+		t.Fatalf("apply cond not `!s`: %+v", aif.Cond)
 	}
-	if id, ok := un.X.(Ident); !ok || id.Name != "r" {
-		t.Fatalf("unary operand not `r`: %+v", un.X)
+	if id, ok := un.X.(Ident); !ok || id.Name != "s" {
+		t.Fatalf("unary operand not `s`: %+v", un.X)
 	}
 	ret := aif.Body[0].(ReturnStmt)
 	if ret.Outcome.Tag != "runtime" || ret.Outcome.Payload == nil {
 		t.Fatalf("err.runtime payload missing: %+v", ret.Outcome)
 	}
-	if id := ret.Outcome.Payload.(Ident); id.Name != "r" {
+	if id := ret.Outcome.Payload.(Ident); id.Name != "s" {
 		t.Fatalf("payload: %+v", ret.Outcome.Payload)
 	}
 }
@@ -164,7 +162,7 @@ func TestParseDef_Interp_Unknown(t *testing.T) {
 func TestParseDef_Errors(t *testing.T) {
 	cases := []string{
 		`def x(pkg str) { return ok.a }`,                 // missing colon in param
-		`def x() { guard { if a { return nope.tag } } }`, // unknown outcome category
+		`def x() { apply { if a { return nope.tag } } }`, // unknown outcome category
 		`def x() { apply { shell { echo hi } }`,          // unterminated def (missing })
 		`def x() { apply { 5 == } }`,                     // dangling operator
 		`def x() { apply {} return ok.a }`,               // return outside a phase (ADR-0007)

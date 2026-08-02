@@ -80,7 +80,7 @@ printf '%s' "$out" | grep -q 'written' || fail "apply should report file 'writte
 docker exec "$cname" test -f /tmp/shellf-e2e/marker || fail "apply did not write the marker"
 docker exec "$cname" test -f /tmp/shellf-e2e/ready  || fail "apply did not write ready"
 
-say "3. re-apply is idempotent (guards skip → 'already', nothing (re)created)"
+say "3. re-apply is idempotent (observe converges → 'already', nothing (re)created)"
 out="$(run 2>&1)"; printf '%s\n' "$out"
 printf '%s' "$out" | grep -q 'already' || fail "re-apply should report 'already' (guard skip)"
 if printf '%s' "$out" | grep -qE 'created|written'; then

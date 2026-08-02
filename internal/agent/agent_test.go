@@ -14,7 +14,7 @@ import (
 // routes through the embedded stdlib def (std/apt.shellf), not a Go builtin.
 
 const (
-	dpkgScript = `dpkg -s "$pkg"`
+	dpkgScript = `dpkg -s "$pkg" >/dev/null 2>&1` // apt.install's observe shell (ADR-0013)
 	aptScript  = `apt-get install -y "$pkg"`
 )
 
@@ -110,11 +110,11 @@ func serve(t *testing.T, f *fakeExec, req proto.Request) proto.Response {
 func TestAgentBecome_BlockEscalates(t *testing.T) {
 	// `as root { apt.install(nginx) }` → the def's shells run escalated to root.
 	f := newFake()
-	f.set(`dpkg -s "$pkg"`, "nginx", 0) // guard: already installed → skip apply
+	f.set(dpkgScript, "nginx", 0) // observe: installed → skip apply
 	serve(t, f, proto.Request{Mode: "apply", Steps: []proto.Step{
 		{Become: "root", Block: []proto.Step{apt("nginx")}},
 	}})
-	if got := f.becameAs(`dpkg -s "$pkg"`, "nginx"); got != "root" {
+	if got := f.becameAs(dpkgScript, "nginx"); got != "root" {
 		t.Fatalf("shell in `as root` block should escalate to root, got %q", got)
 	}
 }
@@ -150,9 +150,9 @@ func TestServe_InterpreterPreflight(t *testing.T) {
 func TestAgentBecome_DefIntrinsic(t *testing.T) {
 	// apt.install is marked `as root` → its shells escalate with no wrapper.
 	f := newFake()
-	f.set(`dpkg -s "$pkg"`, "nginx", 0)
+	f.set(dpkgScript, "nginx", 0)
 	serve(t, f, proto.Request{Mode: "apply", Steps: []proto.Step{apt("nginx")}})
-	if got := f.becameAs(`dpkg -s "$pkg"`, "nginx"); got != "root" {
+	if got := f.becameAs(dpkgScript, "nginx"); got != "root" {
 		t.Fatalf("intrinsic apt.install should escalate to root, got %q", got)
 	}
 }
