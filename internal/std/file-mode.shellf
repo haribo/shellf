@@ -1,0 +1,28 @@
+# chmod a path to an exact mode. Path-dependent (not intrinsically root — the
+# caller escalates with `as root` for system paths), like dir-ensure/file-write.
+def file-mode(path: str, mode: str) {
+    observe { return state(mode: shell { stat -c '%a' "$path" 2>/dev/null }.stdout) }
+    apply {
+        r = shell { chmod "$mode" "$path" }
+        if !r { return err.runtime(r) }
+        return ok.changed
+    }
+}
+
+# Ensure a `key=value` line in a file (e.g. an .env): replace the line if the key
+# is present, else append it. Idempotent on the exact line. Note: key/value are
+# used in a sed pattern, so keep them free of sed metacharacters (`|`, `&`, `/`).
+def file-replace(path: str, key: str, value: str) {
+    observe { return state(set: shell { grep -qxF -- "$key=$value" "$path" 2>/dev/null }.exit == 0) }
+    apply {
+        r = shell {
+            if grep -q "^$key=" "$path" 2>/dev/null; then
+                sed -i "s|^$key=.*|$key=$value|" "$path"
+            else
+                printf '%s=%s\n' "$key" "$value" >> "$path"
+            fi
+        }
+        if !r { return err.runtime(r) }
+        return ok.set
+    }
+}

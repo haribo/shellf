@@ -70,10 +70,62 @@ func TestStdlib_AllPresent(t *testing.T) {
 		"dir-ensure", "file-write", "file-line", "file-delete",
 		"user-group", "dir-owner", "dir-exists", "file-exists", "service",
 		"docker.install", "docker.network", "docker.compose-up", "ufw.open", "ufw.enable",
+		// deployment dogfood additions
+		"file-mode", "file-replace", "systemd-daemon-reload", "service-restart", "service-reload",
+		"apt.update", "ufw.default", "user-ensure", "git-sync", "http-check", "wait-for",
 	} {
 		if _, ok := Lookup(name); !ok {
 			t.Errorf("missing def %q", name)
 		}
+	}
+}
+
+func TestDeployDefs_ActionShaped(t *testing.T) {
+	// Handlers/reloads always apply (no observe).
+	cases := []struct {
+		name, apply, tag string
+		args             map[string]string
+	}{
+		{"systemd-daemon-reload", "daemon-reload", "reloaded", nil},
+		{"service-restart", "restart", "restarted", map[string]string{"name": "sshd"}},
+		{"service-reload", "reload", "reloaded", map[string]string{"name": "nginx"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := eval(t, c.name, c.args, &fakeExec{apply: converged, applyMatch: c.apply}, engine.Apply).String(); got != "ok."+c.tag {
+				t.Fatalf("action-shaped apply: got %s, want ok.%s", got, c.tag)
+			}
+		})
+	}
+}
+
+func TestDeployDefs_TruthyAndValue(t *testing.T) {
+	// A truthy-field resource (file-replace): converged skips, drift applies.
+	rep := map[string]string{"path": "/etc/x", "key": "K", "value": "v"}
+	if got := eval(t, "file-replace", rep, &fakeExec{observe: converged, applyMatch: "sed"}, engine.Apply).String(); got != "ok.already" {
+		t.Fatalf("file-replace converged: got %s", got)
+	}
+	if got := eval(t, "file-replace", rep, &fakeExec{observe: drift, apply: converged, applyMatch: "printf"}, engine.Apply).String(); got != "ok.set" {
+		t.Fatalf("file-replace drift: got %s", got)
+	}
+	// A value-field resource (file-mode): observed mode matches the arg → skip.
+	fm := map[string]string{"path": "/b", "mode": "755"}
+	if got := eval(t, "file-mode", fm, &fakeExec{observe: engine.ShellResult{Stdout: "755\n"}, applyMatch: "chmod"}, engine.Apply).String(); got != "ok.already" {
+		t.Fatalf("file-mode converged: got %s", got)
+	}
+	if got := eval(t, "file-mode", fm, &fakeExec{observe: engine.ShellResult{Stdout: "644\n"}, apply: converged, applyMatch: "chmod"}, engine.Apply).String(); got != "ok.changed" {
+		t.Fatalf("file-mode drift: got %s", got)
+	}
+}
+
+func TestDeployDefs_Questions(t *testing.T) {
+	// http-check is a read-only question (check phase): match → ok, else err.
+	args := map[string]string{"url": "http://x", "status": "200"}
+	if got := eval(t, "http-check", args, &fakeExec{observe: converged}, engine.Check).String(); got != "ok.match" {
+		t.Fatalf("http-check match: got %s", got)
+	}
+	if got := eval(t, "http-check", args, &fakeExec{observe: drift}, engine.Check).String(); got != "err.mismatch" {
+		t.Fatalf("http-check mismatch: got %s", got)
 	}
 }
 
