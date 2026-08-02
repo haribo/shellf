@@ -141,11 +141,63 @@ func loadPlanPackage(planPath, invPath string, baseVars, setVars map[string]stri
 	if err != nil {
 		return nil, nil, err
 	}
-	plan, defs, err := lang.ParsePackage(string(planSrc), libs, nil, baseVars, setVars, stdSignatures())
+	imports, err := readImports(planPath, string(planSrc))
+	if err != nil {
+		return nil, nil, err
+	}
+	plan, defs, err := lang.ParsePackage(string(planSrc), libs, imports, baseVars, setVars, stdSignatures())
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s: %v", planPath, err)
 	}
 	return plan, defSource(defs), nil
+}
+
+// readImports resolves each `import <alias> "<path>"` in the plan to the def
+// sources of that directory package (ADR-0015). Paths are relative to the plan
+// file. No network — local directories only.
+func readImports(planPath, planSrc string) (map[string][]string, error) {
+	imps, err := lang.ScanImports(planSrc)
+	if err != nil {
+		return nil, err
+	}
+	if len(imps) == 0 {
+		return nil, nil
+	}
+	dir := filepath.Dir(planPath)
+	out := map[string][]string{}
+	for _, imp := range imps {
+		importDir := filepath.Join(dir, imp.Path)
+		info, err := os.Stat(importDir)
+		if err != nil || !info.IsDir() {
+			return nil, fmt.Errorf("import %q: %q is not a directory", imp.Alias, imp.Path)
+		}
+		srcs, err := shellfSources(importDir)
+		if err != nil {
+			return nil, err
+		}
+		out[imp.Alias] = srcs
+	}
+	return out, nil
+}
+
+// shellfSources reads every `*.shellf` file in a directory (an imported package).
+func shellfSources(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var srcs []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".shellf") {
+			continue
+		}
+		src, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			return nil, err
+		}
+		srcs = append(srcs, string(src))
+	}
+	return srcs, nil
 }
 
 // packageLibs reads every sibling `*.shellf` file in the plan's directory (the
