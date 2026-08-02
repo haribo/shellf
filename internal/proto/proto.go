@@ -180,9 +180,12 @@ func firstLine(cmd string) string {
 }
 
 type Request struct {
-	Mode  string `json:"mode"`           // "apply" | "check" | "status"
-	Steps []Step `json:"steps"`
-	Defs  string `json:"defs,omitempty"` // package user def source, re-parsed on the agent (ADR-0014)
+	Mode string `json:"mode"` // "apply" | "check" | "status"
+	// Defs maps a resolved instruction name (bare for the local package, qualified
+	// `alias.def` for imports) to that def's source, re-parsed on the agent and
+	// registered under the key (ADR-0014/0015).
+	Defs  map[string]string `json:"defs,omitempty"`
+	Steps []Step            `json:"steps"`
 }
 
 type StepResult struct {

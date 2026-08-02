@@ -183,12 +183,14 @@ func TestLoadPlanPackage(t *testing.T) {
 	if plan[0].Steps[0].Instruction != "mark" || plan[0].Steps[0].Args["path"] != "/x" {
 		t.Fatalf("sibling def not resolved: %+v", plan[0].Steps[0])
 	}
-	// The def source ships; the inventory does not leak into it.
-	if !strings.Contains(defsSrc, "def mark") {
-		t.Fatalf("def source not collected: %q", defsSrc)
+	// The def ships keyed by name; the inventory does not leak into it.
+	if !strings.Contains(defsSrc["mark"], "def mark") {
+		t.Fatalf("def source not collected: %v", defsSrc)
 	}
-	if strings.Contains(defsSrc, "host web") {
-		t.Fatal("the inventory must not be loaded as a package def")
+	for _, src := range defsSrc {
+		if strings.Contains(src, "host web") {
+			t.Fatal("the inventory must not be loaded as a package def")
+		}
 	}
 }
 
@@ -208,10 +210,13 @@ func TestPackageLibs_ExcludesPlanAndInventory(t *testing.T) {
 }
 
 func TestDefSource(t *testing.T) {
-	// Map iteration order is unspecified, so check both sources are present.
-	got := defSource(map[string]lang.Def{"a": {Source: "def a() {}"}, "b": {Source: "def b() {}"}})
-	if !strings.Contains(got, "def a() {}") || !strings.Contains(got, "def b() {}") {
-		t.Fatalf("defSource: %q", got)
+	// Each def maps to its own source, keyed by resolved name.
+	got := defSource(map[string]lang.Def{
+		"a":         {Source: "def a() {}"},
+		"web.deploy": {Source: "def deploy() {}"},
+	})
+	if got["a"] != "def a() {}" || got["web.deploy"] != "def deploy() {}" {
+		t.Fatalf("defSource: %v", got)
 	}
 }
 
