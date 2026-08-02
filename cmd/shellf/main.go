@@ -136,7 +136,7 @@ func runCmd(args []string) {
 		}
 	}
 
-	printReports(orchestrator.Run(plan, inv, self, mode, dial, baseVars, setVars))
+	printReports(orchestrator.Run(plan, inv, self, mode, dial, baseVars, setVars, ""))
 }
 
 // stdSignatures resolves an instruction's parameter names from the embedded
@@ -295,7 +295,7 @@ func statusCmd(args []string) {
 			KnownHosts: *knownHosts, Insecure: *insecure,
 		}
 	}
-	fmt.Print(statusReport(orchestrator.Run(plan, inv, self, "status", dial, base, map[string]string{})))
+	fmt.Print(statusReport(orchestrator.Run(plan, inv, self, "status", dial, base, map[string]string{}, "")))
 }
 
 // statusReport renders the per-host state report: one line per resource, with a

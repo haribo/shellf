@@ -11,6 +11,7 @@ type Def struct {
 	Override bool   // `override def` — deliberately shadows a stdlib def (ADR-0014)
 	Phases   []Phase
 	Return   *Outcome // derived: apply's trailing `return`, for `would` in check (ADR-0007)
+	Source   string   // the def's own source text, to ship to the agent (ADR-0014)
 }
 
 type Param struct {

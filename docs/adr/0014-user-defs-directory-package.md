@@ -138,5 +138,10 @@ touched — a bad package fails fast, locally.
   before evaluating. The stdlib stays embedded and unchanged.
 - Cross-file reuse works **within a directory**; reuse across directories waits
   for the imports phase.
+- **Bare names only.** A def name is a bare identifier, so a user def can add or
+  override only bare-named instructions (`dir-ensure`, `service`, …). Qualified
+  stdlib names (`apt.install`, `docker.network` — their prefix comes from the
+  embed directory, not the source) have no def-name spelling and are therefore
+  not overridable in v1. A qualified user-def namespace is a later concern.
 - Implementation follows in slices (parser package-loading + `override`;
   resolution + collision/override checks; transport + agent registration; CLI).

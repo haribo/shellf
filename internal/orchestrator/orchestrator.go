@@ -41,7 +41,7 @@ type BlockReport struct {
 // Run executes the plan. baseVars (--vars + plan bindings) and setVars (--set)
 // resolve each Step's bare-identifier Refs per host, with precedence
 // base < per-host inventory var < --set.
-func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.Dial, baseVars, setVars map[string]string) []BlockReport {
+func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.Dial, baseVars, setVars map[string]string, defsSrc string) []BlockReport {
 	dead := map[string]bool{}
 	var reports []BlockReport
 
@@ -74,7 +74,7 @@ func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.D
 			if err != nil {
 				return nil, &ResolveError{Err: err}
 			}
-			return json.Marshal(proto.Request{Mode: mode, Steps: steps})
+			return json.Marshal(proto.Request{Mode: mode, Steps: steps, Defs: defsSrc})
 		}
 		results := fleet.Run(live, agentBin, reqFor, dial)
 
