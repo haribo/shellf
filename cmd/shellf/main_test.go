@@ -3,7 +3,12 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"shellf/internal/engine"
+	"shellf/internal/orchestrator"
+	"shellf/internal/proto"
 )
 
 // The end-to-end wiring of `runCmd`/`cleanCmd` (flag parsing → transport → exit
@@ -69,6 +74,94 @@ func TestStdSignatures(t *testing.T) {
 	}
 	if _, ok := sig("no-such-instruction"); ok {
 		t.Fatal("an unknown instruction must not resolve")
+	}
+}
+
+func TestStatusReport(t *testing.T) {
+	reports := []orchestrator.BlockReport{{
+		Target: "web",
+		Hosts: []orchestrator.HostOutcome{
+			{
+				Host: "app1",
+				Response: proto.Response{Results: []proto.StepResult{
+					// a drifted value field
+					{Label: "apt-install(nginx)", Category: "would", Fields: []engine.FieldDiff{
+						{Name: "version", Current: "1.2.0", Desired: "1.3.0", Converged: false},
+					}},
+					// a converged truthy field
+					{Label: "dir-ensure(/opt)", Category: "ok", Fields: []engine.FieldDiff{
+						{Name: "present", Current: "true", Desired: "true", Converged: true},
+					}},
+					// an absent value renders as a dash
+					{Label: "file-download(x)", Category: "would", Fields: []engine.FieldDiff{
+						{Name: "present", Current: "", Desired: "true", Converged: false},
+					}},
+					// an action-shaped def
+					{Label: "restart(nginx)", Category: "ok", Tag: "action"},
+				}},
+			},
+			{Host: "app2", Err: errFake("dial")},
+		},
+	}}
+	got := statusReport(reports)
+	for _, want := range []string{
+		"on web:",
+		"  app1:",
+		"version: 1.2.0 → 1.3.0",
+		"present: true\n",
+		"present: — → true",
+		"restart(nginx)", "action (no observable state)",
+		"  app2: unreachable (dial)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("status report missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+type errFake string
+
+func (e errFake) Error() string { return string(e) }
+
+func TestReportText(t *testing.T) {
+	reports := []orchestrator.BlockReport{{
+		Target: "web",
+		Hosts: []orchestrator.HostOutcome{
+			{
+				Host: "app1",
+				Response: proto.Response{
+					Results: []proto.StepResult{
+						{Label: "apt-install(nginx)", Category: "ok", Tag: "installed"},
+						{Label: "shell(bad)", Category: "err", Tag: "runtime",
+							Shell: &engine.ShellResult{Stdout: "line1\nline2"}},
+					},
+					Halted: true,
+				},
+			},
+			{Host: "app2", Err: errFake("dial refused")},
+		},
+	}}
+	text, anyErr := reportText(reports)
+	if !anyErr {
+		t.Fatal("a host with an err step must set anyErr")
+	}
+	for _, want := range []string{
+		"on web:", "  app1:",
+		"apt-install(nginx)", "ok.installed",
+		"err.runtime", "| line1", "| line2",
+		"(halted)",
+		"  app2: unreachable (dial refused)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("report missing %q in:\n%s", want, text)
+		}
+	}
+
+	// A clean run reports no error.
+	if _, anyErr := reportText([]orchestrator.BlockReport{{Target: "web", Hosts: []orchestrator.HostOutcome{
+		{Host: "app1", Response: proto.Response{Results: []proto.StepResult{{Label: "x", Category: "ok"}}}},
+	}}}); anyErr {
+		t.Fatal("a clean run must not set anyErr")
 	}
 }
 

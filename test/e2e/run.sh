@@ -73,6 +73,11 @@ out="$(run --check 2>&1)"; printf '%s\n' "$out"
 printf '%s' "$out" | grep -q 'would' || fail "check mode should preview a 'would' outcome"
 docker exec "$cname" test -e /tmp/shellf-e2e && fail "check mode created state on the target"
 
+say "1b. status on a fresh host shows drift (current → desired)"
+out="$("$work/shellf" status --inventory "$work/inventory.shellf" --insecure "$here/plan.shellf" 2>&1)"
+printf '%s\n' "$out"
+printf '%s' "$out" | grep -q 'present: false → true' || fail "status should show present drift on a fresh host"
+
 say "2. apply provisions the marker tree (created/written)"
 out="$(run 2>&1)"; printf '%s\n' "$out"
 printf '%s' "$out" | grep -q 'created' || fail "apply should report dir 'created'"
@@ -87,4 +92,12 @@ if printf '%s' "$out" | grep -qE 'created|written'; then
   fail "re-apply mutated; expected a no-op"
 fi
 
-say "PASS — check inert, apply provisioned, re-apply idempotent"
+say "4. status reports the converged state (no drift arrows)"
+out="$("$work/shellf" status --inventory "$work/inventory.shellf" --insecure "$here/plan.shellf" 2>&1)"
+printf '%s\n' "$out"
+printf '%s' "$out" | grep -q 'present: true' || fail "status should report present: true"
+if printf '%s' "$out" | grep -q '→'; then
+  fail "status after apply should show no drift arrows (all converged)"
+fi
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged"
