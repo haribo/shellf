@@ -4,12 +4,13 @@ package lang
 // (pre-check / check / guard / apply / post), plus a final default outcome.
 
 type Def struct {
-	Name   string
-	Params []Param
-	Become string // intrinsic escalation user from `def … as <user>` (ADR-0011)
-	Interp string // def-declared interpreter from `def … using <interp>` (ADR-0012)
-	Phases []Phase
-	Return *Outcome // derived: apply's trailing `return`, for `would` in check (ADR-0007)
+	Name     string
+	Params   []Param
+	Become   string // intrinsic escalation user from `def … as <user>` (ADR-0011)
+	Interp   string // def-declared interpreter from `def … using <interp>` (ADR-0012)
+	Override bool   // `override def` — deliberately shadows a stdlib def (ADR-0014)
+	Phases   []Phase
+	Return   *Outcome // derived: apply's trailing `return`, for `would` in check (ADR-0007)
 }
 
 type Param struct {
