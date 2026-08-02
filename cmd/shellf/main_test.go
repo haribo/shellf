@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"shellf/internal/engine"
+	"shellf/internal/lang"
 	"shellf/internal/orchestrator"
 	"shellf/internal/proto"
 )
@@ -163,6 +164,84 @@ func TestReportText(t *testing.T) {
 	}}}); anyErr {
 		t.Fatal("a clean run must not set anyErr")
 	}
+}
+
+func TestLoadPlanPackage(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "plan.shellf", `on web { mark("/x", "hi") }`)
+	writeFile(t, dir, "mark.shellf", `def mark(path: str, content: str) { apply { shell { echo hi } } }`)
+	writeFile(t, dir, "inventory.shellf", `host web = { address: "1.1.1.1", user: "u" }`)
+	writeFile(t, dir, "notes.txt", "not a shellf file")
+
+	plan, defsSrc, err := loadPlanPackage(
+		filepath.Join(dir, "plan.shellf"), filepath.Join(dir, "inventory.shellf"),
+		map[string]string{}, map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The plan resolves `mark` against the sibling def.
+	if plan[0].Steps[0].Instruction != "mark" || plan[0].Steps[0].Args["path"] != "/x" {
+		t.Fatalf("sibling def not resolved: %+v", plan[0].Steps[0])
+	}
+	// The def source ships; the inventory does not leak into it.
+	if !strings.Contains(defsSrc, "def mark") {
+		t.Fatalf("def source not collected: %q", defsSrc)
+	}
+	if strings.Contains(defsSrc, "host web") {
+		t.Fatal("the inventory must not be loaded as a package def")
+	}
+}
+
+func TestPackageLibs_ExcludesPlanAndInventory(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "plan.shellf", `on web { }`)
+	writeFile(t, dir, "lib.shellf", `def a() { apply { shell { echo hi } } }`)
+	writeFile(t, dir, "inventory.shellf", `host web = { address: "x", user: "u" }`)
+
+	libs, err := packageLibs(filepath.Join(dir, "plan.shellf"), filepath.Join(dir, "inventory.shellf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := libs["lib.shellf"]; !ok || len(libs) != 1 {
+		t.Fatalf("expected only lib.shellf, got %v", keys(libs))
+	}
+}
+
+func TestDefSource(t *testing.T) {
+	got := defSource([]lang.Def{{Source: "def a() {}"}, {Source: "def b() {}"}})
+	if got != "def a() {}\n\ndef b() {}\n\n" {
+		t.Fatalf("defSource: %q", got)
+	}
+}
+
+func TestLoadInventory(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "inv.shellf", `host web = { address: "10.0.0.1", user: "deploy" }`)
+	inv, err := loadInventory(filepath.Join(dir, "inv.shellf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h, ok := inv.Resolve("web"); !ok || h.Address != "10.0.0.1" {
+		t.Fatalf("inventory not parsed: %+v ok=%v", h, ok)
+	}
+	if _, err := loadInventory(filepath.Join(dir, "missing.shellf")); err == nil {
+		t.Fatal("a missing inventory must error")
+	}
+}
+
+func writeFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func keys(m map[string]string) []string {
+	var ks []string
+	for k := range m {
+		ks = append(ks, k)
+	}
+	return ks
 }
 
 func TestKVFlags(t *testing.T) {

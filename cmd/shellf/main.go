@@ -5,12 +5,14 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"shellf/internal/agent"
 	"shellf/internal/engine"
+	"shellf/internal/inventory"
 	"shellf/internal/lang"
 	"shellf/internal/orchestrator"
 	"shellf/internal/proto"
@@ -88,32 +90,19 @@ func runCmd(args []string) {
 		os.Exit(2)
 	}
 
-	planSrc, err := os.ReadFile(fs.Arg(0))
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	invSrc, err := os.ReadFile(*invPath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
 	baseVars, setVars, err := loadGlobals(*varsPath, sets)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	// ParsePlanWithVars enriches baseVars in place with the plan's top-level
-	// bindings, so the same table drives per-host resolution below.
-	plan, err := lang.ParsePlanWithVars(string(planSrc), baseVars, setVars, stdSignatures())
+	plan, defsSrc, err := loadPlanPackage(fs.Arg(0), *invPath, baseVars, setVars)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", fs.Arg(0), err)
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	inv, err := lang.ParseInventory(string(invSrc))
+	inv, err := loadInventory(*invPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", *invPath, err)
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 
@@ -136,7 +125,79 @@ func runCmd(args []string) {
 		}
 	}
 
-	printReports(orchestrator.Run(plan, inv, self, mode, dial, baseVars, setVars, ""))
+	printReports(orchestrator.Run(plan, inv, self, mode, dial, baseVars, setVars, defsSrc))
+}
+
+// loadPlanPackage loads the plan file together with its package — every other
+// `*.shellf` file in the same directory (ADR-0014), so user defs written in a
+// sibling file resolve by name. Returns the plan and the concatenated user def
+// source to ship to the agent. baseVars is enriched in place with plan bindings.
+func loadPlanPackage(planPath, invPath string, baseVars, setVars map[string]string) (orchestrator.Plan, string, error) {
+	planSrc, err := os.ReadFile(planPath)
+	if err != nil {
+		return nil, "", err
+	}
+	libs, err := packageLibs(planPath, invPath)
+	if err != nil {
+		return nil, "", err
+	}
+	plan, defs, err := lang.ParsePackage(string(planSrc), libs, baseVars, setVars, stdSignatures())
+	if err != nil {
+		return nil, "", fmt.Errorf("%s: %v", planPath, err)
+	}
+	return plan, defSource(defs), nil
+}
+
+// packageLibs reads every sibling `*.shellf` file in the plan's directory (the
+// package), excluding the plan file itself and the inventory file.
+func packageLibs(planPath, invPath string) (map[string]string, error) {
+	dir := filepath.Dir(planPath)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	planAbs, _ := filepath.Abs(planPath)
+	invAbs, _ := filepath.Abs(invPath)
+	libs := map[string]string{}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".shellf") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		abs, _ := filepath.Abs(path)
+		if abs == planAbs || abs == invAbs {
+			continue // the plan carries the `on` blocks; the inventory is parsed apart
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		libs[e.Name()] = string(src)
+	}
+	return libs, nil
+}
+
+// defSource concatenates the package's user def sources into one blob for the
+// per-host Request (ADR-0014).
+func defSource(defs []lang.Def) string {
+	var b strings.Builder
+	for _, d := range defs {
+		b.WriteString(d.Source)
+		b.WriteString("\n\n")
+	}
+	return b.String()
+}
+
+func loadInventory(invPath string) (inventory.Inventory, error) {
+	src, err := os.ReadFile(invPath)
+	if err != nil {
+		return inventory.Inventory{}, err
+	}
+	inv, err := lang.ParseInventory(string(src))
+	if err != nil {
+		return inventory.Inventory{}, fmt.Errorf("%s: %v", invPath, err)
+	}
+	return inv, nil
 }
 
 // stdSignatures resolves an instruction's parameter names from the embedded
@@ -262,25 +323,15 @@ func statusCmd(args []string) {
 		fmt.Fprintln(os.Stderr, "usage: shellf status --inventory <hosts.shellf> [--insecure] <plan.shellf>")
 		os.Exit(2)
 	}
-	planSrc, err := os.ReadFile(fs.Arg(0))
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	invSrc, err := os.ReadFile(*invPath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
 	base := map[string]string{}
-	plan, err := lang.ParsePlanWithVars(string(planSrc), base, map[string]string{}, stdSignatures())
+	plan, defsSrc, err := loadPlanPackage(fs.Arg(0), *invPath, base, map[string]string{})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", fs.Arg(0), err)
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	inv, err := lang.ParseInventory(string(invSrc))
+	inv, err := loadInventory(*invPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", *invPath, err)
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 	self, err := os.Executable()
@@ -295,7 +346,7 @@ func statusCmd(args []string) {
 			KnownHosts: *knownHosts, Insecure: *insecure,
 		}
 	}
-	fmt.Print(statusReport(orchestrator.Run(plan, inv, self, "status", dial, base, map[string]string{}, "")))
+	fmt.Print(statusReport(orchestrator.Run(plan, inv, self, "status", dial, base, map[string]string{}, defsSrc)))
 }
 
 // statusReport renders the per-host state report: one line per resource, with a
