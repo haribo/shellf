@@ -2,9 +2,10 @@
 
 ## Status
 
-Active. Resolves the two open template-scope threads: the loop variable inside a
-template's *content*, and per-host rendering (the follow-on left by
-[ADR-0019](0019-templates.md) §3).
+Active. Resolves the loop-variable thread (§1, via `with`). Its §2 — deferring
+per-host rendering — is **superseded** by
+[ADR-0024](0024-per-host-template-rendering.md), which builds per-host rendering.
+§1 stands.
 
 ## Context
 

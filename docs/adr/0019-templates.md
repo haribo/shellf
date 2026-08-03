@@ -4,7 +4,9 @@
 
 Active. The delimiter of §3 (`${var}`) is superseded by
 [ADR-0021](0021-template-delimiter.md) (`@{var}`), so templates do not clash with
-the `${…}` their target files use; the rest of this ADR stands.
+the `${…}` their target files use. The "global, once" render scope of §3 is
+superseded by [ADR-0024](0024-per-host-template-rendering.md) (per-host render).
+The rest of this ADR — control-side resolution into a `file-write` (§2) — stands.
 
 ## Context
 

@@ -136,7 +136,8 @@ func runCmd(args []string) {
 		}
 	}
 
-	printReports(orchestrator.Run(plan, inv, self, mode, dial, baseVars, setVars, defsSrc), secretValues)
+	render := templateRenderer(filepath.Dir(fs.Arg(0)))
+	printReports(orchestrator.Run(plan, inv, self, mode, dial, baseVars, setVars, defsSrc, render), secretValues)
 }
 
 // loadPlanPackage loads the plan file together with its package — every other
@@ -160,62 +161,18 @@ func loadPlanPackage(planPath, invPath string, baseVars, setVars map[string]stri
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s: %v", planPath, err)
 	}
-	// Resolve `template(src, dst)` on the control host into a file-write of the
-	// rendered file, before anything ships (ADR-0019).
-	vars := mergedVars(baseVars, setVars)
-	for bi := range plan {
-		if err := resolveTemplates(plan[bi].Steps, filepath.Dir(planPath), vars); err != nil {
-			return nil, nil, err
-		}
-	}
+	// `template` steps are NOT resolved here: they render per host, in the
+	// orchestrator, over each host's env (ADR-0024). See templateRenderer.
 	return plan, defSource(defs), nil
 }
 
-// resolveTemplates rewrites each `template(src, dst)` step to `file-write(dst,
-// <rendered src>)`, reading src (relative to the plan dir) and interpolating
-// `${var}` with the global vars (ADR-0019). Recurses into control-flow steps.
-func resolveTemplates(steps []proto.Step, dir string, vars map[string]string) error {
-	for i := range steps {
-		s := &steps[i]
-		if s.Instruction == "template" {
-			if s.Refs["src"] != "" || s.Refs["dst"] != "" {
-				return fmt.Errorf("template: src and dst must be literal paths, not per-host refs")
-			}
-			// A `with { }` binding overrides a same-named var in this render only
-			// (ADR-0022); the global vars stay untouched for other steps.
-			renderVars := vars
-			if len(s.With) > 0 {
-				renderVars = make(map[string]string, len(vars)+len(s.With))
-				for k, v := range vars {
-					renderVars[k] = v
-				}
-				for k, v := range s.With {
-					renderVars[k] = v
-				}
-			}
-			content, err := renderTemplate(filepath.Join(dir, s.Args["src"]), renderVars)
-			if err != nil {
-				return err
-			}
-			s.Instruction, s.Args, s.Refs, s.With = "file-write", map[string]string{"path": s.Args["dst"], "content": content}, nil, nil
-			continue
-		}
-		if s.If != nil { // a template is a file-write, never a condition
-			if err := resolveTemplates(s.If.Then, dir, vars); err != nil {
-				return err
-			}
-			if err := resolveTemplates(s.If.Else, dir, vars); err != nil {
-				return err
-			}
-		}
-		if err := resolveTemplates(s.Block, dir, vars); err != nil {
-			return err
-		}
-		if err := resolveTemplates(s.Parallel, dir, vars); err != nil {
-			return err
-		}
+// templateRenderer builds the per-host renderer the orchestrator injects
+// (ADR-0024): it reads a template `src` relative to the plan dir and interpolates
+// `@{var}` over the host's vars. `src` stays a control-host path.
+func templateRenderer(planDir string) orchestrator.TemplateRenderer {
+	return func(src string, vars map[string]string) (string, error) {
+		return renderTemplate(filepath.Join(planDir, src), vars)
 	}
-	return nil
 }
 
 func renderTemplate(path string, vars map[string]string) (string, error) {
@@ -224,18 +181,6 @@ func renderTemplate(path string, vars map[string]string) (string, error) {
 		return "", fmt.Errorf("template: %v", err)
 	}
 	return lang.Template(string(b), func(n string) (string, bool) { v, ok := vars[n]; return v, ok })
-}
-
-// mergedVars flattens the base and set tiers (set wins) for template rendering.
-func mergedVars(base, set map[string]string) map[string]string {
-	m := make(map[string]string, len(base)+len(set))
-	for k, v := range base {
-		m[k] = v
-	}
-	for k, v := range set {
-		m[k] = v
-	}
-	return m
 }
 
 // readImports resolves each `import <alias> "<spec>"` in the plan to the def
@@ -569,7 +514,8 @@ func statusCmd(args []string) {
 			KnownHosts: *knownHosts, Insecure: *insecure,
 		}
 	}
-	fmt.Print(redact(statusReport(orchestrator.Run(plan, inv, self, "status", dial, base, secrets, defsSrc)), secretValues))
+	render := templateRenderer(filepath.Dir(fs.Arg(0)))
+	fmt.Print(redact(statusReport(orchestrator.Run(plan, inv, self, "status", dial, base, secrets, defsSrc, render)), secretValues))
 }
 
 // statusReport renders the per-host state report: one line per resource, with a

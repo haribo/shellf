@@ -216,11 +216,14 @@ on host {
 - It reaches a def's / `shell`'s body as an environment variable (`$k`) and a
   template's render scope (`@{k}`).
 
-### Loop variables in a template's content (ADR-0023)
+### Template render scope (ADR-0024)
 
-A template file is rendered over the **global** variables (plus any `with`), not
-over a `for` loop variable. To use the loop item inside the template's content,
-pass it with `with { }`:
+A `template(src, dst)` file is rendered **per host**, over that host's full
+variable scope — `--vars`, plan bindings, **per-host inventory vars**, `--set`,
+secrets — plus the call's `with { }`. `dst` may be a bare per-host ref
+(`template("nginx.conf", conf_path)`); `src` is always a literal control-host
+path. A `for` loop variable is **not** in that scope, so to use the loop item
+inside a template's content, pass it with `with { }`:
 
 ```
 for svc in ["traefik", "app"] {

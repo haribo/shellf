@@ -248,60 +248,11 @@ func TestReadImports(t *testing.T) {
 	}
 }
 
-func TestResolveTemplates(t *testing.T) {
-	dir := t.TempDir()
-	// @{var} is shellf's; a downstream ${SHELL} and {{ go }} pass through verbatim.
-	writeFile(t, dir, "conf.tmpl", "email=@{acme}\ndomain=@{site}\nkeep=${SHELL} {{ .X }}\n")
-	writeFile(t, dir, "plan.shellf", `on t { template("conf.tmpl", "/etc/conf") }`)
-	writeFile(t, dir, "inv.shellf", `host t = { address: "x", user: "u" }`)
-
-	plan, _, err := loadPlanPackage(
-		filepath.Join(dir, "plan.shellf"), filepath.Join(dir, "inv.shellf"),
-		map[string]string{"acme": "a@b.co", "site": "ex.com"}, map[string]string{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The template step is rewritten to a file-write of the rendered content.
-	step := plan[0].Steps[0]
-	if step.Instruction != "file-write" || step.Args["path"] != "/etc/conf" {
-		t.Fatalf("template not rewritten to file-write: %+v", step)
-	}
-	if step.Args["content"] != "email=a@b.co\ndomain=ex.com\nkeep=${SHELL} {{ .X }}\n" {
-		t.Fatalf("template not rendered (or passthrough broken): %q", step.Args["content"])
-	}
-}
-
-func TestResolveTemplates_WithOverridesRenderVar(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "conf.tmpl", "port=@{port}\nsite=@{site}\n")
-	// Same template, two calls, each overriding `port` via `with` (ADR-0022).
-	writeFile(t, dir, "plan.shellf", `on t {
-		template("conf.tmpl", "/etc/a") with { port = "8080" }
-		template("conf.tmpl", "/etc/b") with { port = "8081" }
-	}`)
-	writeFile(t, dir, "inv.shellf", `host t = { address: "x", user: "u" }`)
-
-	plan, _, err := loadPlanPackage(
-		filepath.Join(dir, "plan.shellf"), filepath.Join(dir, "inv.shellf"),
-		map[string]string{"port": "1", "site": "ex.com"}, map[string]string{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	a, b := plan[0].Steps[0], plan[0].Steps[1]
-	if a.Args["content"] != "port=8080\nsite=ex.com\n" {
-		t.Fatalf("first with-render: %q", a.Args["content"])
-	}
-	if b.Args["content"] != "port=8081\nsite=ex.com\n" { // global `port=1` untouched between calls
-		t.Fatalf("second with-render: %q", b.Args["content"])
-	}
-	if a.With != nil || b.With != nil { // With is consumed by the render, not shipped
-		t.Fatalf("template With should be cleared after render: %+v %+v", a.With, b.With)
-	}
-}
-
-func TestResolveTemplates_LoopVarViaWith(t *testing.T) {
-	// A `for` loop variable reaches a template's *content* only when passed via
-	// `with { }` (ADR-0023): the render is over globals, not the loop var.
+func TestLoadPlanPackage_KeepsTemplateStepsForPerHostRender(t *testing.T) {
+	// Templates are NOT resolved at load time anymore — they render per host in
+	// the orchestrator (ADR-0024). loadPlanPackage keeps the `template` step, with
+	// its parse-time `dst` interpolation and `with { }` intact. Here a `for` loop
+	// var is captured into `with` for the render (ADR-0023 composition).
 	dir := t.TempDir()
 	writeFile(t, dir, "svc.tmpl", "service=@{svc}\n")
 	writeFile(t, dir, "plan.shellf", `on t {
@@ -316,24 +267,34 @@ func TestResolveTemplates_LoopVarViaWith(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i, want := range []struct{ path, content string }{
-		{"/opt/alpha/x", "service=alpha\n"},
-		{"/opt/beta/x", "service=beta\n"},
-	} {
+	for i, item := range []string{"alpha", "beta"} {
 		s := plan[0].Steps[i]
-		if s.Args["path"] != want.path || s.Args["content"] != want.content {
-			t.Fatalf("iteration %d: got path=%q content=%q, want %q / %q",
-				i, s.Args["path"], s.Args["content"], want.path, want.content)
+		if s.Instruction != "template" { // still a template, not yet a file-write
+			t.Fatalf("iteration %d: template should survive load, got %q", i, s.Instruction)
+		}
+		if s.Args["dst"] != "/opt/"+item+"/x" { // dst `${svc}` interpolated at parse
+			t.Fatalf("iteration %d: dst=%q", i, s.Args["dst"])
+		}
+		if s.With["svc"] != item { // loop var captured into `with` for the render
+			t.Fatalf("iteration %d: with[svc]=%q, want %q", i, s.With["svc"], item)
 		}
 	}
 }
 
-func TestResolveTemplates_MissingFile(t *testing.T) {
+func TestRenderTemplate(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "plan.shellf", `on t { template("nope.tmpl", "/etc/conf") }`)
-	writeFile(t, dir, "inv.shellf", `host t = { address: "x", user: "u" }`)
-	_, _, err := loadPlanPackage(filepath.Join(dir, "plan.shellf"), filepath.Join(dir, "inv.shellf"), map[string]string{}, map[string]string{})
-	if err == nil || !strings.Contains(err.Error(), "template") {
+	// @{var} is shellf's; a downstream ${SHELL} and {{ go }} pass through verbatim.
+	writeFile(t, dir, "conf.tmpl", "email=@{acme}\ndomain=@{site}\nkeep=${SHELL} {{ .X }}\n")
+	got, err := renderTemplate(filepath.Join(dir, "conf.tmpl"),
+		map[string]string{"acme": "a@b.co", "site": "ex.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "email=a@b.co\ndomain=ex.com\nkeep=${SHELL} {{ .X }}\n" {
+		t.Fatalf("render (or passthrough) broken: %q", got)
+	}
+	if _, err := renderTemplate(filepath.Join(dir, "nope.tmpl"), nil); err == nil ||
+		!strings.Contains(err.Error(), "template") {
 		t.Fatalf("a missing template file must error: %v", err)
 	}
 }
