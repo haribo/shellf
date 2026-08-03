@@ -77,3 +77,17 @@ func TestFor_MissingBrace(t *testing.T) {
 		t.Fatalf("a for without a body block must error: %v", err)
 	}
 }
+
+func TestInterpolate(t *testing.T) {
+	look := func(n string) (string, bool) { v := map[string]string{"a": "1", "b": "two"}[n]; return v, v != "" }
+	got, err := Interpolate("x=${a}, y=${b}", look)
+	if err != nil || got != "x=1, y=two" {
+		t.Fatalf("Interpolate: %q %v", got, err)
+	}
+	if _, err := Interpolate("${missing}", look); err == nil {
+		t.Fatal("undefined var must error")
+	}
+	if _, err := Interpolate("${unclosed", look); err == nil {
+		t.Fatal("unterminated must error")
+	}
+}

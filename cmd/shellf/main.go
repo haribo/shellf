@@ -160,7 +160,70 @@ func loadPlanPackage(planPath, invPath string, baseVars, setVars map[string]stri
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s: %v", planPath, err)
 	}
+	// Resolve `template(src, dst)` on the control host into a file-write of the
+	// rendered file, before anything ships (ADR-0019).
+	vars := mergedVars(baseVars, setVars)
+	for bi := range plan {
+		if err := resolveTemplates(plan[bi].Steps, filepath.Dir(planPath), vars); err != nil {
+			return nil, nil, err
+		}
+	}
 	return plan, defSource(defs), nil
+}
+
+// resolveTemplates rewrites each `template(src, dst)` step to `file-write(dst,
+// <rendered src>)`, reading src (relative to the plan dir) and interpolating
+// `${var}` with the global vars (ADR-0019). Recurses into control-flow steps.
+func resolveTemplates(steps []proto.Step, dir string, vars map[string]string) error {
+	for i := range steps {
+		s := &steps[i]
+		if s.Instruction == "template" {
+			if s.Refs["src"] != "" || s.Refs["dst"] != "" {
+				return fmt.Errorf("template: src and dst must be literal paths, not per-host refs")
+			}
+			content, err := renderTemplate(filepath.Join(dir, s.Args["src"]), vars)
+			if err != nil {
+				return err
+			}
+			s.Instruction, s.Args, s.Refs = "file-write", map[string]string{"path": s.Args["dst"], "content": content}, nil
+			continue
+		}
+		if s.If != nil { // a template is a file-write, never a condition
+			if err := resolveTemplates(s.If.Then, dir, vars); err != nil {
+				return err
+			}
+			if err := resolveTemplates(s.If.Else, dir, vars); err != nil {
+				return err
+			}
+		}
+		if err := resolveTemplates(s.Block, dir, vars); err != nil {
+			return err
+		}
+		if err := resolveTemplates(s.Parallel, dir, vars); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func renderTemplate(path string, vars map[string]string) (string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("template: %v", err)
+	}
+	return lang.Interpolate(string(b), func(n string) (string, bool) { v, ok := vars[n]; return v, ok })
+}
+
+// mergedVars flattens the base and set tiers (set wins) for template rendering.
+func mergedVars(base, set map[string]string) map[string]string {
+	m := make(map[string]string, len(base)+len(set))
+	for k, v := range base {
+		m[k] = v
+	}
+	for k, v := range set {
+		m[k] = v
+	}
+	return m
 }
 
 // readImports resolves each `import <alias> "<spec>"` in the plan to the def
@@ -297,7 +360,7 @@ func loadInventory(invPath string) (inventory.Inventory, error) {
 // stdlib (signatures live with the defs, self-hosting) plus the Go builtins —
 // so adding a def needs no parser-side edit (#107).
 func stdSignatures() lang.InstructionSig {
-	builtins := map[string][]string{"file-copy": {"src", "dst"}}
+	builtins := map[string][]string{"file-copy": {"src", "dst"}, "template": {"src", "dst"}}
 	return func(name string) ([]string, int, bool) {
 		if p, ok := builtins[name]; ok {
 			return p, len(p), true // builtins have no optional params
