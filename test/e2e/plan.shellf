@@ -15,6 +15,7 @@ on target {
     for d in ["one", "two"] {
         dir-ensure("/tmp/shellf-e2e/${d}")
     }
+    file-write("/tmp/shellf-e2e/sec", "${apisecret}")
     if file-exists("/tmp/shellf-e2e/marker") {
         file-write("/tmp/shellf-e2e/ready", "ok")
     }

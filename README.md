@@ -110,6 +110,18 @@ on web {
 }
 ```
 
+**Secrets** (ADR-0018) come from a file or an env var — never the command line
+(so not in `ps`/history) and never the plan (so not committed):
+
+```
+shellf run plan.shellf --secret-file rclone_pass=./secret --secret-env db=DB_PW
+```
+
+A secret is a variable like any other (`${rclone_pass}`), but shellf **redacts
+its value** (`***`) from every report, `--check`, and `status`. Honest limit: the
+secret still reaches the target (in the request file, `0600`, and the process
+env) — root there can read it; at-rest secrecy is not yet solved.
+
 **Control flow.** `if` takes an instruction (or a captured result); the branch is
 taken on its outcome. `dir-exists` is a read-only *question*, so it stays honest
 in `--check`:

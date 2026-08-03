@@ -155,11 +155,13 @@ func pushCmd(path string) string {
 	return fmt.Sprintf("cat > %[1]s && chmod +x %[1]s && mv %[1]s %[2]s", tmp, path)
 }
 
-// depositCmd writes the request (stdin) atomically into the workdir.
+// depositCmd writes the request (stdin) atomically into the workdir. `umask 077`
+// makes the workdir 0700 and the request file 0600, so a request that may carry
+// a secret is not readable by other (non-root) users on the target (ADR-0018).
 func depositCmd(wd, jobid string) string {
 	tmp := fmt.Sprintf("%s/req-%s.json.tmp", wd, jobid)
 	final := fmt.Sprintf("%s/req-%s.json", wd, jobid)
-	return fmt.Sprintf("mkdir -p %[1]s && cat > %[2]s && mv %[2]s %[3]s", wd, tmp, final)
+	return fmt.Sprintf("umask 077 && mkdir -p %[1]s && cat > %[2]s && mv %[2]s %[3]s", wd, tmp, final)
 }
 
 // launchCmd starts a detached resident agent with an inactivity TTL.
