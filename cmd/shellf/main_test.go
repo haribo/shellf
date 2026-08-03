@@ -299,6 +299,35 @@ func TestResolveTemplates_WithOverridesRenderVar(t *testing.T) {
 	}
 }
 
+func TestResolveTemplates_LoopVarViaWith(t *testing.T) {
+	// A `for` loop variable reaches a template's *content* only when passed via
+	// `with { }` (ADR-0023): the render is over globals, not the loop var.
+	dir := t.TempDir()
+	writeFile(t, dir, "svc.tmpl", "service=@{svc}\n")
+	writeFile(t, dir, "plan.shellf", `on t {
+		for svc in ["alpha", "beta"] {
+			template("svc.tmpl", "/opt/${svc}/x") with { svc = "${svc}" }
+		}
+	}`)
+	writeFile(t, dir, "inv.shellf", `host t = { address: "x", user: "u" }`)
+	plan, _, err := loadPlanPackage(
+		filepath.Join(dir, "plan.shellf"), filepath.Join(dir, "inv.shellf"),
+		map[string]string{}, map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []struct{ path, content string }{
+		{"/opt/alpha/x", "service=alpha\n"},
+		{"/opt/beta/x", "service=beta\n"},
+	} {
+		s := plan[0].Steps[i]
+		if s.Args["path"] != want.path || s.Args["content"] != want.content {
+			t.Fatalf("iteration %d: got path=%q content=%q, want %q / %q",
+				i, s.Args["path"], s.Args["content"], want.path, want.content)
+		}
+	}
+}
+
 func TestResolveTemplates_MissingFile(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "plan.shellf", `on t { template("nope.tmpl", "/etc/conf") }`)
