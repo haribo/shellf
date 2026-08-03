@@ -342,6 +342,46 @@ func keys(m map[string]string) []string {
 	return ks
 }
 
+func TestLoadSecrets(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "s.txt", "S3cr3t!\n") // trailing newline is trimmed
+	t.Setenv("MY_SECRET", "envval")
+
+	secrets, values, err := loadSecrets(
+		kvFlags{"pass=" + filepath.Join(dir, "s.txt")},
+		kvFlags{"tok=MY_SECRET"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secrets["pass"] != "S3cr3t!" || secrets["tok"] != "envval" {
+		t.Fatalf("secrets: %v", secrets)
+	}
+	if len(values) != 2 {
+		t.Fatalf("values: %v", values)
+	}
+	// Malformed and missing-file both error.
+	if _, _, err := loadSecrets(kvFlags{"noequals"}, nil); err == nil {
+		t.Fatal("malformed --secret-file must error")
+	}
+	if _, _, err := loadSecrets(kvFlags{"x=/does/not/exist"}, nil); err == nil {
+		t.Fatal("a missing secret file must error")
+	}
+}
+
+func TestRedact(t *testing.T) {
+	got := redact("file-write(pass=S3cr3t!, /etc/x)\nstdout: S3cr3t!", []string{"S3cr3t!", ""})
+	if strings.Contains(got, "S3cr3t!") {
+		t.Fatalf("secret not redacted: %q", got)
+	}
+	if strings.Count(got, "***") != 2 {
+		t.Fatalf("both occurrences should be masked: %q", got)
+	}
+	// An empty secret does not blank the whole string.
+	if redact("abc", []string{""}) != "abc" {
+		t.Fatal("empty secret must not redact")
+	}
+}
+
 func TestKVFlags(t *testing.T) {
 	var k kvFlags
 	if err := k.Set("a=1"); err != nil {

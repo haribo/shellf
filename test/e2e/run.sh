@@ -66,7 +66,10 @@ host target = {
 }
 EOF
 
-run() { "$work/shellf" run --inventory "$work/inventory.shellf" --insecure "$@" "$here/plan.shellf"; }
+# A secret provided by file (never on the command line); the plan writes it and
+# shellf must redact it from every report.
+printf 'SEKRET-abc123' > "$work/secret"
+run() { "$work/shellf" run --inventory "$work/inventory.shellf" --insecure --secret-file apisecret="$work/secret" "$@" "$here/plan.shellf"; }
 
 say "1. check mode is inert (previews 'would', touches nothing)"
 out="$(run --check 2>&1)"; printf '%s\n' "$out"
@@ -74,7 +77,7 @@ printf '%s' "$out" | grep -q 'would' || fail "check mode should preview a 'would
 docker exec "$cname" test -e /tmp/shellf-e2e && fail "check mode created state on the target"
 
 say "1b. status on a fresh host shows drift (current → desired)"
-out="$("$work/shellf" status --inventory "$work/inventory.shellf" --insecure "$here/plan.shellf" 2>&1)"
+out="$("$work/shellf" status --inventory "$work/inventory.shellf" --insecure --secret-file apisecret="$work/secret" "$here/plan.shellf" 2>&1)"
 printf '%s\n' "$out"
 printf '%s' "$out" | grep -q 'present: false → true' || fail "status should show present drift on a fresh host"
 
@@ -88,6 +91,10 @@ docker exec "$cname" test -f /tmp/shellf-e2e/ready  || fail "apply did not write
 docker exec "$cname" grep -q "made by a user def" /tmp/shellf-e2e/custom || fail "the user def did not run on the target"
 # the imported def `g.hello` (./shared) ran on the target
 docker exec "$cname" test -f /tmp/shellf-e2e/imported || fail "the imported def did not run on the target"
+# the secret is redacted in shellf's output but written for real on the target
+printf '%s' "$out" | grep -q 'SEKRET-abc123' && fail "the secret leaked into shellf's output"
+printf '%s' "$out" | grep -q 'file-write(\*\*\*' || fail "the secret was not redacted in the report"
+docker exec "$cname" grep -q 'SEKRET-abc123' /tmp/shellf-e2e/sec || fail "the secret was not written to the target"
 # the `for` loop unrolled and both iterations ran on the target
 docker exec "$cname" test -d /tmp/shellf-e2e/one && docker exec "$cname" test -d /tmp/shellf-e2e/two || fail "the for loop did not run both iterations"
 
@@ -99,7 +106,7 @@ if printf '%s' "$out" | grep -qE 'created|written'; then
 fi
 
 say "4. status reports the converged state (no drift arrows)"
-out="$("$work/shellf" status --inventory "$work/inventory.shellf" --insecure "$here/plan.shellf" 2>&1)"
+out="$("$work/shellf" status --inventory "$work/inventory.shellf" --insecure --secret-file apisecret="$work/secret" "$here/plan.shellf" 2>&1)"
 printf '%s\n' "$out"
 printf '%s' "$out" | grep -q 'present: true' || fail "status should report present: true"
 if printf '%s' "$out" | grep -q '→'; then

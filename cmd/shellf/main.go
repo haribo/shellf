@@ -67,7 +67,7 @@ func main() {
 	}
 
 	fmt.Fprint(os.Stderr, "usage:\n"+
-		"  shellf run --inventory <hosts.shellf> [--vars <f>] [--set k=v] [--check] [--insecure] <plan.shellf>\n"+
+		"  shellf run --inventory <hosts.shellf> [--vars <f>] [--set k=v] [--secret-file n=path] [--check] [--insecure] <plan.shellf>\n"+
 		"  shellf status --inventory <hosts.shellf> [--insecure] <plan.shellf>\n"+
 		"  shellf clean --inventory <hosts.shellf> [--insecure] [target...]\n")
 	os.Exit(2)
@@ -78,8 +78,10 @@ func runCmd(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	invPath := fs.String("inventory", "", "inventory file (required)")
 	varsPath := fs.String("vars", "", "vars file: global `name = value` bindings")
-	var sets kvFlags
+	var sets, secretFiles, secretEnvs kvFlags
 	fs.Var(&sets, "set", "override a variable, k=v (repeatable); wins over --vars and plan bindings")
+	fs.Var(&secretFiles, "secret-file", "secret from a file, name=path (repeatable); redacted in output")
+	fs.Var(&secretEnvs, "secret-env", "secret from an env var, name=VAR (repeatable); redacted in output")
 	check := fs.Bool("check", false, "dry-run: decide without mutating")
 	insecure := fs.Bool("insecure", false, "skip host-key verification (dev only)")
 	knownHosts := fs.String("known-hosts", "", "known_hosts path (default ~/.ssh/known_hosts)")
@@ -87,7 +89,7 @@ func runCmd(args []string) {
 	_ = fs.Parse(args) // flag.ExitOnError already exits on a parse error
 
 	if fs.NArg() < 1 || *invPath == "" {
-		fmt.Fprintln(os.Stderr, "usage: shellf run --inventory <hosts.shellf> [--vars <f>] [--set k=v] [--check] [--insecure] <plan.shellf>")
+		fmt.Fprintln(os.Stderr, "usage: shellf run --inventory <hosts.shellf> [--vars <f>] [--set k=v] [--secret-file n=path] [--check] [--insecure] <plan.shellf>")
 		os.Exit(2)
 	}
 
@@ -95,6 +97,14 @@ func runCmd(args []string) {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+	secrets, secretValues, err := loadSecrets(secretFiles, secretEnvs)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	for k, v := range secrets { // secrets win, like --set (ADR-0018)
+		setVars[k] = v
 	}
 	plan, defsSrc, err := loadPlanPackage(fs.Arg(0), *invPath, baseVars, setVars)
 	if err != nil {
@@ -126,7 +136,7 @@ func runCmd(args []string) {
 		}
 	}
 
-	printReports(orchestrator.Run(plan, inv, self, mode, dial, baseVars, setVars, defsSrc))
+	printReports(orchestrator.Run(plan, inv, self, mode, dial, baseVars, setVars, defsSrc), secretValues)
 }
 
 // loadPlanPackage loads the plan file together with its package — every other
@@ -339,6 +349,49 @@ func loadGlobals(varsPath string, sets kvFlags) (baseVars, setVars map[string]st
 	return baseVars, setVars, nil
 }
 
+// loadSecrets reads secret values from files (`--secret-file name=path`) and env
+// vars (`--secret-env name=VAR`) — never from the command line (ADR-0018). It
+// returns the name→value map (to merge into the highest-precedence tier) and the
+// list of non-empty values to redact from all output.
+func loadSecrets(files, envs kvFlags) (secrets map[string]string, values []string, err error) {
+	secrets = map[string]string{}
+	for _, kv := range files {
+		name, path, ok := strings.Cut(kv, "=")
+		if !ok || name == "" {
+			return nil, nil, fmt.Errorf("--secret-file expects name=path, got %q", kv)
+		}
+		b, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return nil, nil, fmt.Errorf("--secret-file %s: %v", name, rerr)
+		}
+		secrets[name] = strings.TrimRight(string(b), "\r\n") // drop a trailing newline
+	}
+	for _, kv := range envs {
+		name, envvar, ok := strings.Cut(kv, "=")
+		if !ok || name == "" {
+			return nil, nil, fmt.Errorf("--secret-env expects name=VAR, got %q", kv)
+		}
+		secrets[name] = os.Getenv(envvar)
+	}
+	for _, v := range secrets {
+		if v != "" {
+			values = append(values, v)
+		}
+	}
+	return secrets, values, nil
+}
+
+// redact masks every non-empty secret value with `***` (by value, so it catches
+// a secret wherever it surfaces — a label, a report, an echoed stdout). ADR-0018.
+func redact(s string, secrets []string) string {
+	for _, sec := range secrets {
+		if sec != "" {
+			s = strings.ReplaceAll(s, sec, "***")
+		}
+	}
+	return s
+}
+
 // cleanCmd: shellf clean --inventory <hosts.shellf> [target...]. Kills resident
 // agents and removes shellf's /tmp files on each target (all hosts if no target).
 func cleanCmd(args []string) {
@@ -404,14 +457,22 @@ func statusCmd(args []string) {
 	invPath := fs.String("inventory", "", "inventory file (required)")
 	insecure := fs.Bool("insecure", false, "skip host-key verification (dev only)")
 	knownHosts := fs.String("known-hosts", "", "known_hosts path (default ~/.ssh/known_hosts)")
+	var secretFiles, secretEnvs kvFlags
+	fs.Var(&secretFiles, "secret-file", "secret from a file, name=path (repeatable); redacted in output")
+	fs.Var(&secretEnvs, "secret-env", "secret from an env var, name=VAR (repeatable); redacted in output")
 	_ = fs.Parse(args)
 
 	if fs.NArg() < 1 || *invPath == "" {
 		fmt.Fprintln(os.Stderr, "usage: shellf status --inventory <hosts.shellf> [--insecure] <plan.shellf>")
 		os.Exit(2)
 	}
+	secrets, secretValues, err := loadSecrets(secretFiles, secretEnvs)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	base := map[string]string{}
-	plan, defsSrc, err := loadPlanPackage(fs.Arg(0), *invPath, base, map[string]string{})
+	plan, defsSrc, err := loadPlanPackage(fs.Arg(0), *invPath, base, secrets)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -433,7 +494,7 @@ func statusCmd(args []string) {
 			KnownHosts: *knownHosts, Insecure: *insecure,
 		}
 	}
-	fmt.Print(statusReport(orchestrator.Run(plan, inv, self, "status", dial, base, map[string]string{}, defsSrc)))
+	fmt.Print(redact(statusReport(orchestrator.Run(plan, inv, self, "status", dial, base, secrets, defsSrc)), secretValues))
 }
 
 // statusReport renders the per-host state report: one line per resource, with a
@@ -489,9 +550,9 @@ func orDash(s string) string {
 	return s
 }
 
-func printReports(reports []orchestrator.BlockReport) {
+func printReports(reports []orchestrator.BlockReport, secrets []string) {
 	text, anyErr := reportText(reports)
-	fmt.Print(text)
+	fmt.Print(redact(text, secrets))
 	exitFor(anyErr)
 }
 
