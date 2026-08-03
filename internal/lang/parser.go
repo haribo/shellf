@@ -672,7 +672,7 @@ func (p *parser) shellStep() proto.Step {
 // with the global variables at parse; the bindings add or override variables for
 // that call only. Returns nil when no `with` follows.
 func (p *parser) parseWith() map[string]string {
-	if !(p.tok.kind == tIdent && p.tok.val == "with") {
+	if p.tok.kind != tIdent || p.tok.val != "with" {
 		return nil
 	}
 	p.adv()
