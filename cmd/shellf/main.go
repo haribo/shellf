@@ -211,7 +211,7 @@ func renderTemplate(path string, vars map[string]string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("template: %v", err)
 	}
-	return lang.Interpolate(string(b), func(n string) (string, bool) { v, ok := vars[n]; return v, ok })
+	return lang.Template(string(b), func(n string) (string, bool) { v, ok := vars[n]; return v, ok })
 }
 
 // mergedVars flattens the base and set tiers (set wins) for template rendering.

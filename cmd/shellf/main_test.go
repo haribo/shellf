@@ -250,7 +250,8 @@ func TestReadImports(t *testing.T) {
 
 func TestResolveTemplates(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "conf.tmpl", "email=${acme}\ndomain=${site}\n")
+	// @{var} is shellf's; a downstream ${SHELL} and {{ go }} pass through verbatim.
+	writeFile(t, dir, "conf.tmpl", "email=@{acme}\ndomain=@{site}\nkeep=${SHELL} {{ .X }}\n")
 	writeFile(t, dir, "plan.shellf", `on t { template("conf.tmpl", "/etc/conf") }`)
 	writeFile(t, dir, "inv.shellf", `host t = { address: "x", user: "u" }`)
 
@@ -265,8 +266,8 @@ func TestResolveTemplates(t *testing.T) {
 	if step.Instruction != "file-write" || step.Args["path"] != "/etc/conf" {
 		t.Fatalf("template not rewritten to file-write: %+v", step)
 	}
-	if step.Args["content"] != "email=a@b.co\ndomain=ex.com\n" {
-		t.Fatalf("template not rendered: %q", step.Args["content"])
+	if step.Args["content"] != "email=a@b.co\ndomain=ex.com\nkeep=${SHELL} {{ .X }}\n" {
+		t.Fatalf("template not rendered (or passthrough broken): %q", step.Args["content"])
 	}
 }
 
