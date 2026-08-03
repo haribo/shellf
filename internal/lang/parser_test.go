@@ -101,3 +101,35 @@ func TestParseErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestParseWithBlock(t *testing.T) {
+	base := map[string]string{"who": "root"}
+	src := `on s {
+		apt.install("nginx") with { version = "1.24", owner = "${who}" }
+		shell { echo "$msg" } with { msg = "hi" }
+	}`
+	plan, err := ParsePlanWithVars(src, base, nil, defaultSig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ai := plan[0].Steps[0]
+	if ai.With["version"] != "1.24" || ai.With["owner"] != "root" { // ${who} interpolated at parse
+		t.Fatalf("call with: %+v", ai.With)
+	}
+	sh := plan[0].Steps[1]
+	if sh.Instruction != "shell" || sh.With["msg"] != "hi" {
+		t.Fatalf("shell with: %+v", sh)
+	}
+}
+
+func TestParseWithBlock_Errors(t *testing.T) {
+	for _, src := range []string{
+		`on s { dir-ensure("/o") with { } }`,       // empty with
+		`on s { dir-ensure("/o") with { x } }`,     // missing `=`
+		`on s { dir-ensure("/o") with { x = "a" }`, // unterminated block
+	} {
+		if _, err := ParsePlanWithVars(src, nil, nil, defaultSig); err == nil {
+			t.Fatalf("expected error for: %s", src)
+		}
+	}
+}

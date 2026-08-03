@@ -181,11 +181,23 @@ func resolveTemplates(steps []proto.Step, dir string, vars map[string]string) er
 			if s.Refs["src"] != "" || s.Refs["dst"] != "" {
 				return fmt.Errorf("template: src and dst must be literal paths, not per-host refs")
 			}
-			content, err := renderTemplate(filepath.Join(dir, s.Args["src"]), vars)
+			// A `with { }` binding overrides a same-named var in this render only
+			// (ADR-0022); the global vars stay untouched for other steps.
+			renderVars := vars
+			if len(s.With) > 0 {
+				renderVars = make(map[string]string, len(vars)+len(s.With))
+				for k, v := range vars {
+					renderVars[k] = v
+				}
+				for k, v := range s.With {
+					renderVars[k] = v
+				}
+			}
+			content, err := renderTemplate(filepath.Join(dir, s.Args["src"]), renderVars)
 			if err != nil {
 				return err
 			}
-			s.Instruction, s.Args, s.Refs = "file-write", map[string]string{"path": s.Args["dst"], "content": content}, nil
+			s.Instruction, s.Args, s.Refs, s.With = "file-write", map[string]string{"path": s.Args["dst"], "content": content}, nil, nil
 			continue
 		}
 		if s.If != nil { // a template is a file-write, never a condition

@@ -664,7 +664,33 @@ func (p *parser) shellStep() proto.Step {
 	if p.tok.kind == tIdent && p.tok.val == "unless" {
 		p.fail("`unless` was removed from plans; use `if !shell { <guard> } { shell { <cmd> } }`")
 	}
-	return proto.Step{Instruction: "shell", Args: args, Become: become, Interp: interp}
+	return proto.Step{Instruction: "shell", Args: args, Become: become, Interp: interp, With: p.parseWith()}
+}
+
+// parseWith parses an optional `with { k = value, … }` block after a call
+// (ADR-0022): a per-call variable override. Each value is a string interpolated
+// with the global variables at parse; the bindings add or override variables for
+// that call only. Returns nil when no `with` follows.
+func (p *parser) parseWith() map[string]string {
+	if p.tok.kind != tIdent || p.tok.val != "with" {
+		return nil
+	}
+	p.adv()
+	p.expect(tLBrace, "{")
+	with := map[string]string{}
+	for p.tok.kind != tRBrace {
+		k := p.expect(tIdent, "a binding name").val
+		p.expect(tEq, "=")
+		with[k] = p.arg()
+		if p.tok.kind == tComma {
+			p.adv()
+		}
+	}
+	p.expect(tRBrace, "}")
+	if len(with) == 0 {
+		p.fail("`with { }` must bind at least one variable")
+	}
+	return with
 }
 
 // shellInterp parses an optional `(<interp>)` after `shell` (ADR-0012).
@@ -743,7 +769,7 @@ func (p *parser) call(name string) proto.Step {
 			args[n] = vals[i].val
 		}
 	}
-	return proto.Step{Instruction: name, Args: args, Refs: refs, Caught: caught}
+	return proto.Step{Instruction: name, Args: args, Refs: refs, Caught: caught, With: p.parseWith()}
 }
 
 // arg resolves a binding's value (plan top-level binding or --vars file entry)

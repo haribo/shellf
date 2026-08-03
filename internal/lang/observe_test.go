@@ -30,7 +30,7 @@ func evalObserveDef(t *testing.T, f *evalFake, args map[string]string, mode engi
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := EvalDef(defs[0], args, f, mode)
+	res, err := EvalDef(defs[0], args, nil, f, mode)
 	if err != nil {
 		t.Fatal(err)
 	}

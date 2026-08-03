@@ -30,7 +30,8 @@ const (
 type evalFake struct {
 	resp       map[string]engine.ShellResult
 	calls      map[string]bool
-	lastInterp string // interpreter of the last shell (ADR-0012 threading)
+	lastInterp string     // interpreter of the last shell (ADR-0012 threading)
+	lastEnv    engine.Env // env of the last shell (ADR-0022 `with` threading)
 }
 
 func (f *evalFake) As(string) engine.Executor { return f }
@@ -60,11 +61,12 @@ func (i interpFake) Using(interp string) engine.Executor {
 	return interpFake{i.inner, interp}
 }
 
-func (f *evalFake) Shell(script string, _ engine.Env) engine.ShellResult {
+func (f *evalFake) Shell(script string, env engine.Env) engine.ShellResult {
 	if f.calls == nil {
 		f.calls = map[string]bool{}
 	}
 	f.calls[script] = true
+	f.lastEnv = env
 	if r, ok := f.resp[script]; ok {
 		return r
 	}
@@ -77,7 +79,7 @@ func runApt(t *testing.T, f *evalFake, pkg string, mode engine.Mode) engine.Resu
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := EvalDef(defs[0], map[string]string{"pkg": pkg}, f, mode)
+	res, err := EvalDef(defs[0], map[string]string{"pkg": pkg}, nil, f, mode)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +149,7 @@ func TestEvalDef_Interp(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := &evalFake{resp: map[string]engine.ShellResult{"echo hi": {Exit: 0}}}
-	if _, err := EvalDef(defs[0], map[string]string{"p": "x"}, f, engine.Apply); err != nil {
+	if _, err := EvalDef(defs[0], map[string]string{"p": "x"}, nil, f, engine.Apply); err != nil {
 		t.Fatal(err)
 	}
 	if f.lastInterp != "bash" {
@@ -156,9 +158,29 @@ func TestEvalDef_Interp(t *testing.T) {
 
 	over, _ := ParseDefs(`def q(p: str) using bash { apply { r = shell(sh) { echo hi }  if !r { return err.x(r) }  return ok.done } }`)
 	f2 := &evalFake{resp: map[string]engine.ShellResult{"echo hi": {Exit: 0}}}
-	_, _ = EvalDef(over[0], map[string]string{"p": "x"}, f2, engine.Apply)
+	_, _ = EvalDef(over[0], map[string]string{"p": "x"}, nil, f2, engine.Apply)
 	if f2.lastInterp != "sh" {
 		t.Fatalf("shell(sh) must override the def interpreter, got %q", f2.lastInterp)
+	}
+}
+
+// ADR-0022: a `with { }` binding reaches the def's shells as an env var and
+// overrides a same-named param for that call only.
+func TestEvalDef_WithOverridesEnv(t *testing.T) {
+	defs, err := ParseDefs(`def q(p: str) { apply { r = shell { echo hi }  if !r { return err.x(r) }  return ok.done } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &evalFake{resp: map[string]engine.ShellResult{"echo hi": {Exit: 0}}}
+	with := map[string]string{"p": "override", "extra": "v"}
+	if _, err := EvalDef(defs[0], map[string]string{"p": "orig"}, with, f, engine.Apply); err != nil {
+		t.Fatal(err)
+	}
+	if f.lastEnv["p"] != "override" { // `with` wins over the passed arg
+		t.Fatalf("with should override the param, env p=%q", f.lastEnv["p"])
+	}
+	if f.lastEnv["extra"] != "v" { // a new var injected for this call
+		t.Fatalf("with should inject new env vars, got %+v", f.lastEnv)
 	}
 }
 
@@ -170,7 +192,7 @@ func TestEvalDef_ShellDotOkRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := &evalFake{resp: map[string]engine.ShellResult{`test -d "$p"`: {Exit: 0}}}
-	if _, err := EvalDef(defs[0], map[string]string{"p": "/x"}, f, engine.Apply); err == nil {
+	if _, err := EvalDef(defs[0], map[string]string{"p": "/x"}, nil, f, engine.Apply); err == nil {
 		t.Fatal("`.ok` on a shell result must be an eval error (ADR-0010)")
 	}
 }
@@ -195,7 +217,7 @@ def touch(path: str) {
 	f := &evalFake{resp: map[string]engine.ShellResult{`touch "$path"`: {Exit: 0}}}
 	args := map[string]string{"path": "/tmp/x"}
 
-	res, err := EvalDef(defs[0], args, f, engine.Apply)
+	res, err := EvalDef(defs[0], args, nil, f, engine.Apply)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +225,7 @@ def touch(path: str) {
 		t.Fatalf("apply: want tag-less ok, got %s", res)
 	}
 
-	res, err = EvalDef(defs[0], args, f, engine.Check)
+	res, err = EvalDef(defs[0], args, nil, f, engine.Check)
 	if err != nil {
 		t.Fatal(err)
 	}

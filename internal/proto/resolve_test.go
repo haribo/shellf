@@ -63,6 +63,25 @@ func TestResolveRefs_ShellStepGetsEnv(t *testing.T) {
 	}
 }
 
+func TestResolveRefs_ShellWithOverridesEnv(t *testing.T) {
+	// A `with { }` binding overrides the per-host env for that shell only,
+	// without mutating the shared host env (ADR-0022).
+	host := map[string]string{"name": "alice", "role": "web"}
+	out, err := ResolveRefs([]Step{{
+		Instruction: "shell", Args: map[string]string{"cmd": "echo $name"},
+		With: map[string]string{"name": "bob", "extra": "v"},
+	}}, host, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out[0].Env["name"] != "bob" || out[0].Env["extra"] != "v" || out[0].Env["role"] != "web" {
+		t.Fatalf("with should override/extend the shell env: %+v", out[0].Env)
+	}
+	if host["name"] != "alice" {
+		t.Fatalf("the shared host env must not be mutated: %+v", host)
+	}
+}
+
 func TestResolveRefs_ShellInterp(t *testing.T) {
 	// An unannotated shell inherits the host interpreter (ADR-0012).
 	out, _ := ResolveRefs([]Step{{Instruction: "shell", Args: map[string]string{"cmd": "x"}}}, nil, "bash")
