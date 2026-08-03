@@ -1,0 +1,12 @@
+# Set ufw's default policies (the core of hardening; ufw.open only adds allows).
+# Converged when the `ufw status verbose` default line already matches.
+def default(incoming: str, outgoing: str) as root {
+    observe {
+        return state(set: shell { ufw status verbose | grep -qi "^Default: $incoming (incoming), $outgoing (outgoing)" }.exit == 0)
+    }
+    apply {
+        r = shell { ufw default "$incoming" incoming && ufw default "$outgoing" outgoing }
+        if !r { return err.runtime(r) }
+        return ok.set
+    }
+}

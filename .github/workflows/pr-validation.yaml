@@ -1,0 +1,44 @@
+name: PR validation
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+env:
+  CONVENTIONAL: '^(feat|fix|docs|style|refactor|perf|test|chore|ci|build)(\(.+\))?!?: .+'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate PR title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$TITLE" | grep -qE "$CONVENTIONAL" \
+            || { echo "PR title must be conventional: type(scope): description"; exit 1; }
+
+      - name: Validate commit messages
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          for sha in $(git rev-list --no-merges "$BASE_SHA"..HEAD); do
+            msg=$(git log -1 --format=%s "$sha")
+            echo "$msg" | grep -qE "$CONVENTIONAL" \
+              || { echo "Non-conventional commit: $msg"; exit 1; }
+          done
+
+      - name: Validate issue reference
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          case "$TITLE" in
+            chore*|style*) echo "chore/style: no issue reference required"; exit 0 ;;
+          esac
+          echo "$BODY" | grep -qE 'Closes #[0-9]+' \
+            || { echo "PR body must reference an issue (Closes #N)"; exit 1; }

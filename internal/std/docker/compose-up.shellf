@@ -1,0 +1,19 @@
+# Bring a compose stack up (ADR-0013 action-shaped). `docker compose up -d` is
+# itself idempotent — it recreates only the services whose image or config
+# changed, and is a no-op otherwise — so there is NO observe: a "≥1 service
+# running" guard would wrongly skip a compose/image change while the stack is up.
+# `build` = "true" rebuilds local images first (images built on the target).
+def compose-up(dir: str, build: str = "false") as root {
+    apply {
+        r = shell {
+            cd "$dir"
+            if [ "$build" = true ]; then
+                docker compose up -d --build --remove-orphans
+            else
+                docker compose up -d --remove-orphans
+            fi
+        }
+        if !r { return err.runtime(r) }
+        return ok.up
+    }
+}

@@ -1,0 +1,27 @@
+# golangci-lint config (v2). Baseline policy: the tree must pass with no blanket
+# excludes. Correctness linters (errcheck, govet, staticcheck) gate every finding.
+# revive is enabled for its correctness/clarity rules, but three documentation/
+# style rules are turned off deliberately (not excluded per-line):
+#
+#   - exported / package-comments: doc comments are encouraged, not CI-gated on a
+#     young pre-1.0 codebase — gating them is churn, not signal.
+#   - unused-parameter: fires on parameters mandated by an interface/callback
+#     signature (e.g. a fake's method, a dial callback), where the name is not
+#     free to drop — a false positive here.
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - revive
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+        - name: package-comments
+          disabled: true
+        - name: unused-parameter
+          disabled: true

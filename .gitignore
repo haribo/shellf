@@ -1,0 +1,4 @@
+/shellf
+/dist/
+*.test
+/tmp/

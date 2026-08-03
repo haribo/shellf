@@ -1,0 +1,8 @@
+def network(name: str) as root {
+    observe { return state(present: shell { docker network inspect "$name" >/dev/null 2>&1 }.exit == 0) }
+    apply {
+        r = shell { docker network create "$name" }
+        if !r { return err.runtime(r) }
+        return ok.created
+    }
+}

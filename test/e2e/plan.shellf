@@ -1,0 +1,27 @@
+# Hermetic end-to-end plan: no root, no network, no package manager. It only
+# provisions a marker tree under /tmp, so it runs on a barebones sshd target and
+# is fully idempotent — a second real run changes nothing.
+#
+# `mark` is a USER def in the sibling mark.shellf, resolved by name with no
+# import (the directory is the package, ADR-0014). `g` is an IMPORTED package
+# (the ./shared directory), called qualified as `g.hello` (ADR-0015).
+import g "shared"
+
+on target {
+    dir-ensure("/tmp/shellf-e2e")
+    file-write("/tmp/shellf-e2e/marker", "provisioned by shellf")
+    mark("/tmp/shellf-e2e/custom", "made by a user def")
+    g.hello("/tmp/shellf-e2e/imported")
+    for d in ["one", "two"] {
+        dir-ensure("/tmp/shellf-e2e/${d}")
+    }
+    file-write("/tmp/shellf-e2e/sec", "${apisecret}")
+    template("motd.tmpl", "/tmp/shellf-e2e/motd")
+    # `with { }` overrides a variable for this one call (ADR-0022): `greeting` is
+    # not a global here — it exists only for this render, and for the shell below.
+    template("greet.tmpl", "/tmp/shellf-e2e/greet") with { greeting = "hello-with" }
+    shell { echo "$greeting" > /tmp/shellf-e2e/note } with { greeting = "note-with" }
+    if file-exists("/tmp/shellf-e2e/marker") {
+        file-write("/tmp/shellf-e2e/ready", "ok")
+    }
+}

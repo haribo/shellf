@@ -1,0 +1,18 @@
+def service(name: str, running: str, enabled: str) as root {
+    # Value fields matching the `running`/`enabled` arguments: each is compared,
+    # so the same def converges a service up or down.
+    observe {
+        return state(
+            running: shell { systemctl is-active  --quiet "$name" }.exit == 0,
+            enabled: shell { systemctl is-enabled --quiet "$name" }.exit == 0,
+        )
+    }
+    apply {
+        r = shell {
+            if [ "$running" = true ]; then systemctl start "$name"; else systemctl stop "$name"; fi
+            if [ "$enabled" = true ]; then systemctl enable "$name"; else systemctl disable "$name"; fi
+        }
+        if !r { return err.runtime(r) }
+        return ok.converged
+    }
+}

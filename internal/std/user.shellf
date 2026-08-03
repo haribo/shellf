@@ -1,0 +1,8 @@
+def user-group(user: str, group: str) as root {
+    observe { return state(member: shell { id -nG "$user" | tr ' ' '\n' | grep -qx "$group" }.exit == 0) }
+    apply {
+        r = shell { usermod -aG "$group" "$user" }
+        if !r { return err.runtime(r) }
+        return ok.added
+    }
+}

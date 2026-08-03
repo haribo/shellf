@@ -1,0 +1,13 @@
+# Refresh the apt package cache. Idempotent-ish: converged when the cache was
+# refreshed in the last hour, so a run doesn't hit the network every time. Run
+# before apt.install on a fresh machine or after adding a repo.
+def update() as root {
+    observe {
+        return state(fresh: shell { test -n "$(find /var/lib/apt/lists -maxdepth 1 -name '*Release' -mmin -60 2>/dev/null)" }.exit == 0)
+    }
+    apply {
+        r = shell { apt-get update }
+        if !r { return err.runtime(r) }
+        return ok.updated
+    }
+}

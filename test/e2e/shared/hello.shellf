@@ -1,0 +1,12 @@
+# An imported package (ADR-0015): a def-only library in its own directory,
+# reached from the plan via `import g "shared"` and called `g.hello(...)`. It is
+# resolved on the control host, shipped to the target under its qualified name,
+# and evaluated there.
+def hello(path: str) {
+    observe { return state(present: shell { test -f "$path" }.exit == 0) }
+    apply {
+        r = shell { touch "$path" }
+        if !r { return err.runtime(r) }
+        return ok.touched
+    }
+}

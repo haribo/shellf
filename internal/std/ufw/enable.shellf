@@ -1,0 +1,8 @@
+def enable() as root {
+    observe { return state(active: shell { ufw status | grep -q "Status: active" }.exit == 0) }
+    apply {
+        r = shell { ufw --force enable }
+        if !r { return err.runtime(r) }
+        return ok.enabled
+    }
+}
