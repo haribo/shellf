@@ -271,6 +271,34 @@ func TestResolveTemplates(t *testing.T) {
 	}
 }
 
+func TestResolveTemplates_WithOverridesRenderVar(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "conf.tmpl", "port=@{port}\nsite=@{site}\n")
+	// Same template, two calls, each overriding `port` via `with` (ADR-0022).
+	writeFile(t, dir, "plan.shellf", `on t {
+		template("conf.tmpl", "/etc/a") with { port = "8080" }
+		template("conf.tmpl", "/etc/b") with { port = "8081" }
+	}`)
+	writeFile(t, dir, "inv.shellf", `host t = { address: "x", user: "u" }`)
+
+	plan, _, err := loadPlanPackage(
+		filepath.Join(dir, "plan.shellf"), filepath.Join(dir, "inv.shellf"),
+		map[string]string{"port": "1", "site": "ex.com"}, map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b := plan[0].Steps[0], plan[0].Steps[1]
+	if a.Args["content"] != "port=8080\nsite=ex.com\n" {
+		t.Fatalf("first with-render: %q", a.Args["content"])
+	}
+	if b.Args["content"] != "port=8081\nsite=ex.com\n" { // global `port=1` untouched between calls
+		t.Fatalf("second with-render: %q", b.Args["content"])
+	}
+	if a.With != nil || b.With != nil { // With is consumed by the render, not shipped
+		t.Fatalf("template With should be cleared after render: %+v %+v", a.With, b.With)
+	}
+}
+
 func TestResolveTemplates_MissingFile(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "plan.shellf", `on t { template("nope.tmpl", "/etc/conf") }`)
@@ -337,7 +365,7 @@ func gitRun(t *testing.T, dir string, args ...string) {
 func TestDefSource(t *testing.T) {
 	// Each def maps to its own source, keyed by resolved name.
 	got := defSource(map[string]lang.Def{
-		"a":         {Source: "def a() {}"},
+		"a":          {Source: "def a() {}"},
 		"web.deploy": {Source: "def deploy() {}"},
 	})
 	if got["a"] != "def a() {}" || got["web.deploy"] != "def deploy() {}" {

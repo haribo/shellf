@@ -120,12 +120,12 @@ def probe() {
 	}
 	// Shell succeeds → `ok` is true → ok.up.
 	up := &evalFake{resp: map[string]engine.ShellResult{"run-it": {Exit: 0}}}
-	if got, _ := EvalDef(defs[0], nil, up, engine.Apply); got.String() != "ok.up" {
+	if got, _ := EvalDef(defs[0], nil, nil, up, engine.Apply); got.String() != "ok.up" {
 		t.Fatalf("ok shorthand on success: %s", got.String())
 	}
 	// Shell fails → `ok` is false → falls through to err.down.
 	down := &evalFake{resp: map[string]engine.ShellResult{"run-it": {Exit: 1}}}
-	if got, _ := EvalDef(defs[0], nil, down, engine.Apply); got.String() != "err.down" {
+	if got, _ := EvalDef(defs[0], nil, nil, down, engine.Apply); got.String() != "err.down" {
 		t.Fatalf("ok shorthand on failure: %s", got.String())
 	}
 }

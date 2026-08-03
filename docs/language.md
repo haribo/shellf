@@ -193,3 +193,25 @@ on host {
   inside a raw `shell {…}` body (that stays literal shell).
 - Lists are literals of strings; glob/range iteration and list variables are not
   in this version.
+
+## Per-call override — `with { … }` (ADR-0022)
+
+Any instruction call — a def, `shell`, `template`, or a builtin — may be followed
+by `with { k = <value>, … }` to add or override variables **for that call only**:
+
+```
+on host {
+  # explicit, local inputs — no need to read the file to know what it uses
+  template("nginx.conf", "/etc/nginx/a.conf") with { port = "8080", root = "/srv/a" }
+  template("nginx.conf", "/etc/nginx/b.conf") with { port = "8081", root = "/srv/b" }
+
+  shell { echo "$msg" } with { msg = "hi" }
+}
+```
+
+- The bindings do **not** leak beyond the call.
+- Values are strings, interpolated with the global variables (`${var}`) at parse.
+- A `with` binding wins over a same-named global (and, for a def, over the passed
+  argument): it is the most local scope. Precedence: `with` > per-host > global.
+- It reaches a def's / `shell`'s body as an environment variable (`$k`) and a
+  template's render scope (`@{k}`).

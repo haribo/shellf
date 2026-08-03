@@ -64,9 +64,19 @@ func ResolveRefs(steps []Step, env map[string]string, interp string) ([]Step, er
 			}
 			args[argName] = v
 		}
-		step := Step{Instruction: s.Instruction, Args: args, Bind: s.Bind, Caught: s.Caught, Become: s.Become, Interp: s.Interp}
+		step := Step{Instruction: s.Instruction, Args: args, Bind: s.Bind, Caught: s.Caught, Become: s.Become, Interp: s.Interp, With: s.With}
 		if s.Instruction == "shell" { // a plan-level shell sees the per-host env via $name (#106)
 			step.Env = env
+			if len(s.With) > 0 { // a `with` binding overrides the host env for this call (ADR-0022)
+				merged := make(map[string]string, len(env)+len(s.With))
+				for k, v := range env { // copy so the shared host env is never mutated
+					merged[k] = v
+				}
+				for k, v := range s.With {
+					merged[k] = v
+				}
+				step.Env = merged
+			}
 			if step.Interp == "" { // no block annotation → the host's interpreter (ADR-0012)
 				step.Interp = interp
 			}
@@ -84,11 +94,12 @@ type Step struct {
 	Instruction string            `json:"instruction,omitempty"`
 	Args        map[string]string `json:"args,omitempty"`
 	Refs        map[string]string `json:"refs,omitempty"`
-	Bind        string            `json:"bind,omitempty"` // capture this step's Result under this name
+	Bind        string            `json:"bind,omitempty"`   // capture this step's Result under this name
 	Caught      bool              `json:"caught,omitempty"` // `?` — an err here is handled, not an automatic halt (ADR-0009)
 	Become      string            `json:"become,omitempty"` // escalate this step's shells to this user (ADR-0011)
 	Interp      string            `json:"interp,omitempty"` // shell interpreter for a `shell(<interp>)` step (ADR-0012)
 	Env         map[string]string `json:"env,omitempty"`    // per-host env for a plan-level `shell` step (#106)
+	With        map[string]string `json:"with,omitempty"`   // per-call variable override (ADR-0022)
 	Block       []Step            `json:"block,omitempty"`  // an `as <user> { … }` sequential group (ADR-0011)
 	Parallel    []Step            `json:"parallel,omitempty"`
 	If          *IfBlock          `json:"if,omitempty"`

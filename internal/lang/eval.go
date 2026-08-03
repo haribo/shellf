@@ -16,7 +16,7 @@ import (
 //
 // The returned error is an evaluation failure (unbound var, unsupported
 // construct) — distinct from an `err.*` Result, which is a normal outcome.
-func EvalDef(def Def, args map[string]string, ex engine.Executor, mode engine.Mode) (res engine.Result, err error) {
+func EvalDef(def Def, args, with map[string]string, ex engine.Executor, mode engine.Mode) (res engine.Result, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			if ee, ok := r.(evalErr); ok {
@@ -39,6 +39,11 @@ func EvalDef(def Def, args map[string]string, ex engine.Executor, mode engine.Mo
 		if _, ok := ev.vars[p.Name]; !ok && p.Default != nil {
 			ev.vars[p.Name] = ev.evalExpr(p.Default)
 		}
+	}
+	// A `with { }` binding overrides any same-named param/default for this call
+	// (ADR-0022): the most local scope wins. It reaches the def's shells as env.
+	for k, v := range with {
+		ev.vars[k] = v
 	}
 	desired := ev.desiredState(def) // the effective arguments, keyed by name
 

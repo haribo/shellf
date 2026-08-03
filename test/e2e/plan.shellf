@@ -17,6 +17,10 @@ on target {
     }
     file-write("/tmp/shellf-e2e/sec", "${apisecret}")
     template("motd.tmpl", "/tmp/shellf-e2e/motd")
+    # `with { }` overrides a variable for this one call (ADR-0022): `greeting` is
+    # not a global here — it exists only for this render, and for the shell below.
+    template("greet.tmpl", "/tmp/shellf-e2e/greet") with { greeting = "hello-with" }
+    shell { echo "$greeting" > /tmp/shellf-e2e/note } with { greeting = "note-with" }
     if file-exists("/tmp/shellf-e2e/marker") {
         file-write("/tmp/shellf-e2e/ready", "ok")
     }
