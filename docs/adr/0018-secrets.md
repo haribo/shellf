@@ -59,11 +59,14 @@ touches the target:
 
 - the request file is created `0600` and the workdir is already `0700`
   (unreadable to other non-root users), and it is deleted promptly after the job;
+- the workdir lives on tmpfs, so the plaintext never touches persistent disk
+  ([ADR-0025](0025-secrets-at-rest-tmpfs.md) — closes backups/snapshots/undelete);
 - **root on the target can still read** the request file (while it exists) and the
   process environment during execution. This is documented, not hidden.
 
-Making the secret unreadable even to target root — request encryption or a
-stdin-only, no-resident transport — is deferred to a future ADR.
+Making the secret unreadable even to **live target root** is not achievable on the
+target (root reads memory and `/proc`); ADR-0025 narrows the at-rest surface as far
+as it honestly can.
 
 ## Rejected alternatives
 
@@ -88,5 +91,7 @@ stdin-only, no-resident transport — is deferred to a future ADR.
 - Implementation: the CLI collects secret values (file/env) into the
   highest-precedence var tier and into a redaction set; the report renderers mask
   those values. Target file-permission hardening is a small, separate change.
-- Follow-on (separate ADR) if needed: at-rest secrecy on the target — request
-  encryption with key management, or a stdin-only transport.
+- Follow-on: at-rest secrecy on the target is addressed by
+  [ADR-0025](0025-secrets-at-rest-tmpfs.md) (tmpfs workdir), which keeps the
+  plaintext off persistent disk; live-root exposure is inherent and stays
+  documented.

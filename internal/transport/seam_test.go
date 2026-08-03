@@ -119,6 +119,27 @@ func TestRun_Cached_SkipsPush(t *testing.T) {
 	}
 }
 
+func TestWorkBase_PrefersTmpfsElseTmp(t *testing.T) {
+	// /dev/shm writable → workdir on tmpfs (ADR-0025).
+	shm := &fakeConn{responder: func(cmd string) ([]byte, error) { return nil, nil }}
+	if got := workBase(shm); got != "/dev/shm" {
+		t.Fatalf("writable tmpfs should be chosen: %s", got)
+	}
+	if !shm.ran("test -w /dev/shm") {
+		t.Fatalf("workBase must probe tmpfs: %v", shm.runs)
+	}
+	// no tmpfs → fall back to /tmp.
+	notmp := &fakeConn{responder: func(cmd string) ([]byte, error) {
+		if strings.Contains(cmd, "/dev/shm") {
+			return nil, errFake("no shm")
+		}
+		return nil, nil
+	}}
+	if got := workBase(notmp); got != "/tmp" {
+		t.Fatalf("absent tmpfs should fall back to /tmp: %s", got)
+	}
+}
+
 func TestRun_PushError_StopsBeforeDeposit(t *testing.T) {
 	fc := &fakeConn{responder: func(cmd string) ([]byte, error) {
 		if strings.HasPrefix(cmd, "test -x ") {
