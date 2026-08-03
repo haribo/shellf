@@ -215,3 +215,19 @@ on host {
   argument): it is the most local scope. Precedence: `with` > per-host > global.
 - It reaches a def's / `shell`'s body as an environment variable (`$k`) and a
   template's render scope (`@{k}`).
+
+### Loop variables in a template's content (ADR-0023)
+
+A template file is rendered over the **global** variables (plus any `with`), not
+over a `for` loop variable. To use the loop item inside the template's content,
+pass it with `with { }`:
+
+```
+for svc in ["traefik", "app"] {
+  template("unit.tmpl", "/opt/${svc}/unit") with { svc = "${svc}" }
+}
+```
+
+`${svc}` resolves to the item at parse; the template then renders `@{svc}`. (The
+`dst` and other string args already interpolate `${svc}` without `with` — only
+the template *file's* content needs the explicit pass.)
