@@ -2,7 +2,9 @@
 
 ## Status
 
-Active.
+Active. The delimiter of §3 (`${var}`) is superseded by
+[ADR-0021](0021-template-delimiter.md) (`@{var}`), so templates do not clash with
+the `${…}` their target files use; the rest of this ADR stands.
 
 ## Context
 

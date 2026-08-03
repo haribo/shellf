@@ -91,3 +91,18 @@ func TestInterpolate(t *testing.T) {
 		t.Fatal("unterminated must error")
 	}
 }
+
+func TestTemplate(t *testing.T) {
+	look := func(n string) (string, bool) { v := map[string]string{"a": "1"}[n]; return v, v != "" }
+	// @{var} interpolates; ${x} and {{y}} pass through; @@ is a literal @.
+	got, err := Template("a=@{a} b=${x} c={{y}} d=@@{z}", look)
+	if err != nil || got != "a=1 b=${x} c={{y}} d=@{z}" {
+		t.Fatalf("Template: %q %v", got, err)
+	}
+	if _, err := Template("@{missing}", look); err == nil {
+		t.Fatal("undefined must error")
+	}
+	if _, err := Template("@{unclosed", look); err == nil {
+		t.Fatal("unterminated must error")
+	}
+}

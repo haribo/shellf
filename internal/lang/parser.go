@@ -817,9 +817,40 @@ func (p *parser) interpolate(s string) string {
 	return out
 }
 
+// Template renders a template file (ADR-0021): `@{name}` is interpolated (a
+// different sigil from the plan's `${}`, so a config file's own `${…}`/`{{ }}`
+// pass through verbatim), and `@@` is a literal `@`. An unterminated `@{` or an
+// undefined name is an error.
+func Template(s string, lookup func(string) (string, bool)) (string, error) {
+	var out strings.Builder
+	for i := 0; i < len(s); {
+		if s[i] == '@' && i+1 < len(s) && s[i+1] == '@' { // @@ -> @
+			out.WriteByte('@')
+			i += 2
+			continue
+		}
+		if s[i] == '@' && i+1 < len(s) && s[i+1] == '{' {
+			end := strings.IndexByte(s[i+2:], '}')
+			if end < 0 {
+				return "", fmt.Errorf("unterminated @{...} in template")
+			}
+			name := s[i+2 : i+2+end]
+			v, ok := lookup(name)
+			if !ok {
+				return "", fmt.Errorf("undefined variable %q in template", name)
+			}
+			out.WriteString(v)
+			i += 2 + end + 1
+			continue
+		}
+		out.WriteByte(s[i])
+		i++
+	}
+	return out.String(), nil
+}
+
 // Interpolate replaces every `${name}` in s with lookup(name), erroring on an
-// unterminated `${` or an undefined name. Shared by the parser (string args) and
-// the CLI (rendering a template file, ADR-0019).
+// unterminated `${` or an undefined name. Used for the plan's string arguments.
 func Interpolate(s string, lookup func(string) (string, bool)) (string, error) {
 	var out strings.Builder
 	for {
