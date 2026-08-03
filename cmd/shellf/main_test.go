@@ -443,3 +443,12 @@ func TestKVFlags(t *testing.T) {
 		t.Fatalf("String(): %q", k.String())
 	}
 }
+
+func TestVersionLine(t *testing.T) {
+	old := version
+	defer func() { version = old }()
+	version = "v9.9.9"
+	if got := versionLine(); got != "shellf v9.9.9" {
+		t.Fatalf("versionLine: %q", got)
+	}
+}

@@ -16,7 +16,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Build static binary
-        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o shellf-linux-amd64 ./cmd/shellf
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=${GITHUB_REF_NAME}" -o shellf-linux-amd64 ./cmd/shellf
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
