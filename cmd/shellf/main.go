@@ -66,12 +66,25 @@ func main() {
 		return
 	}
 
+	// Print the build version (set via -ldflags at release; "dev" otherwise).
+	if len(os.Args) > 1 && (os.Args[1] == "version" || os.Args[1] == "--version" || os.Args[1] == "-v") {
+		fmt.Println(versionLine())
+		return
+	}
+
 	fmt.Fprint(os.Stderr, "usage:\n"+
 		"  shellf run --inventory <hosts.shellf> [--vars <f>] [--set k=v] [--secret-file n=path] [--check] [--insecure] <plan.shellf>\n"+
 		"  shellf status --inventory <hosts.shellf> [--insecure] <plan.shellf>\n"+
-		"  shellf clean --inventory <hosts.shellf> [--insecure] [target...]\n")
+		"  shellf clean --inventory <hosts.shellf> [--insecure] [target...]\n"+
+		"  shellf version\n")
 	os.Exit(2)
 }
+
+// version is the build version, overridden at release via
+// `-ldflags "-X main.version=<tag>"`; "dev" for a local build.
+var version = "dev"
+
+func versionLine() string { return "shellf " + version }
 
 // runCmd: shellf run <plan.shellf> --inventory <hosts.shellf> [--check] [flags].
 func runCmd(args []string) {
