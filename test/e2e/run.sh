@@ -88,6 +88,8 @@ docker exec "$cname" test -f /tmp/shellf-e2e/ready  || fail "apply did not write
 docker exec "$cname" grep -q "made by a user def" /tmp/shellf-e2e/custom || fail "the user def did not run on the target"
 # the imported def `g.hello` (./shared) ran on the target
 docker exec "$cname" test -f /tmp/shellf-e2e/imported || fail "the imported def did not run on the target"
+# the `for` loop unrolled and both iterations ran on the target
+docker exec "$cname" test -d /tmp/shellf-e2e/one && docker exec "$cname" test -d /tmp/shellf-e2e/two || fail "the for loop did not run both iterations"
 
 say "3. re-apply is idempotent (observe converges → 'already', nothing (re)created)"
 out="$(run 2>&1)"; printf '%s\n' "$out"

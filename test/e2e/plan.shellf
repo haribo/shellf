@@ -12,6 +12,9 @@ on target {
     file-write("/tmp/shellf-e2e/marker", "provisioned by shellf")
     mark("/tmp/shellf-e2e/custom", "made by a user def")
     g.hello("/tmp/shellf-e2e/imported")
+    for d in ["one", "two"] {
+        dir-ensure("/tmp/shellf-e2e/${d}")
+    }
     if file-exists("/tmp/shellf-e2e/marker") {
         file-write("/tmp/shellf-e2e/ready", "ok")
     }

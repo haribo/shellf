@@ -169,3 +169,27 @@ if dir-exists("/opt/app") {   // present → then, absent → else — determini
 ```
 
 The name distinguishes read from write — `-exists` questions vs `-ensure`/`-owner` instructions. No keyword: a question is simply a def whose decision lives entirely in read-only phases.
+
+## Loops — `for` (ADR-0017)
+
+`for <var> in [<str>, …] { … }` repeats its body over a **literal list**. The loop
+variable is referenced with `${var}`.
+
+```
+on host {
+  for port in ["80", "443"] { ufw.open("${port}", "tcp") }
+  for svc in ["traefik", "app"] { file-mode("/opt/${svc}/run", "755") }
+}
+```
+
+- **Parse-time unrolling**: the loop expands to one copy of the body per item
+  before anything runs — `--check` and `status` show each iteration. There is no
+  runtime loop and no list value.
+- `${var}` works anywhere a string does, including inside one (`/opt/${svc}/run`).
+  A **bare** `var` would be a per-host ref, not the loop item — always use `${var}`.
+- The body is a normal block (instructions, `if`, `shell`, nested `for`). It is
+  captured as raw balanced braces, so — like a `shell {…}` block — a lone
+  unbalanced `}` in a string ends it early. The loop var does **not** interpolate
+  inside a raw `shell {…}` body (that stays literal shell).
+- Lists are literals of strings; glob/range iteration and list variables are not
+  in this version.
