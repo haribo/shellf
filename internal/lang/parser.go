@@ -810,23 +810,34 @@ func (p *parser) callArg() (value, ref string) {
 // failing on an unterminated `${` or an undefined name. Raw triple-quoted
 // strings never reach here, so their `${VAR}` (shell/compose) stay verbatim.
 func (p *parser) interpolate(s string) string {
+	out, err := Interpolate(s, p.lookup)
+	if err != nil {
+		p.fail("%v", err)
+	}
+	return out
+}
+
+// Interpolate replaces every `${name}` in s with lookup(name), erroring on an
+// unterminated `${` or an undefined name. Shared by the parser (string args) and
+// the CLI (rendering a template file, ADR-0019).
+func Interpolate(s string, lookup func(string) (string, bool)) (string, error) {
 	var out strings.Builder
 	for {
 		i := strings.Index(s, "${")
 		if i < 0 {
 			out.WriteString(s)
-			return out.String()
+			return out.String(), nil
 		}
 		out.WriteString(s[:i])
 		rest := s[i+2:]
 		end := strings.IndexByte(rest, '}')
 		if end < 0 {
-			p.fail("unterminated ${...} interpolation")
+			return "", fmt.Errorf("unterminated ${...} interpolation")
 		}
 		name := rest[:end]
-		v, ok := p.lookup(name)
+		v, ok := lookup(name)
 		if !ok {
-			p.fail("undefined variable %q in interpolation", name)
+			return "", fmt.Errorf("undefined variable %q in interpolation", name)
 		}
 		out.WriteString(v)
 		s = rest[end+1:]

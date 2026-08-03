@@ -248,6 +248,38 @@ func TestReadImports(t *testing.T) {
 	}
 }
 
+func TestResolveTemplates(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "conf.tmpl", "email=${acme}\ndomain=${site}\n")
+	writeFile(t, dir, "plan.shellf", `on t { template("conf.tmpl", "/etc/conf") }`)
+	writeFile(t, dir, "inv.shellf", `host t = { address: "x", user: "u" }`)
+
+	plan, _, err := loadPlanPackage(
+		filepath.Join(dir, "plan.shellf"), filepath.Join(dir, "inv.shellf"),
+		map[string]string{"acme": "a@b.co", "site": "ex.com"}, map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The template step is rewritten to a file-write of the rendered content.
+	step := plan[0].Steps[0]
+	if step.Instruction != "file-write" || step.Args["path"] != "/etc/conf" {
+		t.Fatalf("template not rewritten to file-write: %+v", step)
+	}
+	if step.Args["content"] != "email=a@b.co\ndomain=ex.com\n" {
+		t.Fatalf("template not rendered: %q", step.Args["content"])
+	}
+}
+
+func TestResolveTemplates_MissingFile(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "plan.shellf", `on t { template("nope.tmpl", "/etc/conf") }`)
+	writeFile(t, dir, "inv.shellf", `host t = { address: "x", user: "u" }`)
+	_, _, err := loadPlanPackage(filepath.Join(dir, "plan.shellf"), filepath.Join(dir, "inv.shellf"), map[string]string{}, map[string]string{})
+	if err == nil || !strings.Contains(err.Error(), "template") {
+		t.Fatalf("a missing template file must error: %v", err)
+	}
+}
+
 func TestReadImports_RemoteModule(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
