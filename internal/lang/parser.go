@@ -440,12 +440,72 @@ func (p *parser) plan() orchestrator.Plan {
 
 func (p *parser) block() []proto.Step {
 	p.expect(tLBrace, "{")
-	var steps []proto.Step
-	for p.tok.kind != tRBrace {
-		steps = append(steps, p.step())
-	}
+	steps := p.blockBody()
 	p.expect(tRBrace, "}")
 	return steps
+}
+
+// blockBody parses a sequence of steps until `}` or EOF, expanding `for` loops
+// inline (ADR-0017). Used by `block()` and by a loop's re-parsed body.
+func (p *parser) blockBody() []proto.Step {
+	var steps []proto.Step
+	for p.tok.kind != tRBrace && p.tok.kind != tEOF {
+		if p.tok.kind == tIdent && p.tok.val == "for" {
+			steps = append(steps, p.forLoop()...)
+			continue
+		}
+		steps = append(steps, p.step())
+	}
+	return steps
+}
+
+// forLoop parses `for <var> in [<str>, …] { <body> }` and unrolls it at parse
+// time: the body is captured once and re-parsed per item with `${var}` bound to
+// that item (ADR-0017). No runtime loop, no list value.
+func (p *parser) forLoop() []proto.Step {
+	p.expect(tIdent, "'for'") // val is "for" (checked by the caller)
+	varName := p.expect(tIdent, "loop variable").val
+	if kw := p.expect(tIdent, "'in'").val; kw != "in" {
+		p.fail("expected 'in' after the loop variable, got %q", kw)
+	}
+	p.expect(tLBrack, "[")
+	var items []string
+	for p.tok.kind != tRBrack {
+		items = append(items, p.interpolate(p.expect(tString, "list item (a string)").val))
+		if p.tok.kind == tComma {
+			p.adv()
+		} else {
+			break
+		}
+	}
+	if p.tok.kind != tRBrack {
+		p.fail("expected ',' or ']' in the list, got %q", p.tok.val)
+	}
+	// p.tok is ']'; the lexer sits right after it, before the body brace.
+	body, err := p.lex.rawBracesRequired()
+	if err != nil {
+		panic(parseErr{err})
+	}
+	p.adv() // consume the token after the body's '}'
+
+	var steps []proto.Step
+	for _, item := range items {
+		bp := newParser(body)
+		bp.sig, bp.userDefs, bp.imports = p.sig, p.userDefs, p.imports
+		bp.importedAliases, bp.setVars, bp.caught = p.importedAliases, p.setVars, p.caught
+		bp.baseVars = copyVars(p.baseVars)
+		bp.baseVars[varName] = item // `${var}` resolves to this item in the body
+		steps = append(steps, bp.blockBody()...)
+	}
+	return steps
+}
+
+func copyVars(m map[string]string) map[string]string {
+	c := make(map[string]string, len(m)+1)
+	for k, v := range m {
+		c[k] = v
+	}
+	return c
 }
 
 func (p *parser) step() proto.Step {
