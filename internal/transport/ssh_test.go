@@ -29,9 +29,13 @@ func TestRemotePath_DeterministicByBytesAndUser(t *testing.T) {
 
 func TestPaths(t *testing.T) {
 	s := SSH{User: "deploy"}
-	wd := s.workDir([]byte("bin"))
-	if !strings.HasPrefix(wd, "/tmp/shellf-") || strings.HasPrefix(wd, "/tmp/shellf-agent-") {
-		t.Fatalf("workDir: %s", wd)
+	// The workdir hangs off the chosen tmpfs base (ADR-0025), not /tmp/shellf-agent-.
+	wd := s.workDir("/dev/shm", []byte("bin"))
+	if !strings.HasPrefix(wd, "/dev/shm/shellf-") {
+		t.Fatalf("workDir on tmpfs: %s", wd)
+	}
+	if fb := s.workDir("/tmp", []byte("bin")); !strings.HasPrefix(fb, "/tmp/shellf-") || strings.HasPrefix(fb, "/tmp/shellf-agent-") {
+		t.Fatalf("workDir /tmp fallback: %s", fb)
 	}
 	if got := donePath("/w", "7"); got != "/w/done-7" {
 		t.Fatalf("donePath: %s", got)
@@ -57,8 +61,8 @@ func TestCommandBuilders(t *testing.T) {
 	if !strings.Contains(agentAliveCmd("/w"), "/w/agent.pid") || !strings.Contains(agentAliveCmd("/w"), "__agent-resident") {
 		t.Fatalf("agentAliveCmd: %s", agentAliveCmd("/w"))
 	}
-	if c := cleanCmd(); !strings.Contains(c, "/tmp/shellf-*") || !strings.Contains(c, "kill") {
-		t.Fatalf("cleanCmd: %s", c)
+	if c := cleanCmd(); !strings.Contains(c, "/tmp/shellf-*") || !strings.Contains(c, "/dev/shm/shellf-*") || !strings.Contains(c, "kill") {
+		t.Fatalf("cleanCmd must cover both roots: %s", c)
 	}
 }
 

@@ -75,7 +75,7 @@ func (cc clientConn) start(cmd string) error {
 		return err
 	}
 	time.Sleep(300 * time.Millisecond) // let the agent write agent.pid and detach
-	_ = sess.Close()                    // best-effort: closing on a detached process may EOF
+	_ = sess.Close()                   // best-effort: closing on a detached process may EOF
 	return nil
 }
 
@@ -113,8 +113,19 @@ func hashID(bin []byte) string {
 // user as well as the build hash: a resident agent belongs to the user that
 // launched it, so a different user gets its own agent and never reuses one that
 // would run its jobs under the wrong identity (issue #114).
-func (s SSH) remotePath(bin []byte) string { return "/tmp/shellf-agent-" + s.pathID(bin) }
-func (s SSH) workDir(bin []byte) string    { return "/tmp/shellf-" + s.pathID(bin) }
+func (s SSH) remotePath(bin []byte) string           { return "/tmp/shellf-agent-" + s.pathID(bin) }
+func (s SSH) workDir(base string, bin []byte) string { return base + "/shellf-" + s.pathID(bin) }
+
+// workBase picks the workdir root. Prefer /dev/shm — a RAM-backed tmpfs — so a
+// request's secret plaintext (and any secret a result echoes) never touches
+// persistent disk, keeping it out of backups, snapshots, and undelete (ADR-0025).
+// Fall back to /tmp when tmpfs is absent. Probed once over the live connection.
+func workBase(cn conn) string {
+	if _, err := cn.run("test -w /dev/shm", nil); err == nil {
+		return "/dev/shm"
+	}
+	return "/tmp"
+}
 
 func (s SSH) pathID(bin []byte) string { return hashID(bin) + "-" + sanitizeUser(s.User) }
 
@@ -184,9 +195,10 @@ func rmJobCmd(wd, jobid string) string {
 }
 
 // cleanCmd kills every resident agent (via its pid file) and removes all shellf
-// /tmp files. Only touches /tmp/shellf-* paths.
+// files. Only touches shellf-* paths, in both roots: the /tmp binary cache and
+// the /dev/shm tmpfs workdir (ADR-0025).
 func cleanCmd() string {
-	return `for d in /tmp/shellf-*/; do [ -e "$d/agent.pid" ] && kill "$(cat "$d/agent.pid")" 2>/dev/null; done; rm -rf /tmp/shellf-* 2>/dev/null; true`
+	return `for d in /tmp/shellf-*/ /dev/shm/shellf-*/; do [ -e "$d/agent.pid" ] && kill "$(cat "$d/agent.pid")" 2>/dev/null; done; rm -rf /tmp/shellf-* /dev/shm/shellf-* 2>/dev/null; true`
 }
 
 // parseDone interprets a checkDone response: the sentinel means "not ready",
@@ -203,7 +215,7 @@ func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read agent: %w", err)
 	}
-	path, wd, jobid := s.remotePath(bin), s.workDir(bin), newJobID()
+	path, jobid := s.remotePath(bin), newJobID()
 	deadline := time.Now().Add(s.execTimeout())
 
 	// One connection: push (if not cached), ensure a resident agent, deposit the job.
@@ -211,6 +223,9 @@ func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The workdir goes on tmpfs so secret plaintext stays off disk (ADR-0025);
+	// probed on this connection since it depends on the target.
+	wd := s.workDir(workBase(cn), bin)
 	if !cached(cn, path) {
 		if err := push(cn, bin, path); err != nil {
 			_ = cn.close()
