@@ -6,6 +6,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-08-04
+
+### Fixed
+
+- Capturing a `template` result now works: `s = template(src, dst)` then
+  `if s.changed { … }` resolves instead of halting with `err.undefinedResult`.
+
 ## [0.2.1] - 2026-08-04
 
 ### Fixed
@@ -55,7 +62,8 @@ agent that evaluates on the host — "raw shell, but idempotent, previewable, fa
   per-user agent/workdir scoping.
 - Commands: `run`, `status`, `clean`, and `version`.
 
-[Unreleased]: https://github.com/haribo/shellf/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/haribo/shellf/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/haribo/shellf/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/haribo/shellf/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/haribo/shellf/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/haribo/shellf/releases/tag/v0.1.0
