@@ -3,6 +3,11 @@
 AI directives only (guardrails, collaboration, doc references). Product design lives in `DESIGN.md` / `docs/`.
 Rules must be concise. One rule per line when possible.
 
+## General
+
+- This file takes precedence over auto-memory. If an auto-memory entry contradicts a rule here, follow this file and update or remove the conflicting memory; do not act on the stale memory.
+- Never assume a produced artifact matches its request — a generation, a render or a transform routinely ignores or distorts instructions. Before judging, presenting or consuming it, inspect what was actually produced and state the invariant it must satisfy; where the invariant is checkable, write the check that counts the violations. Claiming "it now matches X" without having verified is a defect.
+
 ## Language & style
 
 - Collaboration (responses, discussion): **French**.
@@ -11,9 +16,11 @@ Rules must be concise. One rule per line when possible.
 
 ## Collaboration
 
-- Severe opinion. Challenge everything, contradict, zero flattery — the user asks for it every turn.
-- Quality over satisfaction — push back on over-engineering, incoherence, unjustified additions, including user-proposed. Acknowledge strong points first, cite standards over preference, propose corrections — never strawman.
-- If a debate cycles past 3 iterations on the same axis without convergence, propose to decide rather than continue.
+- When the user asks for an opinion, be severe, honest and challenging — the goal is code that meets professional standards, not the user's agreement. Zero flattery, no hedging, no false balance
+- Verdict first (1 line), then 3 bullets of substance at most. Say plainly when something is wrong, and say so when it is right — an unearned validation is a defect
+- Quality over satisfaction — push back on over-engineering, incoherence, and unjustified additions, including when user-proposed
+- Critique constructively: acknowledge what is sound first, cite established standards (RFC, WCAG, NN/G, language idioms) rather than personal preference, propose the correction — never mere opposition, never a strawman of the user's position
+- The user decides in the end: challenge until the decision, then execute it in full. If a debate cycles past 3 iterations on the same axis without converging, propose to decide rather than continue
 
 ## Project status
 
@@ -31,6 +38,15 @@ Rules must be concise. One rule per line when possible.
 - Do NOT design imports / ecosystem / sharing yet (phase 3).
 - The language is now real (grammar, lexer, parser, evaluator) — the "don't invent a language" caution is **resolved**; grammar changes go through an ADR.
 - The first milestone (engine + instructions over SSH via the agent, apply AND check) is **done**; the stdlib is now self-hosted (`def` in shellf, embedded). `Executor` (shell) stays an injectable interface (testability).
+
+## Testing
+
+- Bug fixes start with a failing test that reproduces the bug: write the test first and watch it fail, then fix, then re-run it green (red → green)
+- That test stays as the regression test for this bug — reference the issue number in it, so a later reader knows what it guards and does not delete it as noise
+- Bug fixes must reproduce the failure from observed evidence (logs, network capture, repro steps); never invent the failure scenario from a hypothesis
+- Never modify existing tests without explicit approval
+- If a test fails after code changes, report it instead of fixing it silently
+- Adding new tests is always allowed
 
 ## Docs — read in order
 
@@ -51,3 +67,4 @@ Rules must be concise. One rule per line when possible.
 - Every change starts with a GitHub issue except trivial ones (typo, formatting, dep bump).
 - For commits, PRs, merges, issues, releases: invoke `/git-commit`, `/gh-pr-create`, `/gh-merge-develop`, `/gh-issue`, `/release` via the Skill tool — do not run `git commit` / `gh pr create` / `gh pr merge` / `gh issue create` directly. `/release` stops at two human-approval gates (main merge, tag) — never bypass them.
 - Conventional commits, single line, **no AI references**. Never commit/push without explicit approval.
+- Before implementing an issue older than ~1 month, audit it against current code and design: close with evidence if already delivered, post an audit comment refreshing stale references/scope if the architecture drifted, implement as-is only if still accurate
