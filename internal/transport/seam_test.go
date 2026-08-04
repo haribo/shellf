@@ -24,11 +24,21 @@ type fakeConn struct {
 }
 
 func (f *fakeConn) run(cmd string, stdin []byte) ([]byte, error) {
-	f.runs = append(f.runs, cmd)
+	f.runs = append(f.runs, cmd) // record the raw (posix-wrapped) command
 	if f.responder != nil {
-		return f.responder(cmd)
+		return f.responder(unwrapPosix(cmd)) // classify on the script (#241)
 	}
 	return nil, nil
+}
+
+// unwrapPosix strips the `sh -c '<script>'` wrapper (issue #241) so a responder
+// classifies on the script; returns cmd unchanged when not wrapped.
+func unwrapPosix(cmd string) string {
+	if strings.HasPrefix(cmd, "sh -c '") && strings.HasSuffix(cmd, "'") {
+		inner := cmd[len("sh -c '") : len(cmd)-1]
+		return strings.ReplaceAll(inner, `'\''`, "'")
+	}
+	return cmd
 }
 
 func (f *fakeConn) start(cmd string) error { f.starts = append(f.starts, cmd); return nil }
@@ -257,5 +267,22 @@ func TestHostKeyCallback(t *testing.T) {
 	// A missing known_hosts file is a hard error (never silently trust).
 	if _, err := (SSH{KnownHosts: "/does/not/exist"}).hostKeyCallback(); err == nil {
 		t.Fatal("a missing known_hosts must error")
+	}
+}
+
+// Regression for #241: every transport command must run under POSIX sh, so a
+// non-POSIX login shell (nushell, fish) cannot choke on `&&`/`$()`/`for … do`.
+func TestRun_AllCommandsPosixWrapped(t *testing.T) {
+	fc := &fakeConn{responder: doneResponder(`{"ok":true}`)}
+	s := SSH{dialFn: func() (conn, error) { return fc, nil }}
+	_, _ = s.Run(tmpBin(t), []byte(`{"steps":[]}`))
+	sent := append(append([]string{}, fc.runs...), fc.starts...)
+	if len(sent) == 0 {
+		t.Fatal("no commands were sent")
+	}
+	for _, cmd := range sent {
+		if !strings.HasPrefix(cmd, "sh -c '") {
+			t.Fatalf("transport command not POSIX-wrapped (#241): %q", cmd)
+		}
 	}
 }

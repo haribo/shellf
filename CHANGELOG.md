@@ -6,6 +6,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Run transport commands under `/bin/sh` regardless of the target's login shell, so
+  a non-POSIX login shell (nushell, fish) no longer breaks the agent bootstrap.
+
 ## [0.2.0] - 2026-08-04
 
 ### Added

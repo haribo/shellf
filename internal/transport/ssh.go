@@ -123,13 +123,21 @@ func (s SSH) workDir(base string, bin []byte) string { return base + "/shellf-" 
 // persistent disk, keeping it out of backups, snapshots, and undelete (ADR-0025).
 // Fall back to /tmp when tmpfs is absent. Probed once over the live connection.
 func workBase(cn conn) string {
-	if _, err := cn.run("test -w /dev/shm", nil); err == nil {
+	if _, err := cn.run(posix("test -w /dev/shm"), nil); err == nil {
 		return "/dev/shm"
 	}
 	return "/tmp"
 }
 
 func (s SSH) pathID(bin []byte) string { return hashID(bin) + "-" + sanitizeUser(s.User) }
+
+// posix wraps a transport command so the target runs it under /bin/sh, whatever
+// its login shell is: a non-POSIX login shell (nushell, fish) cannot parse the
+// `&&`/`$()`/`for … do`/`&` the transport uses (issue #241). Single-quote-escaped,
+// so any script body is safe.
+func posix(script string) string {
+	return "sh -c '" + strings.ReplaceAll(script, "'", `'\''`) + "'"
+}
 
 // sanitizeUser keeps the SSH user usable and injection-safe as a path segment.
 func sanitizeUser(u string) string {
@@ -239,7 +247,7 @@ func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
 		return nil, err
 	}
 	if !agentAlive(cn, wd) {
-		if err := cn.start(launchCmd(path, wd, s.agentTTLSecs())); err != nil {
+		if err := cn.start(posix(launchCmd(path, wd, s.agentTTLSecs()))); err != nil {
 			_ = cn.close()
 			return nil, err
 		}
@@ -259,7 +267,7 @@ func (s SSH) Clean() error {
 		return err
 	}
 	defer func() { _ = cn.close() }()
-	if _, err := cn.run(cleanCmd(), nil); err != nil {
+	if _, err := cn.run(posix(cleanCmd()), nil); err != nil {
 		return fmt.Errorf("clean: %w", err)
 	}
 	return nil
@@ -268,7 +276,7 @@ func (s SSH) Clean() error {
 // cached reports whether the agent binary is already present and executable on
 // the target (a cache hit → skip the transfer).
 func cached(cn conn, path string) bool {
-	_, err := cn.run("test -x "+path, nil)
+	_, err := cn.run(posix("test -x "+path), nil)
 	return err == nil
 }
 
@@ -358,7 +366,7 @@ var pollWait = time.Second // poll cadence; a var so tests can shrink it
 // an interrupted push never leaves a partial binary, and a concurrent run sees
 // either the old file or none.
 func push(cn conn, bin []byte, path string) error {
-	if _, err := cn.run(pushCmd(path), bin); err != nil {
+	if _, err := cn.run(posix(pushCmd(path)), bin); err != nil {
 		return fmt.Errorf("push agent: %w", err)
 	}
 	return nil
@@ -366,7 +374,7 @@ func push(cn conn, bin []byte, path string) error {
 
 // deposit writes the request atomically (tmp + mv).
 func deposit(cn conn, wd, jobid string, req []byte) error {
-	if _, err := cn.run(depositCmd(wd, jobid), req); err != nil {
+	if _, err := cn.run(posix(depositCmd(wd, jobid)), req); err != nil {
 		return fmt.Errorf("deposit: %w", err)
 	}
 	return nil
@@ -378,7 +386,7 @@ func deposit(cn conn, wd, jobid string, req []byte) error {
 // false positive that would skip the relaunch and hang the poll. The detached
 // launch itself (cn.start of launchCmd) is in Run, since it needs s.agentTTLSecs.
 func agentAlive(cn conn, wd string) bool {
-	_, err := cn.run(agentAliveCmd(wd), nil)
+	_, err := cn.run(posix(agentAliveCmd(wd)), nil)
 	return err == nil
 }
 
@@ -420,7 +428,7 @@ func (s SSH) poll(wd, jobid string, deadline time.Time) ([]byte, error) {
 // checkDone returns the result if done exists; a run error means a dropped
 // connection (distinct from "not done yet").
 func checkDone(cn conn, wd, jobid string) (out []byte, ready bool, err error) {
-	stdout, err := cn.run(checkDoneCmd(wd, jobid), nil)
+	stdout, err := cn.run(posix(checkDoneCmd(wd, jobid)), nil)
 	if err != nil {
 		return nil, false, err
 	}
@@ -430,7 +438,7 @@ func checkDone(cn conn, wd, jobid string) (out []byte, ready bool, err error) {
 
 // rmJob removes the consumed result/done files (best-effort).
 func rmJob(cn conn, wd, jobid string) {
-	_, _ = cn.run(rmJobCmd(wd, jobid), nil)
+	_, _ = cn.run(posix(rmJobCmd(wd, jobid)), nil)
 }
 
 func (s SSH) signer() (ssh.Signer, error) {
