@@ -233,3 +233,14 @@ func TestAuthMethods_DeadAgentSocket(t *testing.T) {
 		t.Fatal("an unreachable SSH_AUTH_SOCK must error")
 	}
 }
+
+func TestPosix(t *testing.T) {
+	// wraps under sh -c and keeps the POSIX body intact (issue #241)
+	if got := posix("a && b"); got != "sh -c 'a && b'" {
+		t.Fatalf("posix wrap: %q", got)
+	}
+	// single quotes in the body are escaped so the wrap stays valid
+	if got := posix("echo 'hi'"); got != `sh -c 'echo '\''hi'\'''` {
+		t.Fatalf("posix quote-escape: %q", got)
+	}
+}

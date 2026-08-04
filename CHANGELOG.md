@@ -6,6 +6,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-04
+
+### Fixed
+
+- Run transport commands under `/bin/sh` regardless of the target's login shell, so
+  a non-POSIX login shell (nushell, fish) no longer breaks the agent bootstrap.
+
 ## [0.2.0] - 2026-08-04
 
 ### Added
@@ -48,6 +55,7 @@ agent that evaluates on the host — "raw shell, but idempotent, previewable, fa
   per-user agent/workdir scoping.
 - Commands: `run`, `status`, `clean`, and `version`.
 
-[Unreleased]: https://github.com/haribo/shellf/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/haribo/shellf/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/haribo/shellf/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/haribo/shellf/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/haribo/shellf/releases/tag/v0.1.0
