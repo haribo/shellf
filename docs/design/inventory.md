@@ -32,11 +32,16 @@ Precedence is exactly two levels: a host field overrides the matching
 `defaults` field. No group-level defaults, no CLI merge.
 
 ```
-defaults = { user: "deploy", port: 22, key: "~/.ssh/id_ed25519" }
+defaults = { user: "deploy", port: 22 }
 
-host web1 = { address: "10.0.0.1" }               // user/port/key from defaults
-host db1  = { address: "10.0.0.9", user: "root" } // user overridden, rest from defaults
+host web1 = { address: "10.0.0.1" }               // user/port from defaults
+host db1  = { address: "10.0.0.9", user: "root" } // user overridden, port from defaults
 ```
+
+Authentication is agent-first (ADR-0026): shellf uses the ssh-agent
+(`SSH_AUTH_SOCK`) unless a `key:` is given. `key: "~/.ssh/id_…"` is an optional
+override — a pinned key file, tried before the agent — usable in `defaults` or on a
+host.
 
 ## Group
 

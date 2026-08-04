@@ -39,13 +39,17 @@ A static binary. The same binary is what gets pushed to targets as the agent.
 Describe your hosts in an **inventory** file (`hosts.shellf`):
 
 ```
-defaults = { user: "root", port: "22", key: "~/.ssh/id_ed25519" }
+defaults = { user: "root", port: "22" }
 
 host web1 = { address: "10.0.0.1" }
 host web2 = { address: "10.0.0.2" }
 
 group web = [web1, web2]
 ```
+
+Authentication uses your **ssh-agent** (`SSH_AUTH_SOCK`) by default, so an encrypted
+key never leaves the agent. To pin a specific key instead, add `key: "~/.ssh/id_…"`
+to `defaults` or a host (it is an optional override).
 
 Describe what to do in a **plan** file (`plan.shellf`):
 
@@ -76,12 +80,13 @@ Hosts run in parallel; steps run in order per host. A re-run is idempotent
 
 | Construct | Form |
 |---|---|
-| Defaults | `defaults = { user: "…", port: "…", key: "…" }` |
-| Host | `host <alias> = { address: "…", user: "…", port: "…", key: "…" }` |
+| Defaults | `defaults = { user: "…", port: "…" }` |
+| Host | `host <alias> = { address: "…", user: "…", port: "…" }` |
 | Group | `group <name> = [<alias>, <alias>]` |
 
 Omitted host fields fall back to `defaults`, then to `22` for the port. Only
-`address` is required. A host may belong to several groups.
+`address` is required. A host may belong to several groups. `key: "…"` is an
+optional field (a pinned ssh key); without it, authentication uses the ssh-agent.
 
 ## Plan
 

@@ -49,5 +49,5 @@ Rules must be concise. One rule per line when possible.
 - **Merging `develop`→`main`, or tagging/publishing a release, ALWAYS requires explicit human approval — every time, no exception.** A standing "be autonomous" instruction covers `feature`→`develop` only; it never authorizes touching `main`, cutting a release, or pushing a tag.
 - Before editing, check the branch — if on `main` or `develop`, propose a branch and wait.
 - Every change starts with a GitHub issue except trivial ones (typo, formatting, dep bump).
-- For commits, PRs, merges, issues: invoke `/git-commit`, `/gh-pr-create`, `/gh-merge-develop`, `/gh-issue` via the Skill tool — do not run `git commit` / `gh pr create` / `gh pr merge` / `gh issue create` directly.
+- For commits, PRs, merges, issues, releases: invoke `/git-commit`, `/gh-pr-create`, `/gh-merge-develop`, `/gh-issue`, `/release` via the Skill tool — do not run `git commit` / `gh pr create` / `gh pr merge` / `gh issue create` directly. `/release` stops at two human-approval gates (main merge, tag) — never bypass them.
 - Conventional commits, single line, **no AI references**. Never commit/push without explicit approval.
