@@ -44,6 +44,7 @@ Rules must be concise. One rule per line when possible.
 ## Git
 
 - Conventions: commits `docs/git-commits.md`, workflow `docs/git-workflow.md`, issues `docs/git-issues.md`.
+- Changelog: `CHANGELOG.md` (Keep a Changelog) is canonical; each PR adds a line under `## [Unreleased]`; a release mirrors that version's section into the GitHub Release notes — see `docs/git-workflow.md`.
 - Branches `main` (released) and `develop` (integration) are permanent — never push directly, always via PR. Feature work: issue → branch `type/N-desc` from `develop` → PR into `develop` (squash).
 - **Merging `develop`→`main`, or tagging/publishing a release, ALWAYS requires explicit human approval — every time, no exception.** A standing "be autonomous" instruction covers `feature`→`develop` only; it never authorizes touching `main`, cutting a release, or pushing a tag.
 - Before editing, check the branch — if on `main` or `develop`, propose a branch and wait.
