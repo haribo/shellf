@@ -203,3 +203,24 @@ func TestRenderTemplates(t *testing.T) {
 		t.Fatal("input steps must not be mutated")
 	}
 }
+
+// Regression for #246: rewriting template → file-write must keep the capture
+// binding and `?`, so `s = template(...)` then `if s.changed` resolves.
+func TestRenderTemplates_PreservesBindAndCaught(t *testing.T) {
+	echo := func(src string, vars map[string]string) (string, error) { return "x", nil }
+	out, err := renderTemplates([]proto.Step{
+		{Instruction: "template", Args: map[string]string{"src": "f.tmpl", "dst": "/x"}, Bind: "s", Caught: true},
+	}, map[string]string{}, echo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out[0].Instruction != "file-write" {
+		t.Fatalf("not rewritten: %+v", out[0])
+	}
+	if out[0].Bind != "s" {
+		t.Fatalf("capture binding dropped (#246): Bind=%q", out[0].Bind)
+	}
+	if !out[0].Caught {
+		t.Fatalf("`?` dropped (#246): Caught=%v", out[0].Caught)
+	}
+}

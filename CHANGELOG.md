@@ -6,6 +6,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Capturing a `template` result now works: `s = template(src, dst)` then
+  `if s.changed { … }` resolves instead of halting with `err.undefinedResult`.
+
 ## [0.2.1] - 2026-08-04
 
 ### Fixed

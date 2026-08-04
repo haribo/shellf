@@ -211,7 +211,9 @@ func renderTemplates(steps []proto.Step, env map[string]string, render TemplateR
 			if err != nil {
 				return nil, err
 			}
-			out[i] = proto.Step{Instruction: "file-write", Args: map[string]string{"path": dst, "content": content}}
+			// Keep the capture binding and `?` so `s = template(...)` then
+			// `if s.changed` still resolves (#246).
+			out[i] = proto.Step{Instruction: "file-write", Args: map[string]string{"path": dst, "content": content}, Bind: s.Bind, Caught: s.Caught}
 		case s.If != nil:
 			then, err := renderTemplates(s.If.Then, env, render)
 			if err != nil {
