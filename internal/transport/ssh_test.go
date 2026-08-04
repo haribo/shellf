@@ -1,11 +1,18 @@
 package transport
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/pem"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 func TestRemotePath_DeterministicByBytesAndUser(t *testing.T) {
@@ -126,5 +133,103 @@ func TestExpandTilde(t *testing.T) {
 		if got := expandTilde(in); got != want {
 			t.Fatalf("expandTilde(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// writeKeyFile writes a throwaway ed25519 private key in PEM to a temp file.
+func writeKeyFile(t *testing.T) string {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, err := ssh.MarshalPrivateKey(priv, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "id")
+	if err := os.WriteFile(path, pem.EncodeToMemory(block), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// startFakeAgent serves an in-memory keyring on a unix socket and points
+// SSH_AUTH_SOCK at it. Returns nothing; cleanup is registered on t.
+func startFakeAgent(t *testing.T) {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ring := agent.NewKeyring()
+	if err := ring.Add(agent.AddedKey{PrivateKey: priv}); err != nil {
+		t.Fatal(err)
+	}
+	sock := filepath.Join(t.TempDir(), "agent.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() { _ = agent.ServeAgent(ring, c) }()
+		}
+	}()
+	t.Cleanup(func() { _ = ln.Close() })
+	t.Setenv("SSH_AUTH_SOCK", sock)
+}
+
+func TestAuthMethods_NoneConfigured(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+	if _, _, err := (SSH{}).authMethods(); err == nil {
+		t.Fatal("no key and no agent must error")
+	}
+}
+
+func TestAuthMethods_KeyOnly(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+	m, cleanup, err := (SSH{Key: writeKeyFile(t)}).authMethods()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if len(m) != 1 {
+		t.Fatalf("key only → 1 method, got %d", len(m))
+	}
+}
+
+func TestAuthMethods_AgentOnly(t *testing.T) {
+	startFakeAgent(t)
+	m, cleanup, err := (SSH{}).authMethods()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if len(m) != 1 {
+		t.Fatalf("agent only → 1 method, got %d", len(m))
+	}
+}
+
+func TestAuthMethods_KeyThenAgent(t *testing.T) {
+	startFakeAgent(t)
+	m, cleanup, err := (SSH{Key: writeKeyFile(t)}).authMethods()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if len(m) != 2 { // key first, then agent (ADR-0026)
+		t.Fatalf("key + agent → 2 methods, got %d", len(m))
+	}
+}
+
+func TestAuthMethods_DeadAgentSocket(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", filepath.Join(t.TempDir(), "nope.sock"))
+	if _, _, err := (SSH{}).authMethods(); err == nil {
+		t.Fatal("an unreachable SSH_AUTH_SOCK must error")
 	}
 }

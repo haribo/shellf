@@ -6,6 +6,17 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- SSH authentication via the ssh-agent (`SSH_AUTH_SOCK`): the private key never
+  leaves the agent, and an encrypted key works. The inventory `key:` is now an
+  optional override, tried before the agent (ADR-0026).
+
+### Changed
+
+- `key:` is no longer required in the inventory; authentication falls back to the
+  ssh-agent when it is absent.
+
 ### Fixed
 
 - Expand `~` in the inventory `key:` path (and `--known-hosts`), so the documented
