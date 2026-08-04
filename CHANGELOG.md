@@ -6,6 +6,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Expand `~` in the inventory `key:` path (and `--known-hosts`), so the documented
+  `~/.ssh/…` examples connect instead of failing with `read key: no such file`.
+
 ## [0.1.0] - 2026-08-03
 
 First tagged release. shellf provisions targets over SSH via a detached resident

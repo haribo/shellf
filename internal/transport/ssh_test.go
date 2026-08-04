@@ -1,6 +1,8 @@
 package transport
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -104,5 +106,25 @@ func TestNewJobID_Unique(t *testing.T) {
 	}
 	if strings.Count(a, "-") != 2 {
 		t.Fatalf("job id format pid-nanos-counter: %s", a)
+	}
+}
+
+func TestExpandTilde(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home dir")
+	}
+	cases := map[string]string{
+		"~/.ssh/id_ed25519": filepath.Join(home, ".ssh/id_ed25519"),
+		"~":                 home,
+		"/abs/key":          "/abs/key",  // absolute untouched
+		"rel/key":           "rel/key",   // relative untouched
+		"~user/key":         "~user/key", // ~user not resolved
+		"":                  "",          // empty untouched
+	}
+	for in, want := range cases {
+		if got := expandTilde(in); got != want {
+			t.Fatalf("expandTilde(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

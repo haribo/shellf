@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -294,7 +295,7 @@ func (s SSH) hostKeyCallback() (ssh.HostKeyCallback, error) {
 	if s.Insecure {
 		return ssh.InsecureIgnoreHostKey(), nil
 	}
-	path := s.KnownHosts
+	path := expandTilde(s.KnownHosts)
 	if path == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -403,11 +404,24 @@ func (s SSH) signer() (ssh.Signer, error) {
 	if s.Key == "" {
 		return nil, fmt.Errorf("no ssh key provided")
 	}
-	pem, err := os.ReadFile(s.Key)
+	pem, err := os.ReadFile(expandTilde(s.Key))
 	if err != nil {
 		return nil, fmt.Errorf("read key: %w", err)
 	}
 	return ssh.ParsePrivateKey(pem)
+}
+
+// expandTilde resolves a leading `~/` (or a bare `~`) to the user's home dir. Go's
+// os.ReadFile does not expand `~` — only the shell does — so an inventory
+// `key: "~/.ssh/id_ed25519"` must be expanded here. Absolute, relative, and
+// `~user/` paths are returned unchanged (`~user` is not resolved).
+func expandTilde(path string) string {
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, strings.TrimPrefix(path, "~"))
+		}
+	}
+	return path
 }
 
 func (s SSH) port() string {
