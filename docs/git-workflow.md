@@ -40,11 +40,36 @@ gh pr checks                                 # 6. wait for CI
 ## Release workflow
 
 ```
+# 1. roll CHANGELOG.md: `## [Unreleased]` → `## [X.Y.Z] - YYYY-MM-DD` (PR to develop)
+# 2. cut the release (each step needs explicit human approval — see Rules):
 gh pr create --base main --head develop      # when develop is validated
 gh pr checks
 gh pr merge --merge                          # merge commit, never squash
 git tag vX.Y.Z && git push origin vX.Y.Z
 ```
+
+The tag push triggers `release.yaml`, which **extracts the `[X.Y.Z]` section from
+the tagged `CHANGELOG.md`** and publishes it as the release notes — the notes are
+part of the tagged commit, never edited in after the fact.
+
+Prefer the `/release` skill, which runs this flow and stops at each approval gate.
+
+## Changelog
+
+`CHANGELOG.md` (repo root, [Keep a Changelog](https://keepachangelog.com) format)
+is the **single source of truth**. A GitHub Release body is that version's section,
+**mirrored** — never a second, divergent narrative.
+
+- Latest version first; dates ISO `YYYY-MM-DD`; Semantic Versioning declared.
+- Categories, in order: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`,
+  `Security`. Link versions to their release/compare pages.
+- **Write for humans, not machines**: user-facing lines, not commit subjects, and
+  never a raw `--generate-notes` dump. Exclude noise (dotfiles, dev deps, style,
+  doc formatting, merges).
+- Every PR with a user-observable change adds a line under `## [Unreleased]` — a
+  **soft convention** (reminder in the `/release` skill), not yet CI-enforced.
+- A release moves `[Unreleased]` into `## [X.Y.Z] - <date>` and uses that section
+  as the release notes; keep an empty `[Unreleased]` on top.
 
 ## Merge strategy
 
