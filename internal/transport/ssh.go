@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
@@ -272,21 +273,53 @@ func cached(cn conn, path string) bool {
 }
 
 func (s SSH) dial() (*ssh.Client, error) {
-	signer, err := s.signer()
+	methods, closeAuth, err := s.authMethods()
 	if err != nil {
 		return nil, err
 	}
+	defer closeAuth() // the agent conn is only needed during the handshake (ADR-0026)
 	hostKey, err := s.hostKeyCallback()
 	if err != nil {
 		return nil, err
 	}
 	cfg := &ssh.ClientConfig{
 		User:            s.User,
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		Auth:            methods,
 		HostKeyCallback: hostKey,
 		Timeout:         s.timeout(),
 	}
 	return ssh.Dial("tcp", net.JoinHostPort(s.Host, s.port()), cfg)
+}
+
+// authMethods builds the ordered SSH auth methods (ADR-0026): an explicit
+// inventory `key:` (a pinned deploy key) is tried first, then the ssh-agent via
+// SSH_AUTH_SOCK (the key never leaves the agent). Neither configured → a clear
+// error. The returned cleanup closes any opened agent connection.
+func (s SSH) authMethods() ([]ssh.AuthMethod, func(), error) {
+	noop := func() {}
+	var methods []ssh.AuthMethod
+
+	if s.Key != "" {
+		signer, err := s.signer()
+		if err != nil {
+			return nil, noop, err
+		}
+		methods = append(methods, ssh.PublicKeys(signer))
+	}
+
+	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
+		conn, err := net.Dial("unix", sock)
+		if err != nil {
+			return nil, noop, fmt.Errorf("connect ssh-agent (%s): %w", sock, err)
+		}
+		methods = append(methods, ssh.PublicKeysCallback(agent.NewClient(conn).Signers))
+		noop = func() { _ = conn.Close() }
+	}
+
+	if len(methods) == 0 {
+		return nil, noop, fmt.Errorf("no ssh authentication: set a key in the inventory or start an ssh-agent (SSH_AUTH_SOCK)")
+	}
+	return methods, noop, nil
 }
 
 // hostKeyCallback verifies the target's key against known_hosts, distinguishing
