@@ -1,0 +1,450 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shellf — raw shell, but idempotent, previewable, fast</title>
+<meta name="description" content="shellf runs configuration as plain shell — idempotent, previewable, and fast. A single static binary pushes an ephemeral agent over SSH, evaluates your plan on the target, and vanishes.">
+<meta property="og:title" content="shellf">
+<meta property="og:description" content="Raw shell, but idempotent, previewable, and fast.">
+<meta name="theme-color" content="#0e1512">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<style>
+  /* ============ tokens ============ */
+  :root{
+    --mono: ui-monospace,"JetBrains Mono","SF Mono","Cascadia Code","Roboto Mono",Menlo,Consolas,monospace;
+    --sans: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+
+    /* brand */
+    --green:#4ade80;        /* bright chevron/cursor */
+    --green-deep:#2e6b40;   /* frame/body */
+    --amber:#e0a000;        /* preview / would.* */
+
+    /* page ground — light (paper with a green bias) */
+    --bg:#f3f6f2;
+    --bg-2:#eaefe9;
+    --ink:#0e1512;
+    --muted:#5a6b60;
+    --line:#d8e1da;
+    --accent-ink:#1f6b3f;   /* readable green on light ground */
+
+    /* terminal object — dark on ANY theme */
+    --term-bg:#0e1512;
+    --term-ink:#d7e6dc;
+    --term-dim:#7f9a8a;
+    --term-line:#20302a;
+
+    --radius:12px;
+    --wrap:1080px;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#080c0a; --bg-2:#0c1210; --ink:#e7efe9; --muted:#8ba396;
+      --line:#1b2621; --accent-ink:#4ade80;
+      --term-bg:#0d1411; --term-line:#22332c;
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#f3f6f2; --bg-2:#eaefe9; --ink:#0e1512; --muted:#5a6b60;
+    --line:#d8e1da; --accent-ink:#1f6b3f; --term-bg:#0e1512; --term-line:#20302a;
+  }
+  :root[data-theme="dark"]{
+    --bg:#080c0a; --bg-2:#0c1210; --ink:#e7efe9; --muted:#8ba396;
+    --line:#1b2621; --accent-ink:#4ade80; --term-bg:#0d1411; --term-line:#22332c;
+  }
+
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:var(--sans); font-size:17px; line-height:1.65;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:var(--wrap); margin-inline:auto; padding-inline:24px}
+  a{color:inherit; text-decoration:none}
+  ::selection{background:var(--green); color:#06120a}
+  :focus-visible{outline:2px solid var(--green); outline-offset:3px; border-radius:4px}
+
+  /* ============ eyebrows / mono labels ============ */
+  .eyebrow{
+    font-family:var(--mono); font-size:.78rem; letter-spacing:.06em;
+    color:var(--accent-ink); text-transform:none; margin:0 0 14px;
+  }
+  .eyebrow::before{content:"# "; color:var(--muted)}
+
+  h2{
+    font-family:var(--mono); font-weight:700; letter-spacing:-.01em;
+    font-size:clamp(1.5rem,3.2vw,2.1rem); line-height:1.15;
+    text-wrap:balance; margin:0 0 .5em;
+  }
+  h3{font-family:var(--mono); font-weight:700; font-size:1.02rem; margin:0 0 .35em; letter-spacing:-.01em}
+  p{margin:0 0 1em; max-width:64ch}
+  .lead{font-size:1.15rem; color:var(--ink)}
+  .muted{color:var(--muted)}
+
+  /* ============ header ============ */
+  header.site{
+    position:sticky; top:0; z-index:20; backdrop-filter:blur(10px);
+    background:color-mix(in srgb, var(--bg) 82%, transparent);
+    border-bottom:1px solid var(--line);
+  }
+  .navrow{display:flex; align-items:center; justify-content:space-between; height:60px}
+  nav.links{display:flex; align-items:center; gap:26px; font-family:var(--mono); font-size:.86rem}
+  nav.links a{color:var(--muted); position:relative; padding:4px 0}
+  nav.links a:hover{color:var(--ink)}
+  nav.links a::after{content:""; position:absolute; left:0; right:100%; bottom:-2px; height:1.5px; background:var(--green); transition:right .25s ease}
+  nav.links a:hover::after{right:0}
+  .ver{color:var(--accent-ink)!important}
+  .ver::after{display:none}
+
+  /* wordmark */
+  .wm{font-family:var(--mono); font-weight:700; letter-spacing:-.02em}
+  .wm .f{color:var(--green)}
+  .wm .cur{color:var(--green); font-weight:400}
+  .brand{font-size:1.15rem}
+
+  @keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}}
+  .cur{animation:blink 1.1s step-end infinite}
+
+  /* ============ buttons ============ */
+  .btns{display:flex; flex-wrap:wrap; gap:14px; margin-top:28px}
+  .btn{
+    font-family:var(--mono); font-size:.9rem; font-weight:600;
+    padding:12px 20px; border-radius:10px; border:1px solid transparent;
+    display:inline-flex; align-items:center; gap:9px; transition:transform .15s ease, background .2s ease, border-color .2s;
+  }
+  .btn-primary{background:var(--green); color:#06120a}
+  .btn-primary:hover{transform:translateY(-2px)}
+  .btn-ghost{border-color:var(--line); color:var(--ink)}
+  .btn-ghost:hover{border-color:var(--accent-ink); transform:translateY(-2px)}
+  .btn .arw{transition:transform .18s ease}
+  .btn-primary:hover .arw{transform:translateX(3px)}
+
+  /* ============ hero ============ */
+  .hero{padding:72px 0 40px}
+  .hero-grid{display:grid; grid-template-columns:1.05fr 1fr; gap:48px; align-items:center}
+  .hero h1{font-family:var(--mono); font-weight:700; margin:0 0 18px; letter-spacing:-.03em; line-height:1; font-size:clamp(3rem,7vw,5rem)}
+  .hero .tagline{font-family:var(--mono); font-size:clamp(1.05rem,2vw,1.3rem); color:var(--accent-ink); margin:0 0 20px; font-weight:600}
+  .hero .lead{max-width:52ch}
+
+  .install{
+    margin-top:26px; font-family:var(--mono); font-size:.9rem;
+    background:var(--bg-2); border:1px solid var(--line); border-radius:10px;
+    padding:12px 16px; display:flex; align-items:center; gap:12px; max-width:440px;
+  }
+  .install .dollar{color:var(--accent-ink)}
+  .install .copy{margin-left:auto; color:var(--muted); font-size:.78rem; border:1px solid var(--line); border-radius:6px; padding:3px 9px; cursor:default}
+
+  /* ============ terminal ============ */
+  .term{
+    background:var(--term-bg); border:1px solid var(--term-line); border-radius:var(--radius);
+    box-shadow:0 24px 60px -30px rgba(0,0,0,.55), 0 0 0 1px rgba(74,222,128,.04);
+    overflow:hidden; font-family:var(--mono);
+  }
+  .term-bar{display:flex; align-items:center; gap:8px; padding:11px 15px; border-bottom:1px solid var(--term-line)}
+  .dot{width:11px; height:11px; border-radius:50%}
+  .dot.r{background:#e05561}.dot.y{background:#e0a000}.dot.g{background:#4ade80}
+  .term-title{margin-left:10px; color:var(--term-dim); font-size:.76rem}
+  .term-body{padding:16px 18px; font-size:.83rem; line-height:1.75; color:var(--term-ink); overflow-x:auto}
+  .term-body .l{white-space:pre; display:block}
+  .prompt{color:var(--green)}
+  .flag{color:var(--term-dim)}
+  .grp{color:#7fb0ff}
+  .cmt{color:var(--term-dim)}
+  .fn{color:var(--term-ink)}
+  .tag-would{color:var(--amber)}
+  .tag-ok{color:var(--green)}
+  .tag-skip{color:var(--term-dim)}
+  .str{color:#a9e6bf}
+  .kw{color:#7fb0ff}
+  .arrowdiff{color:var(--amber)}
+
+  /* staggered reveal */
+  .reveal .l{opacity:0; transform:translateY(4px); animation:rise .38s ease forwards}
+  @media (prefers-reduced-motion:reduce){ .reveal .l{opacity:1; transform:none; animation:none} .cur{animation:none} }
+  @keyframes rise{to{opacity:1; transform:none}}
+
+  /* ============ sections ============ */
+  section{padding:64px 0}
+  .rule{height:1px; background:var(--line); border:0; margin:0}
+
+  /* pillars */
+  .pillars{display:grid; grid-template-columns:repeat(3,1fr); gap:20px; margin-top:28px}
+  .pill{border:1px solid var(--line); border-radius:var(--radius); padding:24px; background:var(--bg-2)}
+  .pill .k{font-family:var(--mono); color:var(--accent-ink); font-weight:700; font-size:1.05rem; margin-bottom:8px}
+  .pill p{font-size:.95rem; color:var(--muted); margin:0}
+
+  /* code duo */
+  .duo{display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-top:8px}
+  .filecard .fname{font-family:var(--mono); font-size:.78rem; color:var(--term-dim); padding:10px 15px; border-bottom:1px solid var(--term-line); display:flex; align-items:center; gap:8px}
+  .filecard .fname::before{content:"▸"; color:var(--green)}
+  pre{margin:0}
+  .code .term-body{font-size:.82rem; line-height:1.7}
+
+  .stack{display:grid; gap:20px; margin-top:26px}
+
+  /* how it works */
+  .flow{display:grid; grid-template-columns:1fr auto 1fr auto 1fr; align-items:stretch; gap:14px; margin-top:30px}
+  .node{border:1px solid var(--line); border-radius:var(--radius); padding:22px; background:var(--bg-2); display:flex; flex-direction:column; gap:8px}
+  .node .n-k{font-family:var(--mono); font-weight:700; color:var(--accent-ink)}
+  .node .n-k b{color:var(--muted); font-weight:400}
+  .node p{font-size:.9rem; color:var(--muted); margin:0}
+  .conn{display:flex; align-items:center; justify-content:center; font-family:var(--mono); color:var(--green); font-size:1.3rem}
+  .conn small{writing-mode:horizontal-tb; font-size:.6rem; color:var(--term-dim)}
+  .conn .stack2{display:flex; flex-direction:column; align-items:center; line-height:1}
+
+  /* features */
+  .feat{display:grid; grid-template-columns:repeat(3,1fr); gap:1px; background:var(--line); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; margin-top:8px}
+  .cell{background:var(--bg); padding:22px 20px; transition:background .2s}
+  .cell:hover{background:var(--bg-2)}
+  .cell .c-k{font-family:var(--mono); font-weight:700; font-size:.95rem; margin-bottom:6px; display:flex; align-items:baseline; gap:8px}
+  .cell .c-k .mk{color:var(--green); font-size:.8rem}
+  .cell p{font-size:.86rem; color:var(--muted); margin:0}
+
+  /* get started */
+  .start-cta{display:flex; flex-direction:column; align-items:center; text-align:center}
+  .start-cta .install{margin-top:22px}
+  ol.steps{list-style:none; counter-reset:s; padding:0; margin:18px 0 0; display:grid; gap:16px}
+  ol.steps li{counter-increment:s; padding-left:42px; position:relative; font-size:.98rem}
+  ol.steps li::before{content:counter(s); position:absolute; left:0; top:-2px; font-family:var(--mono); font-weight:700; color:var(--green); border:1px solid var(--term-line); background:var(--term-bg); width:28px; height:28px; border-radius:8px; display:grid; place-items:center; font-size:.82rem}
+  ol.steps code{font-family:var(--mono); background:var(--bg-2); border:1px solid var(--line); border-radius:5px; padding:1px 6px; font-size:.85em}
+
+  /* footer */
+  footer{border-top:1px solid var(--line); padding:40px 0; margin-top:20px}
+  .foot{display:flex; flex-wrap:wrap; gap:20px 40px; align-items:center; justify-content:space-between; font-family:var(--mono); font-size:.84rem}
+  .foot .fnav{display:flex; gap:24px; flex-wrap:wrap}
+  .foot a{color:var(--muted)} .foot a:hover{color:var(--ink)}
+  .foot .dom{color:var(--accent-ink)}
+
+  .disclaimer{margin-top:16px; font-size:.72rem; color:var(--muted); font-family:var(--mono)}
+
+  /* ============ responsive ============ */
+  @media (max-width:880px){
+    .hero-grid{grid-template-columns:1fr; gap:34px}
+    .pillars{grid-template-columns:1fr}
+    .duo{grid-template-columns:1fr}
+    .feat{grid-template-columns:repeat(2,1fr)}
+    .flow{grid-template-columns:1fr; }
+    .conn{transform:rotate(90deg); padding:2px 0}
+    .start-grid{grid-template-columns:1fr}
+    nav.links .hide-sm{display:none}
+  }
+  @media (max-width:520px){
+    .feat{grid-template-columns:1fr}
+    body{font-size:16px}
+  }
+</style>
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap navrow">
+    <a class="brand wm" href="#top">shell<span class="f">f</span><span class="cur">_</span></a>
+    <nav class="links">
+      <a href="#idea" class="hide-sm">idea</a>
+      <a href="#plan" class="hide-sm">plan</a>
+      <a href="#how">how&nbsp;it&nbsp;works</a>
+      <a href="#start">install</a>
+      <a href="https://github.com/haribo/shellf" target="_blank" rel="noopener">github</a>
+      <a href="#" class="ver">v0.2.2</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+  <!-- ============ HERO ============ -->
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <p class="eyebrow">agentless configuration over ssh</p>
+        <h1 class="wm">shell<span class="f">f</span><span class="cur">_</span></h1>
+        <p class="tagline">Raw shell, but idempotent, previewable, and fast.</p>
+        <p class="lead">One static binary. It pushes an ephemeral agent over SSH, evaluates your plan
+          <em>on the target</em>, and vanishes.</p>
+        <div class="btns">
+          <a class="btn btn-primary" href="#start">Get started <span class="arw">▸</span></a>
+          <a class="btn btn-ghost" href="https://github.com/haribo/shellf" target="_blank" rel="noopener">View on GitHub</a>
+        </div>
+        <div class="install">
+          <span class="dollar">$</span>
+          <span>curl -fsSL shellf.org/install.sh | sh</span>
+          <span class="copy">copy</span>
+        </div>
+      </div>
+
+      <div class="term reveal" aria-label="Terminal: preview then apply">
+        <div class="term-bar">
+          <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+          <span class="term-title">deploy@control ~/infra</span>
+        </div>
+        <div class="term-body">
+<span class="l" style="animation-delay:.05s"><span class="prompt">$</span> shellf run <span class="flag">--check</span> <span class="flag">--inventory</span> hosts.shellf site.shellf</span>
+<span class="l" style="animation-delay:.35s"><span class="cmt">on web:</span></span>
+<span class="l" style="animation-delay:.5s">  <span class="grp">web1</span>:</span>
+<span class="l" style="animation-delay:.65s">    apt.install(nginx)            <span class="tag-would">would.installed</span></span>
+<span class="l" style="animation-delay:.8s">    file-write(/etc/nginx/…)      <span class="tag-would">would.written</span></span>
+<span class="l" style="animation-delay:.95s">    service(nginx)                <span class="tag-would">would.converged</span></span>
+<span class="l" style="animation-delay:1.3s"><span class="prompt">$</span> shellf run <span class="flag">--inventory</span> hosts.shellf site.shellf</span>
+<span class="l" style="animation-delay:1.5s">    apt.install(nginx)            <span class="tag-ok">ok.installed</span></span>
+<span class="l" style="animation-delay:1.62s">    file-write(/etc/nginx/…)      <span class="tag-ok">ok.written</span></span>
+<span class="l" style="animation-delay:1.74s">    service(nginx)                <span class="tag-ok">ok.converged</span></span>
+<span class="l" style="animation-delay:2.05s"><span class="prompt">$</span> shellf run <span class="flag">--inventory</span> hosts.shellf site.shellf <span class="cmt"># re-run</span></span>
+<span class="l" style="animation-delay:2.2s">    apt.install(nginx)            <span class="tag-skip">ok.already</span></span>
+<span class="l" style="animation-delay:2.32s">    service(nginx)                <span class="tag-skip">ok.already</span> <span class="cur">▏</span></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ IDEA / PILLARS ============ -->
+  <section id="idea">
+    <div class="wrap">
+      <p class="eyebrow">the three guarantees a bare script never gives you</p>
+      <div class="pillars">
+        <div class="pill">
+          <div class="k">idempotent</div>
+          <p>Instructions observe first and skip when converged — re-run freely, drift-only changes.</p>
+        </div>
+        <div class="pill">
+          <div class="k">previewable</div>
+          <p><code>--check</code> shows what <em>would</em> change; <code>status</code> diffs current vs. desired. Nothing is touched.</p>
+        </div>
+        <div class="pill">
+          <div class="k">fast</div>
+          <p>One connection, a resident agent evaluating on the host. No round-trips, no runtime to boot.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ============ PLAN ============ -->
+  <section id="plan">
+    <div class="wrap">
+      <p class="eyebrow">the language</p>
+      <h2>An inventory, a plan, raw shell where you need it.</h2>
+      <p class="lead muted">Instructions are <code>def</code>s written in shellf — a stdlib ships embedded. Drop to a raw <code>shell</code> block anytime; it's gated by the same contract.</p>
+
+      <div class="duo">
+        <div class="term filecard code">
+          <div class="fname">hosts.shellf</div>
+          <div class="term-body"><pre>
+<span class="kw">defaults</span> = { user: <span class="str">"deploy"</span> }
+
+<span class="kw">host</span> web1 = { address: <span class="str">"10.0.0.1"</span>, role: <span class="str">"edge"</span> }
+<span class="kw">group</span> web  = [web1]</pre></div>
+        </div>
+        <div class="term filecard code">
+          <div class="fname">site.shellf</div>
+          <div class="term-body"><pre>
+<span class="kw">on</span> web {
+    <span class="fn">apt.install</span>(<span class="str">"nginx"</span>)
+    <span class="fn">template</span>(<span class="str">"nginx.conf"</span>, <span class="str">"/etc/nginx/nginx.conf"</span>)
+    <span class="fn">service</span>(<span class="str">"nginx"</span>, <span class="str">"true"</span>, <span class="str">"true"</span>)   <span class="cmt"># running, enabled</span>
+
+    <span class="cmt"># raw shell — still gated by the same contract</span>
+    <span class="kw">if</span> !<span class="fn">shell</span> { nginx -t } {
+        <span class="fn">service-reload</span>(<span class="str">"nginx"</span>)
+    }
+}</pre></div>
+        </div>
+      </div>
+
+      <div class="stack">
+        <div class="term code">
+          <div class="term-bar">
+            <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+            <span class="term-title">shellf status — current vs. desired</span>
+          </div>
+          <div class="term-body">
+<span class="l"><span class="prompt">$</span> shellf status <span class="flag">--inventory</span> hosts.shellf site.shellf</span>
+<span class="l"><span class="cmt">on web:</span></span>
+<span class="l">  <span class="grp">web1</span>:</span>
+<span class="l">    apt.install(nginx)      installed: <span class="tag-ok">true</span></span>
+<span class="l">    file-write(/etc/…)      synced: <span class="arrowdiff">false → true</span></span>
+<span class="l">    service(nginx)          running: <span class="arrowdiff">false → true</span>   enabled: <span class="tag-ok">true</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ============ HOW IT WORKS ============ -->
+  <section id="how">
+    <div class="wrap">
+      <p class="eyebrow">how it works — no control plane, no daemon, no state file</p>
+
+      <div class="flow">
+        <div class="node">
+          <div class="n-k">01 · <b>push</b></div>
+          <p>The binary uploads itself as an agent over SSH, cached by content hash — a second run skips the transfer.</p>
+        </div>
+        <div class="conn"><div class="stack2"><span>→</span><small>ssh</small></div></div>
+        <div class="node">
+          <div class="n-k">02 · <b>evaluate</b></div>
+          <p>It reads the plan on the host, observes real state, applies only the drift. Secrets stay on tmpfs.</p>
+        </div>
+        <div class="conn"><div class="stack2"><span>→</span><small>ttl</small></div></div>
+        <div class="node">
+          <div class="n-k">03 · <b>vanish</b></div>
+          <p>The resident agent self-erases after its idle window. Nothing stays installed.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ============ FEATURES ============ -->
+  <section id="features">
+    <div class="wrap">
+      <p class="eyebrow">in the box</p>
+      <div class="feat">
+        <div class="cell"><div class="c-k"><span class="mk">▸</span>Per-host templating</div><p><code>@{var}</code> rendered per host from inventory vars — no clash with a config's own <code>${…}</code>.</p></div>
+        <div class="cell"><div class="c-k"><span class="mk">▸</span>Secrets, off disk</div><p><code>--secret-file</code>/<code>--secret-env</code>, redacted everywhere, deposited on a RAM-backed tmpfs.</p></div>
+        <div class="cell"><div class="c-k"><span class="mk">▸</span>Modules</div><p>Local imports and hash-verified remote git modules, pinned by a <code>shellf.lock</code>.</p></div>
+        <div class="cell"><div class="c-k"><span class="mk">▸</span>ssh-agent auth</div><p>Keys never leave your agent; an inventory <code>key:</code> is an optional override.</p></div>
+        <div class="cell"><div class="c-k"><span class="mk">▸</span>Loops &amp; overrides</div><p>Parse-time <code>for</code> over a list, and per-call <code>with { }</code> variable overrides.</p></div>
+        <div class="cell"><div class="c-k"><span class="mk">▸</span>One static binary</div><p>Agentless, <code>linux/amd64</code>, zero runtime on the target.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ============ GET STARTED ============ -->
+  <section id="start">
+    <div class="wrap start-cta">
+      <p class="eyebrow">get started</p>
+      <h2>Build it, point it at a host.</h2>
+      <div class="install">
+        <span class="dollar">$</span>
+        <span>CGO_ENABLED=0 go build -o shellf ./cmd/shellf</span>
+        <span class="copy">copy</span>
+      </div>
+      <div class="btns">
+        <a class="btn btn-primary" href="https://github.com/haribo/shellf" target="_blank" rel="noopener">Read the docs <span class="arw">▸</span></a>
+        <a class="btn btn-ghost" href="https://github.com/haribo/shellf" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot">
+      <span class="wm brand">shell<span class="f">f</span><span class="cur">_</span></span>
+      <span class="dom">shellf.org</span>
+      <a href="https://github.com/haribo/shellf" target="_blank" rel="noopener">github ↗</a>
+    </div>
+    <p class="disclaimer"># experimental · v0.2.2 · Debian/systemd · linux/amd64 control host</p>
+  </div>
+</footer>
+
+</body>
+</html>
