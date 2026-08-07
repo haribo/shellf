@@ -107,6 +107,11 @@ docker exec "$cname" grep -q 'token=SEKRET-abc123' /tmp/shellf-e2e/motd || fail 
 docker exec "$cname" grep -q 'role=edge' /tmp/shellf-e2e/motd || fail "the per-host var did not reach the template"
 # the `for` loop unrolled and both iterations ran on the target
 docker exec "$cname" test -d /tmp/shellf-e2e/one && docker exec "$cname" test -d /tmp/shellf-e2e/two || fail "the for loop did not run both iterations"
+# dir-copy delivered the control-host tree, text + binary, byte-for-byte (ADR-0028)
+docker exec "$cname" grep -q 'delivered by dir-copy' /tmp/shellf-e2e/delivered/hello.txt || fail "dir-copy did not deliver the text file"
+want_bin="$(sha256sum "$here/tree/assets/logo.bin" | cut -d' ' -f1)"
+got_bin="$(docker exec "$cname" sha256sum /tmp/shellf-e2e/delivered/assets/logo.bin | cut -d' ' -f1)"
+[ "$want_bin" = "$got_bin" ] || fail "dir-copy corrupted the binary file ($want_bin != $got_bin)"
 # `with { }` overrode a variable for one template call and one shell call (ADR-0022)
 docker exec "$cname" grep -q 'greeting=hello-with' /tmp/shellf-e2e/greet || fail "the template `with` override did not render"
 docker exec "$cname" grep -q 'note-with' /tmp/shellf-e2e/note || fail "the shell `with` override did not reach the env"

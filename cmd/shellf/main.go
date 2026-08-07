@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
@@ -179,7 +180,122 @@ func loadPlanPackage(planPath, invPath string, baseVars, setVars map[string]stri
 	}
 	// `template` steps are NOT resolved here: they render per host, in the
 	// orchestrator, over each host's env (ADR-0024). See templateRenderer.
+	//
+	// `dir-copy` IS resolved here: its bytes are control-side and identical for
+	// every host, so it expands once into dir-ensure + file-put steps (ADR-0028).
+	planDir := filepath.Dir(planPath)
+	for bi := range plan {
+		expanded, err := resolveDirCopy(plan[bi].Steps, planDir)
+		if err != nil {
+			return nil, nil, err
+		}
+		plan[bi].Steps = expanded
+	}
 	return plan, defSource(defs), nil
+}
+
+// dirCopyCeiling bounds the base64-encoded payload a single dir-copy may carry, so
+// a large tree is refused with a clear error instead of OOMing the agent (ADR-0028).
+const dirCopyCeiling = 32 << 20
+
+// resolveDirCopy expands every `dir-copy(src, dst)` step into a `dir-ensure` per
+// directory and a `file-put(dst, base64)` per file, reading src relative to the
+// plan dir. Recurses into if/block/parallel; other steps pass through.
+func resolveDirCopy(steps []proto.Step, dir string) ([]proto.Step, error) {
+	var out []proto.Step
+	for _, s := range steps {
+		switch {
+		case s.Instruction == "dir-copy":
+			if s.Refs["src"] != "" || s.Refs["dst"] != "" {
+				return nil, fmt.Errorf("dir-copy: src and dst must be literal paths, not per-host refs")
+			}
+			expanded, err := expandTree(filepath.Join(dir, s.Args["src"]), s.Args["dst"])
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, expanded...)
+		case s.If != nil:
+			then, err := resolveDirCopy(s.If.Then, dir)
+			if err != nil {
+				return nil, err
+			}
+			els, err := resolveDirCopy(s.If.Else, dir)
+			if err != nil {
+				return nil, err
+			}
+			ib := *s.If
+			ib.Then, ib.Else = then, els
+			ns := s
+			ns.If = &ib
+			out = append(out, ns)
+		case len(s.Block) > 0:
+			sub, err := resolveDirCopy(s.Block, dir)
+			if err != nil {
+				return nil, err
+			}
+			ns := s
+			ns.Block = sub
+			out = append(out, ns)
+		case len(s.Parallel) > 0:
+			sub, err := resolveDirCopy(s.Parallel, dir)
+			if err != nil {
+				return nil, err
+			}
+			ns := s
+			ns.Parallel = sub
+			out = append(out, ns)
+		default:
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+
+// expandTree walks srcRoot (control host) and returns the dir-ensure + file-put
+// steps that deliver it verbatim under dstRoot (target). Refuses a tree whose
+// base64 payload exceeds the ceiling (ADR-0028).
+func expandTree(srcRoot, dstRoot string) ([]proto.Step, error) {
+	info, err := os.Stat(srcRoot)
+	if err != nil {
+		return nil, fmt.Errorf("dir-copy: %v", err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("dir-copy: %s is not a directory", srcRoot)
+	}
+	steps := []proto.Step{{Instruction: "dir-ensure", Args: map[string]string{"path": dstRoot}}}
+	var total int64
+	walkErr := filepath.WalkDir(srcRoot, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(srcRoot, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		dst := filepath.Join(dstRoot, rel)
+		if d.IsDir() {
+			steps = append(steps, proto.Step{Instruction: "dir-ensure", Args: map[string]string{"path": dst}})
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		enc := base64.StdEncoding.EncodeToString(b)
+		total += int64(len(enc))
+		if total > dirCopyCeiling {
+			return fmt.Errorf("dir-copy: %s exceeds the %d MB payload ceiling (ADR-0028)", srcRoot, dirCopyCeiling>>20)
+		}
+		steps = append(steps, proto.Step{Instruction: "file-put", Args: map[string]string{"path": dst, "content": enc}})
+		return nil
+	})
+	if walkErr != nil {
+		return nil, walkErr
+	}
+	return steps, nil
 }
 
 // templateRenderer builds the per-host renderer the orchestrator injects
@@ -333,7 +449,7 @@ func loadInventory(invPath string) (inventory.Inventory, error) {
 // stdlib (signatures live with the defs, self-hosting) plus the Go builtins —
 // so adding a def needs no parser-side edit (#107).
 func stdSignatures() lang.InstructionSig {
-	builtins := map[string][]string{"file-copy": {"src", "dst"}, "template": {"src", "dst"}}
+	builtins := map[string][]string{"file-copy": {"src", "dst"}, "template": {"src", "dst"}, "dir-copy": {"src", "dst"}}
 	return func(name string) ([]string, int, bool) {
 		if p, ok := builtins[name]; ok {
 			return p, len(p), true // builtins have no optional params
