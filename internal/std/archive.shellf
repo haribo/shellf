@@ -1,12 +1,19 @@
 def archive-extract(src: str, dst: str) {
-    # Observed: destination non-empty -> assume already extracted. Known limit: it
-    # does not verify the contents match the archive, so a stale or partial
-    # extraction still reads as done. Use a content sentinel if you need that.
-    observe { return state(extracted: shell { test -d "$dst" && test -n "$(ls -A "$dst" 2>/dev/null)" }.exit == 0) }
+    # Observed: the archive's sha256, recorded in a sentinel under `dst` at extract
+    # time, equals the current archive's sha256. So a changed archive at `src`
+    # re-extracts, and an unchanged one is skipped (#259). Both hashes are computed
+    # target-side, since `src` is a target path.
+    observe {
+        return state(extracted: shell {
+            test -f "$dst/.shellf-archive-sha256" &&
+            [ "$(cat "$dst/.shellf-archive-sha256" 2>/dev/null)" = "$(sha256sum "$src" | cut -d' ' -f1)" ]
+        }.exit == 0)
+    }
     apply {
         r = shell {
             mkdir -p "$dst"
             tar xzf "$src" -C "$dst"
+            sha256sum "$src" | cut -d' ' -f1 > "$dst/.shellf-archive-sha256"
         }
         if !r { return err.runtime(r) }
         return ok.extracted

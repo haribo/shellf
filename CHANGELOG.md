@@ -10,6 +10,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Report labels now show `name=value` for each argument (`file-mode(mode=755,
   path=…)`) instead of bare values in key order, which read as swapped.
+- `archive-extract` re-extracts when the archive at `src` changes, instead of
+  skipping because the destination is non-empty. Convergence is now decided by the
+  archive's sha256, recorded in a `.shellf-archive-sha256` sentinel under `dst`.
 
 ## [0.2.2] - 2026-08-04
 
