@@ -20,6 +20,29 @@ def archive-extract(src: str, dst: str) {
     }
 }
 
+def archive-extract-member(src: str, dst: str, member: str) {
+    # Extract a single `member` from the archive at `src` to the file `dst` (its
+    # content, not its path in the archive). Observed: dst's sha256 equals the
+    # member's sha256 inside the archive, so a changed member re-extracts and an
+    # unchanged one is skipped (ADR-0013 §6). Both hashes are target-side, since
+    # `src` is a target path. Compose with `file-download` + `file-mode` to install
+    # a binary from a release tarball.
+    observe {
+        return state(extracted: shell {
+            test -f "$dst" &&
+            [ "$(sha256sum "$dst" | cut -d' ' -f1)" = "$(tar xzOf "$src" "$member" | sha256sum | cut -d' ' -f1)" ]
+        }.exit == 0)
+    }
+    apply {
+        r = shell {
+            mkdir -p "$(dirname "$dst")"
+            tar xzOf "$src" "$member" > "$dst"
+        }
+        if !r { return err.runtime(r) }
+        return ok.extracted
+    }
+}
+
 def git-clone(url: str, dst: str) {
     # Observed: the current origin remote (empty if not a repo). The `url` field
     # matches the `url` argument, so a missing clone or a wrong remote both read
