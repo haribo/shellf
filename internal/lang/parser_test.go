@@ -133,3 +133,34 @@ func TestParseWithBlock_Errors(t *testing.T) {
 		}
 	}
 }
+
+func TestParseInventory_LocalField(t *testing.T) {
+	inv, err := ParseInventory(`
+host self   = { local: "true" }
+host remote = { address: "10.0.0.1" }
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h, _ := inv.Resolve("self"); !h.Local {
+		t.Fatalf("self should be local: %+v", h)
+	}
+	if h, _ := inv.Resolve("remote"); h.Local {
+		t.Fatalf("remote should not be local: %+v", h)
+	}
+	// `local` in defaults propagates unless a host is explicit.
+	inv2, err := ParseInventory(`
+defaults = { local: "true" }
+host a = { }
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h, _ := inv2.Resolve("a"); !h.Local {
+		t.Fatalf("a should inherit local from defaults: %+v", h)
+	}
+	// a non-boolean value is rejected.
+	if _, err := ParseInventory(`host x = { local: "yes" }`); err == nil {
+		t.Fatal("local must be true/false")
+	}
+}

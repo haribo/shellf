@@ -88,6 +88,10 @@ Omitted host fields fall back to `defaults`, then to `22` for the port. Only
 `address` is required. A host may belong to several groups. `key: "…"` is an
 optional field (a pinned ssh key); without it, authentication uses the ssh-agent.
 
+A host with `local: "true"` is provisioned on the **control host itself**, with no
+SSH — `host self = { local: "true" }` (no `address` needed). Same agent, plan, and
+reports as a remote target; `as root` still goes through `sudo`.
+
 ## Plan
 
 | Construct | Form |

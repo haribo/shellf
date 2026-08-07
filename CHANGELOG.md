@@ -8,6 +8,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Local transport: a host with `local: "true"` in the inventory is provisioned on
+  the control host itself (agent run as a subprocess), no SSH — same agent, plan,
+  and reports as a remote target (ADR-0027).
 - `archive-extract-member(src, dst, member)`: extract a single file from a tarball
   to `dst` (content-hash idempotent) — compose with `file-download` + `file-mode` to
   install a binary from a release tarball without a raw `shell` escape.
