@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>shellf — raw shell, but idempotent, previewable, fast</title>
-<meta name="description" content="shellf runs configuration as plain shell — idempotent, previewable, and fast. A single static binary pushes an ephemeral agent over SSH, evaluates your plan on the target, and vanishes.">
+<meta name="description" content="Write down the state your servers should be in — shellf makes them match, and shows you exactly what will change first. Agentless configuration over SSH.">
 <meta property="og:title" content="shellf">
-<meta property="og:description" content="Raw shell, but idempotent, previewable, and fast.">
+<meta property="og:description" content="Configuration as plain shell — idempotent, previewable, fast.">
 <meta name="theme-color" content="#0e1512">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <style>
@@ -71,6 +71,10 @@
     color:var(--accent-ink); text-transform:none; margin:0 0 14px;
   }
   .eyebrow::before{content:"# "; color:var(--muted)}
+
+  /* section title: the section's topic, prominent, as an on-brand shell comment */
+  .sec{margin:0 0 26px}
+  .sec::before{content:"# "; color:var(--accent-ink)}
 
   h2{
     font-family:var(--mono); font-weight:700; letter-spacing:-.01em;
@@ -204,6 +208,12 @@
   /* get started */
   .start-cta{display:flex; flex-direction:column; align-items:center; text-align:center}
   .start-cta .install{margin-top:22px}
+  .get-term{width:100%; max-width:760px; margin-top:24px; text-align:left}
+  .build-note{margin-top:18px; font-size:.9rem; color:var(--muted)}
+  .build-note code{font-family:var(--mono); background:var(--bg-2); border:1px solid var(--line); border-radius:5px; padding:1px 7px; font-size:.9em}
+  .tlink{color:var(--accent-ink); font-family:var(--mono); font-weight:600}
+  .tlink:hover{text-decoration:underline}
+  #what .build-note{margin-top:10px}
   ol.steps{list-style:none; counter-reset:s; padding:0; margin:18px 0 0; display:grid; gap:16px}
   ol.steps li{counter-increment:s; padding-left:42px; position:relative; font-size:.98rem}
   ol.steps li::before{content:counter(s); position:absolute; left:0; top:-2px; font-family:var(--mono); font-weight:700; color:var(--green); border:1px solid var(--term-line); background:var(--term-bg); width:28px; height:28px; border-radius:8px; display:grid; place-items:center; font-size:.82rem}
@@ -241,12 +251,13 @@
   <div class="wrap navrow">
     <a class="brand wm" href="#top">shell<span class="f">f</span><span class="cur">_</span></a>
     <nav class="links">
-      <a href="#idea" class="hide-sm">idea</a>
+      <a href="#what" class="hide-sm">what</a>
       <a href="#plan" class="hide-sm">plan</a>
-      <a href="#how">how&nbsp;it&nbsp;works</a>
+      <a href="#why" class="hide-sm">why</a>
+      <a href="#how">architecture</a>
       <a href="#start">install</a>
       <a href="https://github.com/haribo/shellf" target="_blank" rel="noopener">github</a>
-      <a href="#" class="ver">v0.2.2</a>
+      <a href="#" class="ver">v0.3.1</a>
     </nav>
   </div>
 </header>
@@ -259,17 +270,12 @@
       <div>
         <p class="eyebrow">agentless configuration over ssh</p>
         <h1 class="wm">shell<span class="f">f</span><span class="cur">_</span></h1>
-        <p class="tagline">Raw shell, but idempotent, previewable, and fast.</p>
-        <p class="lead">One static binary. It pushes an ephemeral agent over SSH, evaluates your plan
-          <em>on the target</em>, and vanishes.</p>
+        <p class="lead">Write down the state your servers should be in — shellf makes them match, and
+          shows you <em>exactly what will change</em> before it touches anything.</p>
+        <p class="tagline">Configuration as plain shell — idempotent, previewable, fast.</p>
         <div class="btns">
           <a class="btn btn-primary" href="#start">Get started <span class="arw">▸</span></a>
           <a class="btn btn-ghost" href="https://github.com/haribo/shellf" target="_blank" rel="noopener">View on GitHub</a>
-        </div>
-        <div class="install">
-          <span class="dollar">$</span>
-          <span>curl -fsSL shellf.org/install.sh | sh</span>
-          <span class="copy">copy</span>
         </div>
       </div>
 
@@ -297,24 +303,21 @@
     </div>
   </section>
 
-  <!-- ============ IDEA / PILLARS ============ -->
-  <section id="idea">
+  <!-- ============ WHAT IT DOES ============ -->
+  <section id="what">
     <div class="wrap">
-      <p class="eyebrow">the three guarantees a bare script never gives you</p>
-      <div class="pillars">
-        <div class="pill">
-          <div class="k">idempotent</div>
-          <p>Instructions observe first and skip when converged — re-run freely, drift-only changes.</p>
-        </div>
-        <div class="pill">
-          <div class="k">previewable</div>
-          <p><code>--check</code> shows what <em>would</em> change; <code>status</code> diffs current vs. desired. Nothing is touched.</p>
-        </div>
-        <div class="pill">
-          <div class="k">fast</div>
-          <p>One connection, a resident agent evaluating on the host. No round-trips, no runtime to boot.</p>
-        </div>
+      <h2 class="sec">What it does</h2>
+      <div class="feat">
+        <div class="cell"><div class="c-k"><span class="mk">▸</span>Packages &amp; services</div><p><code>apt.install</code>, <code>service</code>, files, dirs — installed, running, owned as declared.</p></div>
+        <div class="cell"><div class="c-k"><span class="mk">▸</span>Config, per host</div><p><code>template</code> fills <code>@{vars}</code> from the inventory, rendered per host.</p></div>
+        <div class="cell"><div class="c-k"><span class="mk">▸</span>Containers</div><p><code>docker.compose-up</code>, <code>docker.network</code> — <code>--check</code> previews the recreate.</p></div>
+        <div class="cell"><div class="c-k"><span class="mk">▸</span>Firewall</div><p><code>ufw.open</code> / <code>default</code> / <code>enable</code> — only the ports you list.</p></div>
+        <div class="cell"><div class="c-k"><span class="mk">▸</span>Files &amp; trees</div><p><code>dir-copy</code> byte-for-byte (binary-safe), <code>file-download</code> sha256-checked.</p></div>
+        <div class="cell"><div class="c-k"><span class="mk">▸</span>Raw shell</div><p>A <code>shell { }</code> block, gated by the same contract.</p></div>
       </div>
+      <p class="build-note">Also: secrets off disk, hash-verified modules, ssh-agent auth, <code>for</code> / <code>with { }</code>.</p>
+      <p class="build-note">The stdlib is early and growing — missing an instruction?
+        <a class="tlink" href="https://github.com/haribo/shellf/issues" target="_blank" rel="noopener">Propose a def ↗</a></p>
     </div>
   </section>
 
@@ -323,9 +326,7 @@
   <!-- ============ PLAN ============ -->
   <section id="plan">
     <div class="wrap">
-      <p class="eyebrow">the language</p>
-      <h2>An inventory, a plan, raw shell where you need it.</h2>
-      <p class="lead muted">Instructions are <code>def</code>s written in shellf — a stdlib ships embedded. Drop to a raw <code>shell</code> block anytime; it's gated by the same contract.</p>
+      <h2 class="sec">Write a plan</h2>
 
       <div class="duo">
         <div class="term filecard code">
@@ -373,25 +374,22 @@
 
   <hr class="rule">
 
-  <!-- ============ HOW IT WORKS ============ -->
-  <section id="how">
+  <!-- ============ WHY ============ -->
+  <section id="why">
     <div class="wrap">
-      <p class="eyebrow">how it works — no control plane, no daemon, no state file</p>
-
-      <div class="flow">
-        <div class="node">
-          <div class="n-k">01 · <b>push</b></div>
-          <p>The binary uploads itself as an agent over SSH, cached by content hash — a second run skips the transfer.</p>
+      <h2 class="sec">Why it beats a script</h2>
+      <div class="pillars">
+        <div class="pill">
+          <div class="k">idempotent</div>
+          <p>Checks first, skips what's done. Re-run the whole plan; only drift changes.</p>
         </div>
-        <div class="conn"><div class="stack2"><span>→</span><small>ssh</small></div></div>
-        <div class="node">
-          <div class="n-k">02 · <b>evaluate</b></div>
-          <p>It reads the plan on the host, observes real state, applies only the drift. Secrets stay on tmpfs.</p>
+        <div class="pill">
+          <div class="k">previewable</div>
+          <p><code>--check</code> shows what would change; <code>status</code> diffs current vs. desired. Touches nothing.</p>
         </div>
-        <div class="conn"><div class="stack2"><span>→</span><small>ttl</small></div></div>
-        <div class="node">
-          <div class="n-k">03 · <b>vanish</b></div>
-          <p>The resident agent self-erases after its idle window. Nothing stays installed.</p>
+        <div class="pill">
+          <div class="k">fast</div>
+          <p>One SSH connection, an agent on the host. No round-trips, no runtime.</p>
         </div>
       </div>
     </div>
@@ -399,17 +397,25 @@
 
   <hr class="rule">
 
-  <!-- ============ FEATURES ============ -->
-  <section id="features">
+  <!-- ============ ARCHITECTURE ============ -->
+  <section id="how">
     <div class="wrap">
-      <p class="eyebrow">in the box</p>
-      <div class="feat">
-        <div class="cell"><div class="c-k"><span class="mk">▸</span>Per-host templating</div><p><code>@{var}</code> rendered per host from inventory vars — no clash with a config's own <code>${…}</code>.</p></div>
-        <div class="cell"><div class="c-k"><span class="mk">▸</span>Secrets, off disk</div><p><code>--secret-file</code>/<code>--secret-env</code>, redacted everywhere, deposited on a RAM-backed tmpfs.</p></div>
-        <div class="cell"><div class="c-k"><span class="mk">▸</span>Modules</div><p>Local imports and hash-verified remote git modules, pinned by a <code>shellf.lock</code>.</p></div>
-        <div class="cell"><div class="c-k"><span class="mk">▸</span>ssh-agent auth</div><p>Keys never leave your agent; an inventory <code>key:</code> is an optional override.</p></div>
-        <div class="cell"><div class="c-k"><span class="mk">▸</span>Loops &amp; overrides</div><p>Parse-time <code>for</code> over a list, and per-call <code>with { }</code> variable overrides.</p></div>
-        <div class="cell"><div class="c-k"><span class="mk">▸</span>One static binary</div><p>Agentless, <code>linux/amd64</code>, zero runtime on the target.</p></div>
+      <h2 class="sec">Architecture</h2>
+      <div class="flow">
+        <div class="node">
+          <div class="n-k">01 · <b>your machine</b></div>
+          <p>One static binary reads your plan. The only place shellf is installed.</p>
+        </div>
+        <div class="conn"><div class="stack2"><span>→</span><small>ssh</small></div></div>
+        <div class="node">
+          <div class="n-k">02 · <b>the target</b></div>
+          <p>Pushed as an ephemeral agent; evaluates on the host, applies only the drift. Secrets on tmpfs.</p>
+        </div>
+        <div class="conn"><div class="stack2"><span>→</span><small>ttl</small></div></div>
+        <div class="node">
+          <div class="n-k">03 · <b>nothing left</b></div>
+          <p>The agent self-erases. No daemon, no state file, nothing installed.</p>
+        </div>
       </div>
     </div>
   </section>
@@ -419,17 +425,29 @@
   <!-- ============ GET STARTED ============ -->
   <section id="start">
     <div class="wrap start-cta">
-      <p class="eyebrow">get started</p>
-      <h2>Build it, point it at a host.</h2>
-      <div class="install">
-        <span class="dollar">$</span>
-        <span>CGO_ENABLED=0 go build -o shellf ./cmd/shellf</span>
-        <span class="copy">copy</span>
+      <h2 class="sec">Install</h2>
+
+      <div class="term code get-term">
+        <div class="term-bar">
+          <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+          <span class="term-title">install &amp; run</span>
+        </div>
+        <div class="term-body">
+<span class="l"><span class="cmt"># the latest static binary (linux/amd64)</span></span>
+<span class="l"><span class="prompt">$</span> curl -fsSL https://github.com/haribo/shellf/releases/latest/download/shellf-linux-amd64 <span class="flag">-o</span> shellf &amp;&amp; chmod +x shellf</span>
+<span class="l"> </span>
+<span class="l"><span class="cmt"># preview, apply, check state — flags before the plan</span></span>
+<span class="l"><span class="prompt">$</span> ./shellf run <span class="flag">--check --inventory</span> hosts.shellf site.shellf</span>
+<span class="l"><span class="prompt">$</span> ./shellf run <span class="flag">--inventory</span> hosts.shellf site.shellf</span>
+<span class="l"><span class="prompt">$</span> ./shellf status <span class="flag">--inventory</span> hosts.shellf site.shellf <span class="cur">▏</span></span>
+        </div>
       </div>
+
       <div class="btns">
-        <a class="btn btn-primary" href="https://github.com/haribo/shellf" target="_blank" rel="noopener">Read the docs <span class="arw">▸</span></a>
+        <a class="btn btn-primary" href="https://github.com/haribo/shellf/releases" target="_blank" rel="noopener">Releases <span class="arw">▸</span></a>
         <a class="btn btn-ghost" href="https://github.com/haribo/shellf" target="_blank" rel="noopener">GitHub</a>
       </div>
+      <p class="build-note">or build from source: <code>go build -o shellf ./cmd/shellf</code></p>
     </div>
   </section>
 
@@ -442,7 +460,7 @@
       <span class="dom">shellf.org</span>
       <a href="https://github.com/haribo/shellf" target="_blank" rel="noopener">github ↗</a>
     </div>
-    <p class="disclaimer"># experimental · v0.2.2 · Debian/systemd · linux/amd64 control host</p>
+    <p class="disclaimer"># experimental · v0.3.1 · Debian/systemd · linux/amd64 control host</p>
   </div>
 </footer>
 
