@@ -269,7 +269,7 @@ func runStep(step proto.Step, ex engine.Executor, m engine.Mode, scope map[strin
 	if step.Bind != "" {
 		scope[step.Bind] = res
 	}
-	return proto.StepResult{Label: step.Label(), Category: res.Category.String(), Tag: res.Tag, Changed: res.Changed, Shell: res.Shell, Fields: res.Fields}
+	return proto.StepResult{Label: step.Label(), Category: res.Category.String(), Tag: res.Tag, Changed: res.Changed, Shell: res.Shell, Fields: res.Fields, Preview: res.Preview}
 }
 
 func copyScope(s map[string]engine.Result) map[string]engine.Result {
@@ -302,6 +302,8 @@ func dispatch(step proto.Step) (engine.Instruction, error) {
 	switch step.Instruction {
 	case "file-copy":
 		return engine.FileCopy{Src: step.Args["src"], Dst: step.Args["dst"]}, nil
+	case "file-put":
+		return engine.FilePut{Path: step.Args["path"], Content: step.Args["content"]}, nil
 	case "shell":
 		return engine.Shell{Cmd: step.Args["cmd"], Unless: step.Args["unless"], Env: engine.Env(step.Env)}, nil
 	default:

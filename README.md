@@ -88,6 +88,10 @@ Omitted host fields fall back to `defaults`, then to `22` for the port. Only
 `address` is required. A host may belong to several groups. `key: "…"` is an
 optional field (a pinned ssh key); without it, authentication uses the ssh-agent.
 
+A host with `local: "true"` is provisioned on the **control host itself**, with no
+SSH — `host self = { local: "true" }` (no `address` needed). Same agent, plan, and
+reports as a remote target; `as root` still goes through `sudo`.
+
 ## Plan
 
 | Construct | Form |
@@ -100,7 +104,12 @@ later blocks.
 
 ## Writing shellf
 
-A worked tour. The full example is in [`examples/webserver/`](examples/webserver/).
+A worked tour. Runnable examples live under [`examples/`](examples/) — start with
+[`webserver/`](examples/webserver/), then the containerized [`blog/`](examples/blog/)
+for user defs, imports, secrets, templates, and docker/ufw; see
+[`examples/README.md`](examples/README.md). The shared inventory sits at
+[`examples/inventory.shellf`](examples/inventory.shellf), outside the plan directories
+(a plan's directory is its def package, ADR-0014).
 
 **Variables** come from the inventory (per-host) or `--set`. Use them as bare
 identifiers, or `${name}` inside strings:
@@ -205,7 +214,7 @@ Most instructions are `def`s written in shellf and embedded in the binary; only
 `apply` when the desired state already holds).
 
 - **Packages & services** — `apt.install(pkg)` · `apt.update()` · `service(name, running, enabled)` (running/enabled are `"true"`/`"false"`; a `.timer` unit works as the name) · `service-restart(name)` · `service-reload(name)` · `systemd-daemon-reload()` · `user-group(user, group)` · `user-ensure(name, shell)`
-- **Files & directories** — `file-copy(src, dst)` (target-side copy) · `template(src, dst)` (render a control-host file's `@{var}` and deliver it) · `file-write(path, content)` · `file-mode(path, mode)` · `file-replace(path, key, value)` (a `key=value` line) · `file-line(path, line)` · `file-delete(path)` · `file-download(url, dst, sha256)` · `dir-ensure(path)` · `dir-owner(path, owner)` · `archive-extract(src, dst)` · `git-clone(url, dst)` · `git-sync(url, dst, ref)` (update to a pinned ref)
+- **Files & directories** — `file-copy(src, dst)` (target-side copy) · `template(src, dst)` (render a control-host file's `@{var}` and deliver it) · `dir-copy(src, dst)` (deliver a control-host tree verbatim, binary-safe) · `file-write(path, content)` · `file-mode(path, mode)` · `file-replace(path, key, value)` (a `key=value` line) · `file-line(path, line)` · `file-delete(path)` · `file-download(url, dst, sha256)` · `dir-ensure(path)` · `dir-owner(path, owner)` · `archive-extract(src, dst)` · `archive-extract-member(src, dst, member)` (one file out of a tarball) · `git-clone(url, dst)` · `git-sync(url, dst, ref)` (update to a pinned ref)
 - **Questions** (read-only, deterministic in `--check`) — `dir-exists(path)` · `file-exists(path)` · `http-check(url, status)` · `wait-for(url, timeout)` (retries until ready)
 - **Firewall** — `ufw.enable()` · `ufw.default(incoming, outgoing)` · `ufw.open(port, proto)`
 - **Docker** — `docker.install()` · `docker.network(name)` · `docker.compose-up(dir, build)` (`build` `"true"` rebuilds local images; always re-applies — `up -d` is idempotent)

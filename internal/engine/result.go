@@ -31,6 +31,7 @@ type Result struct {
 	Changed  bool         // the action actually acted (apply ran); false on a converged skip or err
 	Shell    *ShellResult // optional diagnostics payload
 	Fields   []FieldDiff  // status mode: the observed-vs-desired state of a resource (ADR-0013)
+	Preview  string       // check mode: what an action would do, from the `preview` phase (ADR-0029)
 }
 
 // FieldDiff is one observed field of a resource in Status mode: its current

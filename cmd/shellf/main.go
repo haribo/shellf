@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
@@ -143,6 +144,9 @@ func runCmd(args []string) {
 
 	dial := func(alias string) transport.Transport {
 		h, _ := inv.Resolve(alias)
+		if h.Local { // reached on the control host, no SSH (ADR-0027)
+			return transport.Local{}
+		}
 		return transport.SSH{
 			User: h.User, Host: h.Address, Port: h.Port, Key: h.Key,
 			KnownHosts: *knownHosts, Insecure: *insecure, AgentTTL: *agentTTL,
@@ -176,7 +180,123 @@ func loadPlanPackage(planPath, invPath string, baseVars, setVars map[string]stri
 	}
 	// `template` steps are NOT resolved here: they render per host, in the
 	// orchestrator, over each host's env (ADR-0024). See templateRenderer.
+	//
+	// `dir-copy` IS resolved here: its bytes are control-side and identical for
+	// every host, so it expands once into dir-ensure + file-put steps (ADR-0028).
+	planDir := filepath.Dir(planPath)
+	for bi := range plan {
+		expanded, err := resolveDirCopy(plan[bi].Steps, planDir)
+		if err != nil {
+			return nil, nil, err
+		}
+		plan[bi].Steps = expanded
+	}
 	return plan, defSource(defs), nil
+}
+
+// dirCopyCeiling bounds the base64-encoded payload a single dir-copy may carry, so
+// a large tree is refused with a clear error instead of OOMing the agent (ADR-0028).
+// A var, not a const, so a test can lower it without a 32 MB fixture.
+var dirCopyCeiling int64 = 32 << 20
+
+// resolveDirCopy expands every `dir-copy(src, dst)` step into a `dir-ensure` per
+// directory and a `file-put(dst, base64)` per file, reading src relative to the
+// plan dir. Recurses into if/block/parallel; other steps pass through.
+func resolveDirCopy(steps []proto.Step, dir string) ([]proto.Step, error) {
+	var out []proto.Step
+	for _, s := range steps {
+		switch {
+		case s.Instruction == "dir-copy":
+			if s.Refs["src"] != "" || s.Refs["dst"] != "" {
+				return nil, fmt.Errorf("dir-copy: src and dst must be literal paths, not per-host refs")
+			}
+			expanded, err := expandTree(filepath.Join(dir, s.Args["src"]), s.Args["dst"])
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, expanded...)
+		case s.If != nil:
+			then, err := resolveDirCopy(s.If.Then, dir)
+			if err != nil {
+				return nil, err
+			}
+			els, err := resolveDirCopy(s.If.Else, dir)
+			if err != nil {
+				return nil, err
+			}
+			ib := *s.If
+			ib.Then, ib.Else = then, els
+			ns := s
+			ns.If = &ib
+			out = append(out, ns)
+		case len(s.Block) > 0:
+			sub, err := resolveDirCopy(s.Block, dir)
+			if err != nil {
+				return nil, err
+			}
+			ns := s
+			ns.Block = sub
+			out = append(out, ns)
+		case len(s.Parallel) > 0:
+			sub, err := resolveDirCopy(s.Parallel, dir)
+			if err != nil {
+				return nil, err
+			}
+			ns := s
+			ns.Parallel = sub
+			out = append(out, ns)
+		default:
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+
+// expandTree walks srcRoot (control host) and returns the dir-ensure + file-put
+// steps that deliver it verbatim under dstRoot (target). Refuses a tree whose
+// base64 payload exceeds the ceiling (ADR-0028).
+func expandTree(srcRoot, dstRoot string) ([]proto.Step, error) {
+	info, err := os.Stat(srcRoot)
+	if err != nil {
+		return nil, fmt.Errorf("dir-copy: %v", err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("dir-copy: %s is not a directory", srcRoot)
+	}
+	steps := []proto.Step{{Instruction: "dir-ensure", Args: map[string]string{"path": dstRoot}}}
+	var total int64
+	walkErr := filepath.WalkDir(srcRoot, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(srcRoot, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		dst := filepath.Join(dstRoot, rel)
+		if d.IsDir() {
+			steps = append(steps, proto.Step{Instruction: "dir-ensure", Args: map[string]string{"path": dst}})
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		enc := base64.StdEncoding.EncodeToString(b)
+		total += int64(len(enc))
+		if total > dirCopyCeiling {
+			return fmt.Errorf("dir-copy: %s exceeds the %d MB payload ceiling (ADR-0028)", srcRoot, dirCopyCeiling>>20)
+		}
+		steps = append(steps, proto.Step{Instruction: "file-put", Args: map[string]string{"path": dst, "content": enc}})
+		return nil
+	})
+	if walkErr != nil {
+		return nil, walkErr
+	}
+	return steps, nil
 }
 
 // templateRenderer builds the per-host renderer the orchestrator injects
@@ -330,7 +450,7 @@ func loadInventory(invPath string) (inventory.Inventory, error) {
 // stdlib (signatures live with the defs, self-hosting) plus the Go builtins —
 // so adding a def needs no parser-side edit (#107).
 func stdSignatures() lang.InstructionSig {
-	builtins := map[string][]string{"file-copy": {"src", "dst"}, "template": {"src", "dst"}}
+	builtins := map[string][]string{"file-copy": {"src", "dst"}, "template": {"src", "dst"}, "dir-copy": {"src", "dst"}}
 	return func(name string) ([]string, int, bool) {
 		if p, ok := builtins[name]; ok {
 			return p, len(p), true // builtins have no optional params
@@ -469,6 +589,10 @@ func cleanCmd(args []string) {
 	anyErr := false
 	for _, alias := range aliases {
 		h, _ := inv.Resolve(alias)
+		if h.Local { // a local host pushes nothing, so there is nothing to clean (ADR-0027)
+			fmt.Printf("  %s: nothing to clean (local)\n", alias)
+			continue
+		}
 		s := transport.SSH{
 			User: h.User, Host: h.Address, Port: h.Port, Key: h.Key,
 			KnownHosts: *knownHosts, Insecure: *insecure,
@@ -522,6 +646,9 @@ func statusCmd(args []string) {
 	}
 	dial := func(alias string) transport.Transport {
 		h, _ := inv.Resolve(alias)
+		if h.Local { // reached on the control host, no SSH (ADR-0027)
+			return transport.Local{}
+		}
 		return transport.SSH{
 			User: h.User, Host: h.Address, Port: h.Port, Key: h.Key,
 			KnownHosts: *knownHosts, Insecure: *insecure,
@@ -631,6 +758,13 @@ func stepText(b *strings.Builder, s proto.StepResult, indent string) {
 	if s.Shell != nil && s.Shell.Stdout != "" {
 		for _, line := range strings.Split(strings.TrimRight(s.Shell.Stdout, "\n"), "\n") {
 			fmt.Fprintf(b, "%s    | %s\n", indent, line)
+		}
+	}
+	// An action-shaped def's `--check` preview: what apply would do, marked so it
+	// never reads as a convergence claim (ADR-0029).
+	if s.Preview != "" {
+		for _, line := range strings.Split(strings.TrimRight(s.Preview, "\n"), "\n") {
+			fmt.Fprintf(b, "%s    preview ▸ %s\n", indent, line)
 		}
 	}
 	for _, sub := range s.Sub {

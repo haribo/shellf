@@ -6,10 +6,41 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-07
+
+### Added
+
+- Action-shaped defs can declare a `preview` phase — read-only, `--check` only — that
+  describes what apply would do, rendered as a distinct `preview ▸` block that never
+  reads as a convergence claim (ADR-0029). `docker.compose-up` uses it to show the
+  per-service recreate/start plan (`docker compose up --dry-run`); best-effort, so an
+  old Compose or an unreachable daemon degrades to a plain `would.up`.
+- `dir-copy(src, dst)`: deliver a control-host file tree to the target **verbatim**
+  and **binary-safe** — HTML and images alike, byte-for-byte, idempotent per file
+  (ADR-0028). Resolved control-side into per-file `file-put` steps; refuses a tree
+  over 32 MB with a clear error.
+- Local transport: a host with `local: "true"` in the inventory is provisioned on
+  the control host itself (agent run as a subprocess), no SSH — same agent, plan,
+  and reports as a remote target (ADR-0027).
+- `archive-extract-member(src, dst, member)`: extract a single file from a tarball
+  to `dst` (content-hash idempotent) — compose with `file-download` + `file-mode` to
+  install a binary from a release tarball without a raw `shell` escape.
+
+### Fixed
+
+- Report labels now show `name=value` for each argument (`file-mode(mode=755,
+  path=…)`) instead of bare values in key order, which read as swapped.
+- `archive-extract` re-extracts when the archive at `src` changes, instead of
+  skipping because the destination is non-empty. Convergence is now decided by the
+  archive's sha256, recorded in a `.shellf-archive-sha256` sentinel under `dst`.
+
 ## [0.2.2] - 2026-08-04
 
 ### Fixed
 
+- The `examples/webserver/` example runs as documented: its inventory moved out of the
+  plan's def-package directory (ADR-0014), and the invocation shows flags before the
+  plan file. A CI test now parses every example so it cannot silently drift again.
 - Capturing a `template` result now works: `s = template(src, dst)` then
   `if s.changed { … }` resolves instead of halting with `err.undefinedResult`.
 
@@ -62,7 +93,8 @@ agent that evaluates on the host — "raw shell, but idempotent, previewable, fa
   per-user agent/workdir scoping.
 - Commands: `run`, `status`, `clean`, and `version`.
 
-[Unreleased]: https://github.com/haribo/shellf/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/haribo/shellf/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/haribo/shellf/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/haribo/shellf/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/haribo/shellf/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/haribo/shellf/compare/v0.1.0...v0.2.0

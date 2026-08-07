@@ -36,7 +36,7 @@ Three only.
 
 ### 4. Lifecycle
 
-- **ADR**: in-place edits **only** for a clarification or evolution of the *same* decision (git log = history). A **reversal** (opposite decision) is a **new ADR**; the old one **keeps its body** and gets `Status: Superseded by ADR-XYZ`. An ADR is **never deleted** — a stale one is marked `Superseded`/`Deprecated`, so decisions and their rejected alternatives stay readable in-tree without `git log` archaeology. `Status` ∈ {`Active`, `Superseded by ADR-XYZ`, `Deprecated`}.
+- **ADR**: in-place edits **only** for a clarification or evolution of the *same* decision (git log = history). A **reversal** (opposite decision) is a **new ADR**; the old one **keeps its body** and gets `Status: Superseded by ADR-XYZ`, and the new one carries `Supersedes ADR-XYZ` in return — both sides link, or the chain rots (you can find that a record is obsolete but not what it replaced). An ADR is **never deleted or moved** — a stale one is marked `Superseded`/`Deprecated`, so decisions and their rejected alternatives stay readable in-tree without `git log` archaeology. `Status` ∈ {`Active`, `Superseded by ADR-XYZ`, `Deprecated`}.
 - **Spec**: tracks the design discussion; keep current, no revision logs inside.
 - **Drift detection**: reactive (a divergence is noticed / a focused audit), not calendar-based.
 

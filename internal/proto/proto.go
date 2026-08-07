@@ -167,16 +167,19 @@ func (s Step) Label() string {
 	if s.Instruction == "shell" {
 		return "shell(" + firstLine(s.Args["cmd"]) + ")"
 	}
+	// Label args as `name=value`: Args is a map so positional order is gone, and
+	// bare values in key-sorted order read as swapped (#258). name=value is
+	// unambiguous regardless of order. Keys are sorted for a stable label.
 	keys := make([]string, 0, len(s.Args))
 	for k := range s.Args {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	vals := make([]string, len(keys))
+	parts := make([]string, len(keys))
 	for i, k := range keys {
-		vals[i] = firstLine(s.Args[k]) // truncate long/multi-line values (e.g. file-write content)
+		parts[i] = k + "=" + firstLine(s.Args[k]) // truncate long/multi-line values (e.g. file-write content)
 	}
-	return s.Instruction + "(" + strings.Join(vals, ", ") + ")"
+	return s.Instruction + "(" + strings.Join(parts, ", ") + ")"
 }
 
 func firstLine(cmd string) string {
@@ -205,7 +208,8 @@ type StepResult struct {
 	Tag      string              `json:"tag,omitempty"`
 	Changed  bool                `json:"changed,omitempty"`
 	Shell    *engine.ShellResult `json:"shell,omitempty"`
-	Fields   []engine.FieldDiff  `json:"fields,omitempty"` // status mode: observed vs desired (ADR-0013)
+	Fields   []engine.FieldDiff  `json:"fields,omitempty"`  // status mode: observed vs desired (ADR-0013)
+	Preview  string              `json:"preview,omitempty"` // check mode: what an action would do (ADR-0029)
 	Sub      []StepResult        `json:"sub,omitempty"`
 }
 

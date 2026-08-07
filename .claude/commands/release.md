@@ -37,7 +37,11 @@ explicit human "go" each time — this overrides any standing "be autonomous".**
 - `gh pr create --base main --head develop --title "chore(release): vX.Y.Z"` with a
   short body. Wait until every check is green (`gh pr checks`).
 - **Stop. Show the PR and ask the user to approve the merge to `main`.**
-- On explicit approval only: `gh pr merge <n> --merge` (merge commit, never squash).
+- On explicit approval only:
+  `gh pr merge <n> --merge --subject "chore(release): vX.Y.Z (#<n>)" --body ""`
+  (merge commit, never squash). The explicit `--subject` is required: without it
+  GitHub writes `Merge pull request #<n> from …`, the only non-conventional
+  subject in the history.
 
 ### 4. Tag and push — **APPROVAL GATE 2**
 
