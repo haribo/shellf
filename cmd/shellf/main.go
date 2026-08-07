@@ -760,6 +760,13 @@ func stepText(b *strings.Builder, s proto.StepResult, indent string) {
 			fmt.Fprintf(b, "%s    | %s\n", indent, line)
 		}
 	}
+	// An action-shaped def's `--check` preview: what apply would do, marked so it
+	// never reads as a convergence claim (ADR-0029).
+	if s.Preview != "" {
+		for _, line := range strings.Split(strings.TrimRight(s.Preview, "\n"), "\n") {
+			fmt.Fprintf(b, "%s    preview ▸ %s\n", indent, line)
+		}
+	}
 	for _, sub := range s.Sub {
 		stepText(b, sub, indent+"  ")
 	}

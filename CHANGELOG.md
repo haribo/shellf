@@ -8,6 +8,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Action-shaped defs can declare a `preview` phase — read-only, `--check` only — that
+  describes what apply would do, rendered as a distinct `preview ▸` block that never
+  reads as a convergence claim (ADR-0029). `docker.compose-up` uses it to show the
+  per-service recreate/start plan (`docker compose up --dry-run`); best-effort, so an
+  old Compose or an unreachable daemon degrades to a plain `would.up`.
 - `dir-copy(src, dst)`: deliver a control-host file tree to the target **verbatim**
   and **binary-safe** — HTML and images alike, byte-for-byte, idempotent per file
   (ADR-0028). Resolved control-side into per-file `file-put` steps; refuses a tree
