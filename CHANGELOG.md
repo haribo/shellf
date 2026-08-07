@@ -6,6 +6,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `archive-extract-member(src, dst, member)`: extract a single file from a tarball
+  to `dst` (content-hash idempotent) — compose with `file-download` + `file-mode` to
+  install a binary from a release tarball without a raw `shell` escape.
+
 ### Fixed
 
 - Report labels now show `name=value` for each argument (`file-mode(mode=755,
