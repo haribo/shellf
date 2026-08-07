@@ -94,7 +94,7 @@ docker exec "$cname" grep -q "made by a user def" /tmp/shellf-e2e/custom || fail
 docker exec "$cname" test -f /tmp/shellf-e2e/imported || fail "the imported def did not run on the target"
 # the secret is redacted in shellf's output but written for real on the target
 printf '%s' "$out" | grep -q 'SEKRET-abc123' && fail "the secret leaked into shellf's output"
-printf '%s' "$out" | grep -q 'file-write(\*\*\*' || fail "the secret was not redacted in the report"
+printf '%s' "$out" | grep -q 'content=\*\*\*' || fail "the secret was not redacted in the report"
 docker exec "$cname" grep -q 'SEKRET-abc123' /tmp/shellf-e2e/sec || fail "the secret was not written to the target"
 # the agent workdir (where the secret-bearing request lands) is on tmpfs, not on
 # persistent disk (ADR-0025): no shellf request file is left under /tmp.

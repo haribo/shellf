@@ -34,12 +34,12 @@ func TestIfBlock_CondLabel(t *testing.T) {
 		Cond:  &Step{Instruction: "apt.install", Args: map[string]string{"pkg": "nginx"}},
 		Match: &ResultRef{Category: "err", Tag: "runtime"},
 	}
-	if got := inlineIf.CondLabel(); got != "apt.install(nginx) == err.runtime" {
+	if got := inlineIf.CondLabel(); got != "apt.install(pkg=nginx) == err.runtime" {
 		t.Errorf("inline+match label: %q", got)
 	}
 	// Inline instruction, no match → bare instruction label.
 	bare := &IfBlock{Cond: &Step{Instruction: "dir-exists", Args: map[string]string{"path": "/opt"}}}
-	if got := bare.CondLabel(); got != "dir-exists(/opt)" {
+	if got := bare.CondLabel(); got != "dir-exists(path=/opt)" {
 		t.Errorf("bare inline label: %q", got)
 	}
 }
@@ -47,7 +47,7 @@ func TestIfBlock_CondLabel(t *testing.T) {
 func TestStep_Label(t *testing.T) {
 	// Args are sorted by key and joined.
 	s := Step{Instruction: "service", Args: map[string]string{"name": "nginx", "enable": "true"}}
-	if got := s.Label(); got != "service(true, nginx)" { // enable < name
+	if got := s.Label(); got != "service(enable=true, name=nginx)" { // sorted by key
 		t.Errorf("instruction label: %q", got)
 	}
 	if got := (Step{Parallel: []Step{{}}}).Label(); got != "parallel" {
@@ -110,5 +110,14 @@ func TestResolveRefs_UndefinedInNestedBlock(t *testing.T) {
 	}}}
 	if _, err := ResolveRefs(steps, map[string]string{}, "sh"); err == nil {
 		t.Fatal("an undefined ref inside a parallel block must error")
+	}
+}
+
+// Regression for #258: args are labelled name=value, not bare values in sorted
+// order — the latter reads as swapped, e.g. file-mode(755, /path).
+func TestStep_Label_NameValue(t *testing.T) {
+	s := Step{Instruction: "file-mode", Args: map[string]string{"path": "/opt/backup.sh", "mode": "755"}}
+	if got := s.Label(); got != "file-mode(mode=755, path=/opt/backup.sh)" {
+		t.Fatalf("label should be name=value (sorted by name): %q", got)
 	}
 }
