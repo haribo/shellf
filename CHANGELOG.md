@@ -6,6 +6,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Absolute `src` paths in `dir-copy` and `template` are honored (used as-is) instead
+  of being silently joined onto the plan directory (#281).
+
 ## [0.3.0] - 2026-08-07
 
 ### Added

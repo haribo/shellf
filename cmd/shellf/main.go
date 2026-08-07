@@ -210,7 +210,7 @@ func resolveDirCopy(steps []proto.Step, dir string) ([]proto.Step, error) {
 			if s.Refs["src"] != "" || s.Refs["dst"] != "" {
 				return nil, fmt.Errorf("dir-copy: src and dst must be literal paths, not per-host refs")
 			}
-			expanded, err := expandTree(filepath.Join(dir, s.Args["src"]), s.Args["dst"])
+			expanded, err := expandTree(srcPath(dir, s.Args["src"]), s.Args["dst"])
 			if err != nil {
 				return nil, err
 			}
@@ -250,6 +250,16 @@ func resolveDirCopy(steps []proto.Step, dir string) ([]proto.Step, error) {
 		}
 	}
 	return out, nil
+}
+
+// srcPath resolves a control-side `src`: absolute paths are used as-is, relative
+// ones are joined to the plan dir (#281). Shared by `dir-copy` and `template` so
+// the two cannot drift.
+func srcPath(planDir, src string) string {
+	if filepath.IsAbs(src) {
+		return src
+	}
+	return filepath.Join(planDir, src)
 }
 
 // expandTree walks srcRoot (control host) and returns the dir-ensure + file-put
@@ -304,7 +314,7 @@ func expandTree(srcRoot, dstRoot string) ([]proto.Step, error) {
 // `@{var}` over the host's vars. `src` stays a control-host path.
 func templateRenderer(planDir string) orchestrator.TemplateRenderer {
 	return func(src string, vars map[string]string) (string, error) {
-		return renderTemplate(filepath.Join(planDir, src), vars)
+		return renderTemplate(srcPath(planDir, src), vars)
 	}
 }
 
