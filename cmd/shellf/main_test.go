@@ -572,3 +572,34 @@ func TestReportText_Preview(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveDirCopy_AbsoluteSrc(t *testing.T) {
+	// #281: an absolute src must be used as-is, not glued onto the plan dir.
+	src := t.TempDir() // an absolute path unrelated to the plan dir
+	if err := os.WriteFile(filepath.Join(src, "f"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	planDir := t.TempDir() // a different dir
+	out, err := resolveDirCopy([]proto.Step{{Instruction: "dir-copy", Args: map[string]string{"src": src, "dst": "/d"}}}, planDir)
+	if err != nil {
+		t.Fatalf("absolute src must resolve as-is (#281): %v", err)
+	}
+	var puts int
+	for _, s := range out {
+		if s.Instruction == "file-put" {
+			puts++
+		}
+	}
+	if puts != 1 {
+		t.Fatalf("expected the file under the absolute src, got %d file-put", puts)
+	}
+}
+
+func TestSrcPath(t *testing.T) {
+	if got := srcPath("/plan/dir", "/abs/x"); got != "/abs/x" {
+		t.Fatalf("absolute src should be used as-is: %q", got)
+	}
+	if got := srcPath("/plan/dir", "rel/x"); got != "/plan/dir/rel/x" {
+		t.Fatalf("relative src should join the plan dir: %q", got)
+	}
+}
