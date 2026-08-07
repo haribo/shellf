@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -450,5 +452,100 @@ func TestVersionLine(t *testing.T) {
 	version = "v9.9.9"
 	if got := versionLine(); got != "shellf v9.9.9" {
 		t.Fatalf("versionLine: %q", got)
+	}
+}
+
+func TestResolveDirCopy_ExpandsTree(t *testing.T) {
+	dir := t.TempDir()
+	// a small tree with a nested dir and a binary file
+	if err := os.MkdirAll(filepath.Join(dir, "site", "assets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "site", "index.html"), []byte("<h1>hi</h1>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "site", "assets", "logo.bin"), []byte{0x00, 0xff, 0x10}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	steps := []proto.Step{{Instruction: "dir-copy", Args: map[string]string{"src": "site", "dst": "/var/www/app"}}}
+	out, err := resolveDirCopy(steps, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dirEnsures, filePuts int
+	var binContent string
+	for _, s := range out {
+		switch s.Instruction {
+		case "dir-ensure":
+			dirEnsures++
+		case "file-put":
+			filePuts++
+			if s.Args["path"] == "/var/www/app/assets/logo.bin" {
+				binContent = s.Args["content"]
+			}
+		default:
+			t.Fatalf("unexpected step %q", s.Instruction)
+		}
+	}
+	if dirEnsures < 2 || filePuts != 2 { // dst root + assets/ ; index.html + logo.bin
+		t.Fatalf("expansion: %d dir-ensure, %d file-put", dirEnsures, filePuts)
+	}
+	// the binary file is base64 of the raw bytes (byte-for-byte)
+	if got, _ := base64.StdEncoding.DecodeString(binContent); !bytes.Equal(got, []byte{0x00, 0xff, 0x10}) {
+		t.Fatalf("binary member not base64-preserved: %v", got)
+	}
+}
+
+func TestResolveDirCopy_Errors(t *testing.T) {
+	dir := t.TempDir()
+	// missing src
+	if _, err := resolveDirCopy([]proto.Step{{Instruction: "dir-copy", Args: map[string]string{"src": "nope", "dst": "/x"}}}, dir); err == nil {
+		t.Fatal("a missing src must error")
+	}
+	// a per-host ref for src/dst is rejected
+	if _, err := resolveDirCopy([]proto.Step{{Instruction: "dir-copy", Args: map[string]string{"dst": "/x"}, Refs: map[string]string{"src": "v"}}}, dir); err == nil {
+		t.Fatal("a ref src must error")
+	}
+}
+
+func TestResolveDirCopy_RecursesAndCeiling(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "t"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "t", "a"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dc := proto.Step{Instruction: "dir-copy", Args: map[string]string{"src": "t", "dst": "/d"}}
+
+	// dir-copy nested in if / block / parallel is expanded in place.
+	steps := []proto.Step{
+		{If: &proto.IfBlock{Then: []proto.Step{dc}, Else: []proto.Step{dc}}},
+		{Block: []proto.Step{dc}},
+		{Parallel: []proto.Step{dc}},
+	}
+	out, err := resolveDirCopy(steps, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasPut := func(steps []proto.Step) bool {
+		for _, s := range steps {
+			if s.Instruction == "file-put" {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasPut(out[0].If.Then) || !hasPut(out[0].If.Else) || !hasPut(out[1].Block) || !hasPut(out[2].Parallel) {
+		t.Fatalf("dir-copy not expanded inside if/block/parallel: %+v", out)
+	}
+
+	// the payload ceiling is enforced with a clear error.
+	old := dirCopyCeiling
+	dirCopyCeiling = 1 // 1 byte
+	defer func() { dirCopyCeiling = old }()
+	if _, err := resolveDirCopy([]proto.Step{dc}, dir); err == nil || !strings.Contains(err.Error(), "ceiling") {
+		t.Fatalf("an oversized tree must be refused: %v", err)
 	}
 }

@@ -8,6 +8,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `dir-copy(src, dst)`: deliver a control-host file tree to the target **verbatim**
+  and **binary-safe** — HTML and images alike, byte-for-byte, idempotent per file
+  (ADR-0028). Resolved control-side into per-file `file-put` steps; refuses a tree
+  over 32 MB with a clear error.
 - Local transport: a host with `local: "true"` in the inventory is provisioned on
   the control host itself (agent run as a subprocess), no SSH — same agent, plan,
   and reports as a remote target (ADR-0027).
