@@ -6,6 +6,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Report labels now show `name=value` for each argument (`file-mode(mode=755,
+  path=…)`) instead of bare values in key order, which read as swapped.
+
 ## [0.2.2] - 2026-08-04
 
 ### Fixed
