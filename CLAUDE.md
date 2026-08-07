@@ -29,9 +29,9 @@ Rules must be concise. One rule per line when possible.
 
 ## Design ↔ code
 
-- Code is never source of truth. Code/design disagreement = code is the bug, OR design needs an explicit amendment — never both silently.
-- Design-first: if the design is silent on a needed behavior, write/amend the design (`DESIGN.md`, `docs/`), then code.
-- No code without a design it implements. Anchor a confirmed non-obvious decision (especially after a rejected alternative) in `docs/design/` or `docs/adr/` before building on it.
+- Code is never source of truth — a code/design disagreement means the code is the bug, or the design needs an explicit amendment, never both silently
+- If the design is silent on a needed behavior, write the design first, then the code
+- Anchor a confirmed non-obvious decision — especially one where an alternative was rejected — in the design docs or an ADR before building on it
 
 ## Discipline (user-requested)
 
@@ -54,7 +54,10 @@ Rules must be concise. One rule per line when possible.
 2. `docs/CONVERSATION.md` — design-discussion history (the WHY).
 3. `docs/language.md` — language spec (stable primitives only).
 - Documentation strategy: `docs/adr/0001-documentation-strategy.md`.
-- ADR lifecycle: never delete an ADR; a reversal is a **new** ADR that supersedes the old (marked `Superseded`). In-place edits only for same-decision clarifications. See ADR-0001 §4.
+- ADR lifecycle: never delete an ADR; a reversal is a **new** ADR, and both sides carry the link — `Superseded by ADR-NNN` on the old, `Supersedes ADR-MMM` on the new. A one-sided link is how the chain rots
+- An ADR whose decision no longer applies, with no replacement, is marked `Deprecated` — never edited away or moved
+- In-place edits only for corrections of form and for clarifications that do not change the decision
+- ADR lifecycle details and the full status vocabulary: see ADR-0001 §4
 - All docs under `docs/` (except root `DESIGN.md`/`README.md`). Decisions with rejected alternatives → `docs/adr/`.
 
 ## Git

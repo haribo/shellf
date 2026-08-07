@@ -12,11 +12,15 @@ rules_version = 1
 
 [rules.adr-lifecycle]
 adopted = "2026-08-04"
-hash = "9939a4841672"
+hash = "aabd778ef08e"
 
 [rules.bugfix-evidence]
 adopted = "2026-08-04"
 hash = "9a65081d690c"
+
+[rules.design-first]
+adopted = "2026-08-04"
+hash = "6d93ba90db46"
 
 [rules.measurable-defect]
 adopted = "2026-08-04"
