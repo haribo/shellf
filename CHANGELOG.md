@@ -36,6 +36,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The `examples/webserver/` example runs as documented: its inventory moved out of the
+  plan's def-package directory (ADR-0014), and the invocation shows flags before the
+  plan file. A CI test now parses every example so it cannot silently drift again.
 - Capturing a `template` result now works: `s = template(src, dst)` then
   `if s.changed { … }` resolves instead of halting with `err.undefinedResult`.
 

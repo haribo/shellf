@@ -104,7 +104,10 @@ later blocks.
 
 ## Writing shellf
 
-A worked tour. The full example is in [`examples/webserver/`](examples/webserver/).
+A worked tour. The full example is under [`examples/`](examples/): the plan in
+[`examples/webserver/`](examples/webserver/) with its inventory alongside at
+[`examples/inventory.shellf`](examples/inventory.shellf) — kept out of the plan's
+package directory (ADR-0014).
 
 **Variables** come from the inventory (per-host) or `--set`. Use them as bare
 identifiers, or `${name}` inside strings:
