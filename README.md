@@ -104,10 +104,12 @@ later blocks.
 
 ## Writing shellf
 
-A worked tour. The full example is under [`examples/`](examples/): the plan in
-[`examples/webserver/`](examples/webserver/) with its inventory alongside at
-[`examples/inventory.shellf`](examples/inventory.shellf) — kept out of the plan's
-package directory (ADR-0014).
+A worked tour. Runnable examples live under [`examples/`](examples/) — start with
+[`webserver/`](examples/webserver/), then the containerized [`blog/`](examples/blog/)
+for user defs, imports, secrets, templates, and docker/ufw; see
+[`examples/README.md`](examples/README.md). The shared inventory sits at
+[`examples/inventory.shellf`](examples/inventory.shellf), outside the plan directories
+(a plan's directory is its def package, ADR-0014).
 
 **Variables** come from the inventory (per-host) or `--set`. Use them as bare
 identifiers, or `${name}` inside strings:

@@ -1,0 +1,9 @@
+# A def shared across examples, pulled in with a local import (ADR-0015). Sets a
+# login banner. Action-shaped: writing the banner is cheap and always correct.
+def banner(text: str) as root {
+    apply {
+        r = shell { printf '%s\n' "$text" > /etc/motd }
+        if !r { return err.runtime(r) }
+        return ok.set
+    }
+}

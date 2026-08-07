@@ -1,0 +1,11 @@
+# A user def for the blog package (ADR-0014): the plan's own directory is loaded
+# as a def package, so `data-dir` resolves by name with no import. Idempotent by
+# an observed field, like any stdlib def.
+def data-dir(path: str) as root {
+    observe { return state(present: shell { test -d "$path" }.exit == 0) }
+    apply {
+        r = shell { mkdir -p "$path" && chmod 700 "$path" }
+        if !r { return err.runtime(r) }
+        return ok.created
+    }
+}
