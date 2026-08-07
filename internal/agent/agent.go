@@ -269,7 +269,7 @@ func runStep(step proto.Step, ex engine.Executor, m engine.Mode, scope map[strin
 	if step.Bind != "" {
 		scope[step.Bind] = res
 	}
-	return proto.StepResult{Label: step.Label(), Category: res.Category.String(), Tag: res.Tag, Changed: res.Changed, Shell: res.Shell, Fields: res.Fields}
+	return proto.StepResult{Label: step.Label(), Category: res.Category.String(), Tag: res.Tag, Changed: res.Changed, Shell: res.Shell, Fields: res.Fields, Preview: res.Preview}
 }
 
 func copyScope(s map[string]engine.Result) map[string]engine.Result {

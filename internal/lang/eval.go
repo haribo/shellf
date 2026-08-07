@@ -80,6 +80,13 @@ func EvalDef(def Def, args, with map[string]string, ex engine.Executor, mode eng
 	if mode == engine.Check {
 		r := engine.Would(retTag(def))
 		r.Changed = true // it would act
+		// A `preview` phase describes what apply would do, read-only, best-effort
+		// (ADR-0029). It never gates convergence; a failing preview yields none.
+		for _, ph := range def.Phases {
+			if ph.Name == "preview" {
+				r.Preview = ev.evalPreview(ph)
+			}
+		}
 		return r, nil
 	}
 
@@ -251,6 +258,22 @@ func stringify(v value) string {
 		return strings.TrimRight(t.Stdout, " \t\r\n") // a bare shell field → its output
 	}
 	return ""
+}
+
+// evalPreview runs a `preview` phase's shells (read-only, check mode) and returns
+// their combined stdout as informational text. Best-effort: a shell that fails or
+// is absent just contributes nothing (ADR-0029). It never returns an outcome.
+func (ev *evaluator) evalPreview(ph Phase) string {
+	var out []string
+	for _, s := range ph.Stmts {
+		ev.evalStmt(s)
+		if sr, ok := ev.last.(engine.ShellResult); ok {
+			if t := strings.TrimRight(sr.Stdout, " \t\r\n"); t != "" {
+				out = append(out, t)
+			}
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 func (ev *evaluator) evalPhase(ph Phase) *Outcome {

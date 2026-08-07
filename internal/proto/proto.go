@@ -208,7 +208,8 @@ type StepResult struct {
 	Tag      string              `json:"tag,omitempty"`
 	Changed  bool                `json:"changed,omitempty"`
 	Shell    *engine.ShellResult `json:"shell,omitempty"`
-	Fields   []engine.FieldDiff  `json:"fields,omitempty"` // status mode: observed vs desired (ADR-0013)
+	Fields   []engine.FieldDiff  `json:"fields,omitempty"`  // status mode: observed vs desired (ADR-0013)
+	Preview  string              `json:"preview,omitempty"` // check mode: what an action would do (ADR-0029)
 	Sub      []StepResult        `json:"sub,omitempty"`
 }
 

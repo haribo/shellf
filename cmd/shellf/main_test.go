@@ -549,3 +549,26 @@ func TestResolveDirCopy_RecursesAndCeiling(t *testing.T) {
 		t.Fatalf("an oversized tree must be refused: %v", err)
 	}
 }
+
+func TestReportText_Preview(t *testing.T) {
+	reports := []orchestrator.BlockReport{{
+		Target: "web",
+		Hosts: []orchestrator.HostOutcome{{
+			Host: "app1",
+			Response: proto.Response{Results: []proto.StepResult{
+				{Label: "compose-up(dir=/opt/app)", Category: "would", Tag: "up",
+					Preview: "Recreate app-web-1\nRecreate app-worker-1"},
+			}},
+		}},
+	}}
+	text, _ := reportText(reports)
+	for _, want := range []string{
+		"compose-up(dir=/opt/app)", "would.up",
+		"preview ▸ Recreate app-web-1",
+		"preview ▸ Recreate app-worker-1",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("preview not rendered (%q) in:\n%s", want, text)
+		}
+	}
+}

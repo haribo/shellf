@@ -233,3 +233,45 @@ def touch(path: str) {
 		t.Fatalf("check: want tag-less would, got %s", res)
 	}
 }
+
+// ADR-0029: a `preview` phase attaches informational output in check mode, never
+// runs in apply, and is best-effort (a failing shell yields no preview).
+func TestEvalDef_Preview(t *testing.T) {
+	src := `def act(x: str) {
+		preview { shell { echo hi } }
+		apply { r = shell { echo done }  if !r { return err.x(r) }  return ok.up }
+	}`
+	defs, err := ParseDefs(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// check mode: preview shell runs, its stdout rides on the result
+	f := &evalFake{resp: map[string]engine.ShellResult{"echo hi": {Exit: 0, Stdout: "Recreate web\nRecreate worker\n"}}}
+	res, err := EvalDef(defs[0], map[string]string{"x": "y"}, nil, f, engine.Check)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Category != engine.WOULD || res.Preview != "Recreate web\nRecreate worker" {
+		t.Fatalf("check: want would + preview text, got %s preview=%q", res, res.Preview)
+	}
+	if f.calls["echo done"] { // apply shell must NOT run in check
+		t.Fatal("apply ran during check")
+	}
+
+	// apply mode: the preview phase is not run
+	f2 := &evalFake{resp: map[string]engine.ShellResult{"echo done": {Exit: 0}, "echo hi": {Exit: 0, Stdout: "x"}}}
+	if _, err := EvalDef(defs[0], map[string]string{"x": "y"}, nil, f2, engine.Apply); err != nil {
+		t.Fatal(err)
+	}
+	if f2.calls["echo hi"] {
+		t.Fatal("preview must not run in apply mode")
+	}
+
+	// best-effort: a preview shell that produces no stdout yields no preview,
+	// but the step still previews would.up
+	f3 := &evalFake{resp: map[string]engine.ShellResult{"echo hi": {Exit: 127}}}
+	res3, _ := EvalDef(defs[0], map[string]string{"x": "y"}, nil, f3, engine.Check)
+	if res3.Category != engine.WOULD || res3.Preview != "" {
+		t.Fatalf("failing preview must degrade to plain would: %s preview=%q", res3, res3.Preview)
+	}
+}
