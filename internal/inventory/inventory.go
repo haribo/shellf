@@ -10,6 +10,7 @@ type Host struct {
 	Port        string
 	Key         string
 	Interpreter string            // shell interpreter for unannotated shells (ADR-0012)
+	Local       bool              // reached by the local transport, not SSH (ADR-0027)
 	Vars        map[string]string // free-form per-host variables
 }
 
@@ -38,6 +39,9 @@ func (inv Inventory) Resolve(alias string) (Host, bool) {
 	}
 	if h.Interpreter == "" {
 		h.Interpreter = inv.Defaults.Interpreter
+	}
+	if !h.Local {
+		h.Local = inv.Defaults.Local
 	}
 	// Merge vars: defaults first, host overrides.
 	merged := map[string]string{}

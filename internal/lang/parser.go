@@ -346,6 +346,11 @@ func (p *parser) host() inventory.Host {
 			h.Port = v
 		case "key":
 			h.Key = v
+		case "local":
+			if v != "true" && v != "false" {
+				p.fail("local must be \"true\" or \"false\", got %q", v)
+			}
+			h.Local = v == "true"
 		case "interpreter":
 			if !validInterp(v) {
 				p.fail("unknown interpreter %q (want sh/bash/dash/nu/raw)", v)

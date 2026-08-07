@@ -143,6 +143,9 @@ func runCmd(args []string) {
 
 	dial := func(alias string) transport.Transport {
 		h, _ := inv.Resolve(alias)
+		if h.Local { // reached on the control host, no SSH (ADR-0027)
+			return transport.Local{}
+		}
 		return transport.SSH{
 			User: h.User, Host: h.Address, Port: h.Port, Key: h.Key,
 			KnownHosts: *knownHosts, Insecure: *insecure, AgentTTL: *agentTTL,
@@ -469,6 +472,10 @@ func cleanCmd(args []string) {
 	anyErr := false
 	for _, alias := range aliases {
 		h, _ := inv.Resolve(alias)
+		if h.Local { // a local host pushes nothing, so there is nothing to clean (ADR-0027)
+			fmt.Printf("  %s: nothing to clean (local)\n", alias)
+			continue
+		}
 		s := transport.SSH{
 			User: h.User, Host: h.Address, Port: h.Port, Key: h.Key,
 			KnownHosts: *knownHosts, Insecure: *insecure,
@@ -522,6 +529,9 @@ func statusCmd(args []string) {
 	}
 	dial := func(alias string) transport.Transport {
 		h, _ := inv.Resolve(alias)
+		if h.Local { // reached on the control host, no SSH (ADR-0027)
+			return transport.Local{}
+		}
 		return transport.SSH{
 			User: h.User, Host: h.Address, Port: h.Port, Key: h.Key,
 			KnownHosts: *knownHosts, Insecure: *insecure,
