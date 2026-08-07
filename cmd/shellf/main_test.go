@@ -508,3 +508,44 @@ func TestResolveDirCopy_Errors(t *testing.T) {
 		t.Fatal("a ref src must error")
 	}
 }
+
+func TestResolveDirCopy_RecursesAndCeiling(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "t"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "t", "a"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dc := proto.Step{Instruction: "dir-copy", Args: map[string]string{"src": "t", "dst": "/d"}}
+
+	// dir-copy nested in if / block / parallel is expanded in place.
+	steps := []proto.Step{
+		{If: &proto.IfBlock{Then: []proto.Step{dc}, Else: []proto.Step{dc}}},
+		{Block: []proto.Step{dc}},
+		{Parallel: []proto.Step{dc}},
+	}
+	out, err := resolveDirCopy(steps, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasPut := func(steps []proto.Step) bool {
+		for _, s := range steps {
+			if s.Instruction == "file-put" {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasPut(out[0].If.Then) || !hasPut(out[0].If.Else) || !hasPut(out[1].Block) || !hasPut(out[2].Parallel) {
+		t.Fatalf("dir-copy not expanded inside if/block/parallel: %+v", out)
+	}
+
+	// the payload ceiling is enforced with a clear error.
+	old := dirCopyCeiling
+	dirCopyCeiling = 1 // 1 byte
+	defer func() { dirCopyCeiling = old }()
+	if _, err := resolveDirCopy([]proto.Step{dc}, dir); err == nil || !strings.Contains(err.Error(), "ceiling") {
+		t.Fatalf("an oversized tree must be refused: %v", err)
+	}
+}

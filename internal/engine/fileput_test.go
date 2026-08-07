@@ -54,3 +54,13 @@ func TestFilePut_PreCheck(t *testing.T) {
 		t.Fatalf("valid input must pass pre-check: %s", r)
 	}
 }
+
+func TestFilePut_Metadata(t *testing.T) {
+	fp := FilePut{Path: "/x", Content: b64([]byte("y"))}
+	if fp.Name() != "file-put" || fp.ChangedTag() != "written" {
+		t.Fatalf("metadata: %s / %s", fp.Name(), fp.ChangedTag())
+	}
+	if fp.Preview(ShellExecutor{}) != nil {
+		t.Fatal("file-put has no diff preview")
+	}
+}

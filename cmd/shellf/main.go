@@ -196,7 +196,8 @@ func loadPlanPackage(planPath, invPath string, baseVars, setVars map[string]stri
 
 // dirCopyCeiling bounds the base64-encoded payload a single dir-copy may carry, so
 // a large tree is refused with a clear error instead of OOMing the agent (ADR-0028).
-const dirCopyCeiling = 32 << 20
+// A var, not a const, so a test can lower it without a 32 MB fixture.
+var dirCopyCeiling int64 = 32 << 20
 
 // resolveDirCopy expands every `dir-copy(src, dst)` step into a `dir-ensure` per
 // directory and a `file-put(dst, base64)` per file, reading src relative to the
