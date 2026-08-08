@@ -6,6 +6,16 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-08
+
+### Added
+
+- `docker.compose-restart(dir, service)` — action-shaped handler that restarts one
+  service, or the whole stack when `service` is omitted. Gate it on a real change
+  (`if cfg.changed { … }`), like `service-restart`: a mounted-file edit never
+  recreates a container, so `compose-up` alone leaves the stale config live.
+  `--check` previews it read-only via `docker compose --dry-run restart` (#287).
+
 ## [0.3.1] - 2026-08-07
 
 ### Fixed
@@ -100,7 +110,8 @@ agent that evaluates on the host — "raw shell, but idempotent, previewable, fa
   per-user agent/workdir scoping.
 - Commands: `run`, `status`, `clean`, and `version`.
 
-[Unreleased]: https://github.com/haribo/shellf/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/haribo/shellf/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/haribo/shellf/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/haribo/shellf/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/haribo/shellf/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/haribo/shellf/compare/v0.2.1...v0.2.2

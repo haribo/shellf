@@ -1,0 +1,33 @@
+# Restart a compose stack (ADR-0013 action-shaped). A restart is a handler: it
+# always acts, so there is NO observe — the caller gates it on a real change
+# (`if cfg.changed { … }`), exactly like `service-restart`. It exists because a
+# mounted-file edit never recreates a container: `compose-up` correctly sees no
+# compose/image change and the container keeps serving the stale config.
+# `service` = "" restarts every service of the stack; a name restarts just that one.
+def compose-restart(dir: str, service: str = "") as root {
+    # `--check` preview (ADR-0029): `docker compose --dry-run restart` lists the
+    # containers it would bounce without touching them. Best-effort — an older
+    # Compose or an unreachable daemon simply yields no preview.
+    preview {
+        shell {
+            cd "$dir"
+            if [ -n "$service" ]; then
+                docker compose --dry-run restart "$service" 2>&1
+            else
+                docker compose --dry-run restart 2>&1
+            fi
+        }
+    }
+    apply {
+        r = shell {
+            cd "$dir"
+            if [ -n "$service" ]; then
+                docker compose restart "$service"
+            else
+                docker compose restart
+            fi
+        }
+        if !r { return err.runtime(r) }
+        return ok.restarted
+    }
+}

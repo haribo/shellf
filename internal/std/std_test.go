@@ -73,6 +73,7 @@ func TestStdlib_AllPresent(t *testing.T) {
 		// deployment dogfood additions
 		"file-mode", "file-replace", "systemd-daemon-reload", "service-restart", "service-reload",
 		"apt.update", "ufw.default", "user-ensure", "git-sync", "http-check", "wait-for",
+		"docker.compose-restart",
 	} {
 		if _, ok := Lookup(name); !ok {
 			t.Errorf("missing def %q", name)
@@ -192,6 +193,41 @@ func TestComposeUp_ActionShaped(t *testing.T) {
 	if got := eval(t, "docker.compose-up", map[string]string{"dir": "/opt/app"},
 		&fakeExec{apply: converged, applyMatch: "compose up"}, engine.Apply).String(); got != "ok.up" {
 		t.Fatalf("compose-up without build: got %s, want ok.up", got)
+	}
+}
+
+// #287 — a restart is a handler: no observe, it always acts, and the caller
+// gates it on `.changed` (same contract as service-restart).
+func TestComposeRestart_ActionShaped(t *testing.T) {
+	// Whole stack: omitting the optional `service` resolves to the default and runs.
+	if got := eval(t, "docker.compose-restart", map[string]string{"dir": "/opt/app"},
+		&fakeExec{apply: converged, applyMatch: "compose restart"}, engine.Apply).String(); got != "ok.restarted" {
+		t.Fatalf("compose-restart whole stack: got %s, want ok.restarted", got)
+	}
+	// A named service restarts just that one.
+	if got := eval(t, "docker.compose-restart", map[string]string{"dir": "/opt/app", "service": "grafana"},
+		&fakeExec{apply: converged, applyMatch: "compose restart"}, engine.Apply).String(); got != "ok.restarted" {
+		t.Fatalf("compose-restart named service: got %s, want ok.restarted", got)
+	}
+	// A failing apply surfaces err.runtime.
+	if got := eval(t, "docker.compose-restart", map[string]string{"dir": "/opt/app", "service": "grafana"},
+		&fakeExec{apply: drift, applyMatch: "compose restart"}, engine.Apply).String(); got != "err.runtime" {
+		t.Fatalf("compose-restart apply-fail: got %s, want err.runtime", got)
+	}
+	// `--check` previews via the read-only `--dry-run` and never runs the real
+	// restart: every shell it issues carries the flag.
+	f := &fakeExec{observe: converged, apply: converged, applyMatch: "compose restart"}
+	if got := eval(t, "docker.compose-restart", map[string]string{"dir": "/opt/app", "service": "grafana"},
+		f, engine.Check).String(); got != "would.restarted" {
+		t.Fatalf("compose-restart check: got %s, want would.restarted", got)
+	}
+	if len(f.calls) == 0 {
+		t.Fatal("check must issue the preview shell (a missing preview block would pass vacuously)")
+	}
+	for _, s := range f.calls {
+		if !strings.Contains(s, "--dry-run") {
+			t.Fatalf("check must not run the real restart, got shell: %s", s)
+		}
 	}
 }
 
