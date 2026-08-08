@@ -33,6 +33,11 @@ jobs:
           done
 
       - name: Validate issue reference
+        # Dependabot has no issue to reference, and its `ci:`/`build:` prefixes are
+        # deliberately not in the chore/style exemption above — so this gate was
+        # unsatisfiable for it (#291). Only this step is skipped: the conventional
+        # title and commit checks still apply to the bot.
+        if: github.actor != 'dependabot[bot]'
         env:
           TITLE: ${{ github.event.pull_request.title }}
           BODY: ${{ github.event.pull_request.body }}
