@@ -6,6 +6,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `docker.compose-restart(dir, service)` — action-shaped handler that restarts one
+  service, or the whole stack when `service` is omitted. Gate it on a real change
+  (`if cfg.changed { … }`), like `service-restart`: a mounted-file edit never
+  recreates a container, so `compose-up` alone leaves the stale config live.
+  `--check` previews it read-only via `docker compose --dry-run restart` (#287).
+
 ## [0.3.1] - 2026-08-07
 
 ### Fixed

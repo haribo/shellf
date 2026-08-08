@@ -217,7 +217,7 @@ Most instructions are `def`s written in shellf and embedded in the binary; only
 - **Files & directories** — `file-copy(src, dst)` (target-side copy) · `template(src, dst)` (render a control-host file's `@{var}` and deliver it) · `dir-copy(src, dst)` (deliver a control-host tree verbatim, binary-safe) · `file-write(path, content)` · `file-mode(path, mode)` · `file-replace(path, key, value)` (a `key=value` line) · `file-line(path, line)` · `file-delete(path)` · `file-download(url, dst, sha256)` · `dir-ensure(path)` · `dir-owner(path, owner)` · `archive-extract(src, dst)` · `archive-extract-member(src, dst, member)` (one file out of a tarball) · `git-clone(url, dst)` · `git-sync(url, dst, ref)` (update to a pinned ref)
 - **Questions** (read-only, deterministic in `--check`) — `dir-exists(path)` · `file-exists(path)` · `http-check(url, status)` · `wait-for(url, timeout)` (retries until ready)
 - **Firewall** — `ufw.enable()` · `ufw.default(incoming, outgoing)` · `ufw.open(port, proto)`
-- **Docker** — `docker.install()` · `docker.network(name)` · `docker.compose-up(dir, build)` (`build` `"true"` rebuilds local images; always re-applies — `up -d` is idempotent)
+- **Docker** — `docker.install()` · `docker.network(name)` · `docker.compose-up(dir, build)` (`build` `"true"` rebuilds local images; always re-applies — `up -d` is idempotent) · `docker.compose-restart(dir, service)` (handler — omit `service` for the whole stack; gate it on `.changed`, e.g. after a mounted config is edited)
 
 Write your own — see [Writing shellf](#writing-shellf).
 
