@@ -225,6 +225,17 @@ func renderTemplates(steps []proto.Step, env map[string]string, render TemplateR
 			}
 			ib := *s.If
 			ib.Then, ib.Else = then, els
+			// The condition is an instruction too (docs/language.md), so a
+			// `if template(...) { … }` must be rewritten like any other — it is one
+			// step in, one step out. Missing this sent `template` to the agent
+			// verbatim, which fails `err.agent` (#293).
+			if s.If.Cond != nil {
+				cond, err := renderTemplates([]proto.Step{*s.If.Cond}, env, render)
+				if err != nil {
+					return nil, err
+				}
+				ib.Cond = &cond[0]
+			}
 			out[i].If = &ib
 		case len(s.Block) > 0:
 			sub, err := renderTemplates(s.Block, env, render)

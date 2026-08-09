@@ -603,3 +603,65 @@ func TestSrcPath(t *testing.T) {
 		t.Fatalf("relative src should join the plan dir: %q", got)
 	}
 }
+
+// Regression for #293: resolveDirCopy must reach a `dir-copy` wherever it can
+// appear in the step tree. In a condition it cannot be expanded at all — one
+// dir-copy becomes one step per file, and a condition holds a single step with a
+// single Result — so the plan must be refused control-side with a clear message
+// instead of shipping `dir-copy` to the agent, which fails the opaque `err.agent`.
+func TestResolveDirCopy_EveryRecursivePosition(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "tree"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "tree", "f.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dc := func() proto.Step {
+		return proto.Step{Instruction: "dir-copy", Args: map[string]string{"src": "tree", "dst": "/d"}}
+	}
+
+	expanded := map[string]struct {
+		in  proto.Step
+		get func(proto.Step) []proto.Step
+	}{
+		"sequence": {dc(), nil}, // expands in place, checked separately
+		"block":    {proto.Step{Block: []proto.Step{dc()}}, func(s proto.Step) []proto.Step { return s.Block }},
+		"parallel": {proto.Step{Parallel: []proto.Step{dc()}}, func(s proto.Step) []proto.Step { return s.Parallel }},
+		"if-then": {proto.Step{If: &proto.IfBlock{CondRef: &proto.ResultRef{Name: "x"}, Then: []proto.Step{dc()}}},
+			func(s proto.Step) []proto.Step { return s.If.Then }},
+		"if-else": {proto.Step{If: &proto.IfBlock{CondRef: &proto.ResultRef{Name: "x"}, Else: []proto.Step{dc()}}},
+			func(s proto.Step) []proto.Step { return s.If.Else }},
+	}
+	for name, c := range expanded {
+		t.Run(name, func(t *testing.T) {
+			out, err := resolveDirCopy([]proto.Step{c.in}, dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := out
+			if c.get != nil {
+				got = c.get(out[0])
+			}
+			for _, s := range got {
+				if s.Instruction == "dir-copy" {
+					t.Fatalf("dir-copy left unexpanded in %s position: %+v", name, got)
+				}
+			}
+			if len(got) == 0 {
+				t.Fatalf("%s: nothing expanded", name)
+			}
+		})
+	}
+
+	t.Run("if-cond", func(t *testing.T) {
+		in := proto.Step{If: &proto.IfBlock{Cond: &proto.Step{Instruction: "dir-copy", Args: map[string]string{"src": "tree", "dst": "/d"}}}}
+		_, err := resolveDirCopy([]proto.Step{in}, dir)
+		if err == nil {
+			t.Fatal("dir-copy as a condition must be refused control-side, not shipped to the agent")
+		}
+		if !strings.Contains(err.Error(), "condition") {
+			t.Fatalf("the error must say the condition is the problem, got: %v", err)
+		}
+	})
+}
