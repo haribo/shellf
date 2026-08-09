@@ -6,6 +6,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- A `template` used as an `if` condition is now rendered on the control host like
+  any other, instead of reaching the agent verbatim and failing `err.agent` with
+  the plan halted. `dir-copy` in the same position is refused control-side with an
+  explicit reason — it expands to one step per file, which a condition cannot hold
+  (#293).
+
 ## [0.4.0] - 2026-08-08
 
 ### Added

@@ -224,3 +224,42 @@ func TestRenderTemplates_PreservesBindAndCaught(t *testing.T) {
 		t.Fatalf("`?` dropped (#246): Caught=%v", out[0].Caught)
 	}
 }
+
+// Regression for #293: renderTemplates must rewrite a `template` wherever it can
+// appear in the step tree. Only the `If.Cond` position was missed, so a
+// `if template(...) { … }` reached the agent verbatim and died `err.agent`.
+// The five other positions lock in current behavior: whichever construct is added
+// to the language next, a walker that forgets a position fails here.
+func TestRenderTemplates_EveryRecursivePosition(t *testing.T) {
+	echo := func(src string, vars map[string]string) (string, error) { return "rendered:" + src, nil }
+	tpl := func() proto.Step {
+		return proto.Step{Instruction: "template", Args: map[string]string{"src": "f.tmpl", "dst": "/d"}}
+	}
+
+	cases := map[string]struct {
+		in  proto.Step
+		get func(proto.Step) proto.Step
+	}{
+		"sequence": {tpl(), func(s proto.Step) proto.Step { return s }},
+		"block":    {proto.Step{Block: []proto.Step{tpl()}}, func(s proto.Step) proto.Step { return s.Block[0] }},
+		"parallel": {proto.Step{Parallel: []proto.Step{tpl()}}, func(s proto.Step) proto.Step { return s.Parallel[0] }},
+		"if-then": {proto.Step{If: &proto.IfBlock{CondRef: &proto.ResultRef{Name: "x"}, Then: []proto.Step{tpl()}}},
+			func(s proto.Step) proto.Step { return s.If.Then[0] }},
+		"if-else": {proto.Step{If: &proto.IfBlock{CondRef: &proto.ResultRef{Name: "x"}, Else: []proto.Step{tpl()}}},
+			func(s proto.Step) proto.Step { return s.If.Else[0] }},
+		"if-cond": {proto.Step{If: &proto.IfBlock{Cond: &proto.Step{Instruction: "template", Args: map[string]string{"src": "f.tmpl", "dst": "/d"}}}},
+			func(s proto.Step) proto.Step { return *s.If.Cond }},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			out, err := renderTemplates([]proto.Step{c.in}, map[string]string{}, echo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := c.get(out[0])
+			if got.Instruction != "file-write" || got.Args["content"] != "rendered:f.tmpl" {
+				t.Fatalf("template not rendered in %s position: %+v", name, got)
+			}
+		})
+	}
+}

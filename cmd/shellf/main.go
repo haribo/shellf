@@ -216,6 +216,13 @@ func resolveDirCopy(steps []proto.Step, dir string) ([]proto.Step, error) {
 			}
 			out = append(out, expanded...)
 		case s.If != nil:
+			// A condition is one step yielding one Result, but dir-copy expands to
+			// one step per file — there is nothing sound to put there. Refuse it
+			// here, with the reason, rather than ship `dir-copy` to the agent and
+			// surface the opaque `err.agent` it dies on (#293).
+			if s.If.Cond != nil && s.If.Cond.Instruction == "dir-copy" {
+				return nil, fmt.Errorf("dir-copy: cannot be used as a condition (it expands to one step per file)")
+			}
 			then, err := resolveDirCopy(s.If.Then, dir)
 			if err != nil {
 				return nil, err
