@@ -2,7 +2,9 @@
 
 ## Status
 
-Active
+Superseded by [ADR-0031](0031-control-channel-and-detachment.md) — which carries this
+lifecycle over unchanged except for detachment, now conditional: a job that requests
+data from the control host no longer survives a connection drop.
 
 ## Context
 
