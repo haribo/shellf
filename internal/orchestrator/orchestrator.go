@@ -213,7 +213,11 @@ func renderTemplates(steps []proto.Step, env map[string]string, render TemplateR
 			}
 			// Keep the capture binding and `?` so `s = file.template(...)` then
 			// `if s.changed` still resolves (#246).
-			out[i] = proto.Step{Instruction: "file.write", Args: map[string]string{"path": dst, "content": content}, Bind: s.Bind, Caught: s.Caught}
+			args := map[string]string{"path": dst, "content": content}
+			if v := s.Args["validate"]; v != "" { // checker runs on the staged file (#299)
+				args["validate"] = v
+			}
+			out[i] = proto.Step{Instruction: "file.write", Args: args, Bind: s.Bind, Caught: s.Caught}
 		case s.If != nil:
 			then, err := renderTemplates(s.If.Then, env, render)
 			if err != nil {

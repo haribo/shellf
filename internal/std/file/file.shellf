@@ -51,18 +51,33 @@ def download(url: str, dst: str, sha256: str) {
 # mode and owner onto the staging file: a redirection preserved them, a bare rename
 # would silently reset them to the umask default. The trap removes the staging file if
 # anything fails; after a successful rename it is already gone.
-def write(path: str, content: str) {
+# `validate` is a shell command run on the staged file before it is installed; `$staged`
+# holds its path. It exists because some files lock you out when invalid — a broken
+# sudoers breaks `sudo`, a broken sshd_config breaks the transport shellf itself uses —
+# and their checkers (`visudo -cf "$staged"`, `sshd -t -f "$staged"`) are useless after the
+# fact. Validating from a def that calls this one cannot work: the file would already
+# be installed by the time the checker ran (#299).
+#
+# A failing checker leaves the destination untouched and returns `err.validation`
+# carrying its stderr, so the run halts before any handler gated on `.changed` can act
+# on a broken file. Exit 65 is the private signal between the two halves of this def
+# (EX_DATAERR); any other non-zero exit is an ordinary runtime failure.
+def write(path: str, content: str, validate: str = "") {
     observe {
         return state(synced: shell { test -f "$path" && printf '%s' "$content" | cmp -s - "$path" }.exit == 0)
     }
     apply {
         r = shell {
-            tmp="$path.shellf.$$"
-            trap 'rm -f "$tmp"' EXIT
-            if [ -f "$path" ]; then cp -p "$path" "$tmp"; fi
-            printf '%s' "$content" > "$tmp"
-            mv -f "$tmp" "$path"
+            staged="$path.shellf.$$"
+            trap 'rm -f "$staged"' EXIT
+            if [ -f "$path" ]; then cp -p "$path" "$staged"; fi
+            printf '%s' "$content" > "$staged"
+            if [ -n "$validate" ]; then
+                eval "$validate" || exit 65
+            fi
+            mv -f "$staged" "$path"
         }
+        if r.exit == 65 { return err.validation(r) }
         if !r { return err.runtime(r) }
         return ok.written
     }
