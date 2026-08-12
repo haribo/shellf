@@ -6,6 +6,26 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING** — every stdlib instruction now belongs to a package: `file-write` is
+  `file.write`, `wait-for` is `http.wait-for`, `template` is `file.template`, and so
+  on for 25 names (ADR-0032). The dot separates the package, the dash separates words
+  inside the action; exactly one dot per name. There is no alias and no transition
+  period: a plan using an old name fails, but the error names its replacement —
+  `unknown instruction "file-write" — renamed to "file.write" (ADR-0032)`. Three
+  renames are not mechanical: `service` became `service.ensure`, `wait-for` became
+  `http.wait-for`, `template` became `file.template` (#305).
+
+### Added
+
+- A subdirectory of a package is a sub-package: its defs are qualified `<dir>.<def>`,
+  one level deep (ADR-0033). This is how a stdlib instruction is overridden now that
+  they all carry a package — create `dir/` and declare `override def ensure(...)`
+  in it. A dot is never valid inside a def name: the directory names, the author does
+  not. A directory holding no `.shellf` file is content, not code, and is ignored; one
+  nesting a further directory is refused rather than silently skipped (#306).
+
 ### Fixed
 
 - A `template` used as an `if` condition is now rendered on the control host like

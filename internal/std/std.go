@@ -21,7 +21,9 @@ import (
 	"shellf/internal/lang"
 )
 
-//go:embed *.shellf apt/*.shellf docker/*.shellf ufw/*.shellf
+//go:embed apt/*.shellf archive/*.shellf dir/*.shellf docker/*.shellf file/*.shellf
+//go:embed git/*.shellf http/*.shellf service/*.shellf systemd/*.shellf ufw/*.shellf
+//go:embed user/*.shellf
 var files embed.FS
 
 var (

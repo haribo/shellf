@@ -77,17 +77,17 @@ r = shell { usermod -aG docker "$owner" }
 ```
 
 - **Immutable**: no reassignment (which is why no `let`/`const` is needed).
-- **Reference**: a bare identifier in argument position resolves to its value — `user-group(owner, "docker")`.
+- **Reference**: a bare identifier in argument position resolves to its value — `user.group(owner, "docker")`.
 - **Interpolation** `${name}` in **simple strings only**:
 
 ```
-dir-owner("/opt/hosting", "${owner}:${owner}")   // → "haribo:haribo"
+dir.owner("/opt/hosting", "${owner}:${owner}")   // → "haribo:haribo"
 ```
 
 - **Triple-quoted strings are RAW** — `${…}` is left verbatim (it is shell/compose syntax the target resolves):
 
 ```
-file-write("/app/compose.yaml", """
+file.write("/app/compose.yaml", """
     environment:
       - DB=${DATABASE_URL}      // stays literal: ${DATABASE_URL}
     """)
@@ -101,7 +101,7 @@ See [ADR-0003](adr/0003-variable-scoping.md).
 ## Control flow — `if` / `else`
 
 ```
-if dir-create("/opt/app") {     // condition = an instruction; branch on its Result being ok
+if dir.exists("/opt/app") {     // condition = an instruction; branch on its Result being ok
   apt-install("nginx")
 } else {
   apt-install("apache")
@@ -111,7 +111,7 @@ if dir-create("/opt/app") {     // condition = an instruction; branch on its Res
 - The **condition is an instruction** (or a `shell` block); the branch is taken on its Result being `ok`.
 - The condition runs **on the target** — the agent interprets the flow.
 - A failing condition takes `else` (or is skipped): the `if` **captures** the result, so it does **not** halt (halting rule).
-- **Negation**: `if !<cond> { … }` flips the branch. This replaces the old `unless` guard (**removed from plans**): `shell { cmd } unless { g }` becomes `if !shell { g } { shell { cmd } }`, and `if !dir-exists("/opt") { dir-ensure("/opt") }` acts only when absent.
+- **Negation**: `if !<cond> { … }` flips the branch. This replaces the old `unless` guard (**removed from plans**): `shell { cmd } unless { g }` becomes `if !shell { g } { shell { cmd } }`, and `if !dir.exists("/opt") { dir.ensure("/opt") }` acts only when absent.
 - **Preview** (`--check`): a `would` condition (an effect not applied) makes the branch **`undetermined`** — honest, never guessed. An `ok`/`err` condition is deterministic. See [ADR-0004](adr/0004-control-flow-preview.md).
 
 Put the effect **inside** the `if` (not a separate action followed by a `test`) so the preview stays honest.
@@ -119,9 +119,9 @@ Put the effect **inside** the `if` (not a separate action followed by a `test`) 
 ### Capturing a result
 
 ```
-x = dir-ensure("/opt/app")   // capture the instruction's Result under `x`
+x = dir.ensure("/opt/app")   // capture the instruction's Result under `x`
 if x.changed {               // acted this run (apply ran, not a converged skip)
-  service("nginx", true, true)
+  service.ensure("nginx", true, true)
 }
 if x { … }                   // sugar for `if x == ok`
 if x != ok { … }             // `!=` negates
@@ -160,10 +160,10 @@ See [ADR-0009](adr/0009-error-handling.md).
 
 ### Read-only questions
 
-`dir-exists` / `file-exists` are **questions**: read-only defs with **no `apply` phase**, so they resolve in pass 1 and are **deterministic in check** (never `undetermined`), unlike an effectful instruction.
+`dir.exists` / `file.exists` are **questions**: read-only defs with **no `apply` phase**, so they resolve in pass 1 and are **deterministic in check** (never `undetermined`), unlike an effectful instruction.
 
 ```
-if dir-exists("/opt/app") {   // present → then, absent → else — deterministic even in --check
+if dir.exists("/opt/app") {   // present → then, absent → else — deterministic even in --check
   apt-install("nginx")
 }
 ```
@@ -178,7 +178,7 @@ variable is referenced with `${var}`.
 ```
 on host {
   for port in ["80", "443"] { ufw.open("${port}", "tcp") }
-  for svc in ["traefik", "app"] { file-mode("/opt/${svc}/run", "755") }
+  for svc in ["traefik", "app"] { file.mode("/opt/${svc}/run", "755") }
 }
 ```
 
@@ -196,14 +196,14 @@ on host {
 
 ## Per-call override — `with { … }` (ADR-0022)
 
-Any instruction call — a def, `shell`, `template`, or a builtin — may be followed
+Any instruction call — a def, `shell`, `file.template`, or a builtin — may be followed
 by `with { k = <value>, … }` to add or override variables **for that call only**:
 
 ```
 on host {
   # explicit, local inputs — no need to read the file to know what it uses
-  template("nginx.conf", "/etc/nginx/a.conf") with { port = "8080", root = "/srv/a" }
-  template("nginx.conf", "/etc/nginx/b.conf") with { port = "8081", root = "/srv/b" }
+  file.template("nginx.conf", "/etc/nginx/a.conf") with { port = "8080", root = "/srv/a" }
+  file.template("nginx.conf", "/etc/nginx/b.conf") with { port = "8081", root = "/srv/b" }
 
   shell { echo "$msg" } with { msg = "hi" }
 }
@@ -218,16 +218,16 @@ on host {
 
 ### Template render scope (ADR-0024)
 
-A `template(src, dst)` file is rendered **per host**, over that host's full
+A `file.template(src, dst)` file is rendered **per host**, over that host's full
 variable scope — `--vars`, plan bindings, **per-host inventory vars**, `--set`,
 secrets — plus the call's `with { }`. `dst` may be a bare per-host ref
-(`template("nginx.conf", conf_path)`); `src` is always a literal control-host
+(`file.template("nginx.conf", conf_path)`); `src` is always a literal control-host
 path. A `for` loop variable is **not** in that scope, so to use the loop item
 inside a template's content, pass it with `with { }`:
 
 ```
 for svc in ["traefik", "app"] {
-  template("unit.tmpl", "/opt/${svc}/unit") with { svc = "${svc}" }
+  file.template("unit.tmpl", "/opt/${svc}/unit") with { svc = "${svc}" }
 }
 ```
 

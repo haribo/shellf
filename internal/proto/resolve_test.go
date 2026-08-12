@@ -4,9 +4,9 @@ import "testing"
 
 func TestResolveRefs(t *testing.T) {
 	steps := []Step{
-		{Instruction: "dir-owner", Args: map[string]string{"path": "/opt"}, Refs: map[string]string{"owner": "owner"}},
+		{Instruction: "dir.owner", Args: map[string]string{"path": "/opt"}, Refs: map[string]string{"owner": "owner"}},
 		{Parallel: []Step{
-			{Instruction: "user-group", Args: map[string]string{"group": "docker"}, Refs: map[string]string{"user": "owner"}},
+			{Instruction: "user.group", Args: map[string]string{"group": "docker"}, Refs: map[string]string{"user": "owner"}},
 		}},
 	}
 	out, err := ResolveRefs(steps, map[string]string{"owner": "alice"}, "")
@@ -56,7 +56,7 @@ func TestResolveRefs_ShellStepGetsEnv(t *testing.T) {
 		t.Fatalf("shell step should carry the per-host env: %+v", out[0].Env)
 	}
 	// A non-shell instruction gets its values via Args, not the env.
-	out, _ = ResolveRefs([]Step{{Instruction: "dir-ensure", Args: map[string]string{"path": "/x"}}},
+	out, _ = ResolveRefs([]Step{{Instruction: "dir.ensure", Args: map[string]string{"path": "/x"}}},
 		map[string]string{"name": "alice"}, "")
 	if out[0].Env != nil {
 		t.Fatalf("non-shell step should not carry env: %+v", out[0].Env)
@@ -96,7 +96,7 @@ func TestResolveRefs_ShellInterp(t *testing.T) {
 }
 
 func TestResolveRefs_Undefined(t *testing.T) {
-	steps := []Step{{Instruction: "dir-owner", Refs: map[string]string{"owner": "owner"}}}
+	steps := []Step{{Instruction: "dir.owner", Refs: map[string]string{"owner": "owner"}}}
 	if _, err := ResolveRefs(steps, map[string]string{}, ""); err == nil {
 		t.Fatal("expected an error for an undefined ref")
 	}

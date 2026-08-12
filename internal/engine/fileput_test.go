@@ -57,7 +57,7 @@ func TestFilePut_PreCheck(t *testing.T) {
 
 func TestFilePut_Metadata(t *testing.T) {
 	fp := FilePut{Path: "/x", Content: b64([]byte("y"))}
-	if fp.Name() != "file-put" || fp.ChangedTag() != "written" {
+	if fp.Name() != "file.put" || fp.ChangedTag() != "written" {
 		t.Fatalf("metadata: %s / %s", fp.Name(), fp.ChangedTag())
 	}
 	if fp.Preview(ShellExecutor{}) != nil {

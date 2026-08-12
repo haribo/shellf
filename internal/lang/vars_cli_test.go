@@ -19,7 +19,7 @@ pair  = "${owner}:${owner}"
 func TestBareIdentBecomesRef(t *testing.T) {
 	// A bare identifier argument is NOT resolved at parse — it becomes a Ref,
 	// resolved per host at orchestration time.
-	pl, err := ParsePlanWithVars(`on s { dir-owner("/opt", owner) }`, map[string]string{"owner": "x"}, nil, defaultSig)
+	pl, err := ParsePlanWithVars(`on s { dir.owner("/opt", owner) }`, map[string]string{"owner": "x"}, nil, defaultSig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestPlanBindingEnrichesBaseVars(t *testing.T) {
 	// A top-level binding is appended to baseVars (mutated in place) so the
 	// caller can resolve the plan's refs per host afterwards.
 	base := map[string]string{}
-	_, err := ParsePlanWithVars("owner = \"haribo\"\non s { dir-owner(\"/opt\", owner) }", base, nil, defaultSig)
+	_, err := ParsePlanWithVars("owner = \"haribo\"\non s { dir.owner(\"/opt\", owner) }", base, nil, defaultSig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestPlanBindingEnrichesBaseVars(t *testing.T) {
 
 func TestInterpolationPrecedence(t *testing.T) {
 	// Interpolation resolves at parse; --set (setVars) wins over base.
-	pl, err := ParsePlanWithVars(`on s { dir-owner("/opt", "${owner}") }`,
+	pl, err := ParsePlanWithVars(`on s { dir.owner("/opt", "${owner}") }`,
 		map[string]string{"owner": "base"}, map[string]string{"owner": "set"}, defaultSig)
 	if err != nil {
 		t.Fatal(err)

@@ -69,11 +69,11 @@ func TestLoadGlobals_MissingVarsFile(t *testing.T) {
 func TestStdSignatures(t *testing.T) {
 	sig := stdSignatures()
 
-	if params, req, ok := sig("file-copy"); !ok || len(params) != 2 || req != 2 || params[0] != "src" || params[1] != "dst" {
+	if params, req, ok := sig("file.copy"); !ok || len(params) != 2 || req != 2 || params[0] != "src" || params[1] != "dst" {
 		t.Fatalf("builtin file-copy signature: %v req=%d ok=%v", params, req, ok)
 	}
 	// A stdlib def resolves its params from the embedded source (self-hosting).
-	if params, req, ok := sig("dir-ensure"); !ok || len(params) != 1 || req != 1 || params[0] != "path" {
+	if params, req, ok := sig("dir.ensure"); !ok || len(params) != 1 || req != 1 || params[0] != "path" {
 		t.Fatalf("stdlib dir-ensure signature: %v req=%d ok=%v", params, req, ok)
 	}
 	// compose-up gained an optional `build` param → 2 params, 1 required.
@@ -97,11 +97,11 @@ func TestStatusReport(t *testing.T) {
 						{Name: "version", Current: "1.2.0", Desired: "1.3.0", Converged: false},
 					}},
 					// a converged truthy field
-					{Label: "dir-ensure(/opt)", Category: "ok", Fields: []engine.FieldDiff{
+					{Label: "dir.ensure(/opt)", Category: "ok", Fields: []engine.FieldDiff{
 						{Name: "present", Current: "true", Desired: "true", Converged: true},
 					}},
 					// an absent value renders as a dash
-					{Label: "file-download(x)", Category: "would", Fields: []engine.FieldDiff{
+					{Label: "file.download(x)", Category: "would", Fields: []engine.FieldDiff{
 						{Name: "present", Current: "", Desired: "true", Converged: false},
 					}},
 					// an action-shaped def
@@ -252,14 +252,14 @@ func TestReadImports(t *testing.T) {
 
 func TestLoadPlanPackage_KeepsTemplateStepsForPerHostRender(t *testing.T) {
 	// Templates are NOT resolved at load time anymore — they render per host in
-	// the orchestrator (ADR-0024). loadPlanPackage keeps the `template` step, with
+	// the orchestrator (ADR-0024). loadPlanPackage keeps the `file.template` step, with
 	// its parse-time `dst` interpolation and `with { }` intact. Here a `for` loop
 	// var is captured into `with` for the render (ADR-0023 composition).
 	dir := t.TempDir()
 	writeFile(t, dir, "svc.tmpl", "service=@{svc}\n")
 	writeFile(t, dir, "plan.shellf", `on t {
 		for svc in ["alpha", "beta"] {
-			template("svc.tmpl", "/opt/${svc}/x") with { svc = "${svc}" }
+			file.template("svc.tmpl", "/opt/${svc}/x") with { svc = "${svc}" }
 		}
 	}`)
 	writeFile(t, dir, "inv.shellf", `host t = { address: "x", user: "u" }`)
@@ -271,7 +271,7 @@ func TestLoadPlanPackage_KeepsTemplateStepsForPerHostRender(t *testing.T) {
 	}
 	for i, item := range []string{"alpha", "beta"} {
 		s := plan[0].Steps[i]
-		if s.Instruction != "template" { // still a template, not yet a file-write
+		if s.Instruction != "file.template" { // still a template, not yet a file-write
 			t.Fatalf("iteration %d: template should survive load, got %q", i, s.Instruction)
 		}
 		if s.Args["dst"] != "/opt/"+item+"/x" { // dst `${svc}` interpolated at parse
@@ -296,7 +296,7 @@ func TestRenderTemplate(t *testing.T) {
 		t.Fatalf("render (or passthrough) broken: %q", got)
 	}
 	if _, err := renderTemplate(filepath.Join(dir, "nope.tmpl"), nil); err == nil ||
-		!strings.Contains(err.Error(), "template") {
+		!strings.Contains(err.Error(), "file.template") {
 		t.Fatalf("a missing template file must error: %v", err)
 	}
 }
@@ -422,7 +422,7 @@ func TestLoadSecrets(t *testing.T) {
 }
 
 func TestRedact(t *testing.T) {
-	got := redact("file-write(pass=S3cr3t!, /etc/x)\nstdout: S3cr3t!", []string{"S3cr3t!", ""})
+	got := redact("file.write(pass=S3cr3t!, /etc/x)\nstdout: S3cr3t!", []string{"S3cr3t!", ""})
 	if strings.Contains(got, "S3cr3t!") {
 		t.Fatalf("secret not redacted: %q", got)
 	}
@@ -468,7 +468,7 @@ func TestResolveDirCopy_ExpandsTree(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	steps := []proto.Step{{Instruction: "dir-copy", Args: map[string]string{"src": "site", "dst": "/var/www/app"}}}
+	steps := []proto.Step{{Instruction: "dir.copy", Args: map[string]string{"src": "site", "dst": "/var/www/app"}}}
 	out, err := resolveDirCopy(steps, dir)
 	if err != nil {
 		t.Fatal(err)
@@ -477,9 +477,9 @@ func TestResolveDirCopy_ExpandsTree(t *testing.T) {
 	var binContent string
 	for _, s := range out {
 		switch s.Instruction {
-		case "dir-ensure":
+		case "dir.ensure":
 			dirEnsures++
-		case "file-put":
+		case "file.put":
 			filePuts++
 			if s.Args["path"] == "/var/www/app/assets/logo.bin" {
 				binContent = s.Args["content"]
@@ -500,11 +500,11 @@ func TestResolveDirCopy_ExpandsTree(t *testing.T) {
 func TestResolveDirCopy_Errors(t *testing.T) {
 	dir := t.TempDir()
 	// missing src
-	if _, err := resolveDirCopy([]proto.Step{{Instruction: "dir-copy", Args: map[string]string{"src": "nope", "dst": "/x"}}}, dir); err == nil {
+	if _, err := resolveDirCopy([]proto.Step{{Instruction: "dir.copy", Args: map[string]string{"src": "nope", "dst": "/x"}}}, dir); err == nil {
 		t.Fatal("a missing src must error")
 	}
 	// a per-host ref for src/dst is rejected
-	if _, err := resolveDirCopy([]proto.Step{{Instruction: "dir-copy", Args: map[string]string{"dst": "/x"}, Refs: map[string]string{"src": "v"}}}, dir); err == nil {
+	if _, err := resolveDirCopy([]proto.Step{{Instruction: "dir.copy", Args: map[string]string{"dst": "/x"}, Refs: map[string]string{"src": "v"}}}, dir); err == nil {
 		t.Fatal("a ref src must error")
 	}
 }
@@ -517,7 +517,7 @@ func TestResolveDirCopy_RecursesAndCeiling(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "t", "a"), []byte("hello"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	dc := proto.Step{Instruction: "dir-copy", Args: map[string]string{"src": "t", "dst": "/d"}}
+	dc := proto.Step{Instruction: "dir.copy", Args: map[string]string{"src": "t", "dst": "/d"}}
 
 	// dir-copy nested in if / block / parallel is expanded in place.
 	steps := []proto.Step{
@@ -531,7 +531,7 @@ func TestResolveDirCopy_RecursesAndCeiling(t *testing.T) {
 	}
 	hasPut := func(steps []proto.Step) bool {
 		for _, s := range steps {
-			if s.Instruction == "file-put" {
+			if s.Instruction == "file.put" {
 				return true
 			}
 		}
@@ -580,13 +580,13 @@ func TestResolveDirCopy_AbsoluteSrc(t *testing.T) {
 		t.Fatal(err)
 	}
 	planDir := t.TempDir() // a different dir
-	out, err := resolveDirCopy([]proto.Step{{Instruction: "dir-copy", Args: map[string]string{"src": src, "dst": "/d"}}}, planDir)
+	out, err := resolveDirCopy([]proto.Step{{Instruction: "dir.copy", Args: map[string]string{"src": src, "dst": "/d"}}}, planDir)
 	if err != nil {
 		t.Fatalf("absolute src must resolve as-is (#281): %v", err)
 	}
 	var puts int
 	for _, s := range out {
-		if s.Instruction == "file-put" {
+		if s.Instruction == "file.put" {
 			puts++
 		}
 	}
@@ -604,11 +604,11 @@ func TestSrcPath(t *testing.T) {
 	}
 }
 
-// Regression for #293: resolveDirCopy must reach a `dir-copy` wherever it can
+// Regression for #293: resolveDirCopy must reach a `dir.copy` wherever it can
 // appear in the step tree. In a condition it cannot be expanded at all — one
 // dir-copy becomes one step per file, and a condition holds a single step with a
 // single Result — so the plan must be refused control-side with a clear message
-// instead of shipping `dir-copy` to the agent, which fails the opaque `err.agent`.
+// instead of shipping `dir.copy` to the agent, which fails the opaque `err.agent`.
 func TestResolveDirCopy_EveryRecursivePosition(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "tree"), 0o755); err != nil {
@@ -618,7 +618,7 @@ func TestResolveDirCopy_EveryRecursivePosition(t *testing.T) {
 		t.Fatal(err)
 	}
 	dc := func() proto.Step {
-		return proto.Step{Instruction: "dir-copy", Args: map[string]string{"src": "tree", "dst": "/d"}}
+		return proto.Step{Instruction: "dir.copy", Args: map[string]string{"src": "tree", "dst": "/d"}}
 	}
 
 	expanded := map[string]struct {
@@ -644,7 +644,7 @@ func TestResolveDirCopy_EveryRecursivePosition(t *testing.T) {
 				got = c.get(out[0])
 			}
 			for _, s := range got {
-				if s.Instruction == "dir-copy" {
+				if s.Instruction == "dir.copy" {
 					t.Fatalf("dir-copy left unexpanded in %s position: %+v", name, got)
 				}
 			}
@@ -655,7 +655,7 @@ func TestResolveDirCopy_EveryRecursivePosition(t *testing.T) {
 	}
 
 	t.Run("if-cond", func(t *testing.T) {
-		in := proto.Step{If: &proto.IfBlock{Cond: &proto.Step{Instruction: "dir-copy", Args: map[string]string{"src": "tree", "dst": "/d"}}}}
+		in := proto.Step{If: &proto.IfBlock{Cond: &proto.Step{Instruction: "dir.copy", Args: map[string]string{"src": "tree", "dst": "/d"}}}}
 		_, err := resolveDirCopy([]proto.Step{in}, dir)
 		if err == nil {
 			t.Fatal("dir-copy as a condition must be refused control-side, not shipped to the agent")
@@ -664,4 +664,22 @@ func TestResolveDirCopy_EveryRecursivePosition(t *testing.T) {
 			t.Fatalf("the error must say the condition is the problem, got: %v", err)
 		}
 	})
+}
+
+// The rename table must not advise a name that does not exist: a message pointing at
+// `file.write` is only useful if `file.write` actually resolves. Checked here because
+// internal/lang cannot import internal/std (std imports lang).
+func TestRenameTable_TargetsResolve(t *testing.T) {
+	sig := stdSignatures()
+	if len(lang.Renamed) < 25 {
+		t.Fatalf("rename table looks incomplete: %d entries", len(lang.Renamed))
+	}
+	for old, want := range lang.Renamed {
+		if _, _, ok := sig(want); !ok {
+			t.Errorf("%q is advised as the replacement for %q but does not resolve", want, old)
+		}
+		if _, _, ok := sig(old); ok {
+			t.Errorf("%q must no longer resolve (ADR-0032 §4: no aliases)", old)
+		}
+	}
 }

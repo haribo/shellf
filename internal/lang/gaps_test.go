@@ -9,7 +9,7 @@ import (
 
 func TestUnescape_InStringArg(t *testing.T) {
 	// A double-quoted arg processes \n \t \" \\ ; anything else stays literal.
-	plan, err := ParsePlan("on s { file-write(\"/p\", \"a\\nb\\tc\\\"d\\\\e\\q\") }")
+	plan, err := ParsePlan("on s { file.write(\"/p\", \"a\\nb\\tc\\\"d\\\\e\\q\") }")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ raw = """verbatim ${keep}"""
 flag = true
 base = "b"
 ref = base
-on s { file-write("/p", "${raw}|${ref}") }
+on s { file.write("/p", "${raw}|${ref}") }
 `
 	plan, err := ParsePlan(src)
 	if err != nil {
@@ -41,7 +41,7 @@ on s { file-write("/p", "${raw}|${ref}") }
 }
 
 func TestArg_UndefinedBinding(t *testing.T) {
-	_, err := ParsePlan("x = nope\non s { file-write(\"/p\", x) }")
+	_, err := ParsePlan("x = nope\non s { file.write(\"/p\", x) }")
 	if err == nil || !strings.Contains(err.Error(), "undefined variable") {
 		t.Fatalf("a binding to an unknown name must error: %v", err)
 	}

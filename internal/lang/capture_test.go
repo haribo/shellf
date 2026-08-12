@@ -4,7 +4,7 @@ import "testing"
 
 func TestParseCapture(t *testing.T) {
 	plan, err := ParsePlan(`on s {
-  x = dir-ensure("/opt")
+  x = dir.ensure("/opt")
   if x.changed { apt.install("nginx") }
   if x { apt.install("redis") }
   if x == ok.created { apt.install("etcd") }
@@ -14,7 +14,7 @@ func TestParseCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	steps := plan[0].Steps
-	if steps[0].Bind != "x" || steps[0].Instruction != "dir-ensure" {
+	if steps[0].Bind != "x" || steps[0].Instruction != "dir.ensure" {
 		t.Fatalf("capture: %+v", steps[0])
 	}
 	if r := steps[1].If.CondRef; r == nil || r.Name != "x" || !r.Changed {
@@ -33,8 +33,8 @@ func TestParseCapture(t *testing.T) {
 
 func TestParseCaptureDeprecatedFields(t *testing.T) {
 	for _, src := range []string{
-		`on s { x = dir-ensure("/o") if x.ok { apt.install("y") } }`,  // `.ok` removed → `== ok`
-		`on s { x = dir-ensure("/o") if x.err { apt.install("y") } }`, // `.err` removed → `== err`
+		`on s { x = dir.ensure("/o") if x.ok { apt.install("y") } }`,  // `.ok` removed → `== ok`
+		`on s { x = dir.ensure("/o") if x.err { apt.install("y") } }`, // `.err` removed → `== err`
 	} {
 		if _, err := ParsePlan(src); err == nil {
 			t.Fatalf("expected a deprecation error for: %s", src)
@@ -45,7 +45,7 @@ func TestParseCaptureDeprecatedFields(t *testing.T) {
 func TestParseCatch_CaughtAndErrTest(t *testing.T) {
 	plan, err := ParsePlan(`on s {
   x = apt.install("nginx")?
-  if x == err.dbLocked { dir-ensure("/o") }
+  if x == err.dbLocked { dir.ensure("/o") }
 }`)
 	if err != nil {
 		t.Fatal(err)
@@ -62,21 +62,21 @@ func TestParseCatch_ErrTestRequiresCatch(t *testing.T) {
 	// `== err` without `?` on the source is a dead branch → compile error.
 	if _, err := ParsePlan(`on s {
   x = apt.install("nginx")
-  if x == err.dbLocked { dir-ensure("/o") }
+  if x == err.dbLocked { dir.ensure("/o") }
 }`); err == nil {
 		t.Fatal("expected an error: == err without a caught source")
 	}
 	// `!= err` stays free — it is reachable via the ok path.
 	if _, err := ParsePlan(`on s {
   x = apt.install("nginx")
-  if x != err { dir-ensure("/o") }
+  if x != err { dir.ensure("/o") }
 }`); err != nil {
 		t.Fatalf("!= err should be allowed without `?`: %v", err)
 	}
 }
 
 func TestParseCatch_InlineErrTest(t *testing.T) {
-	plan, err := ParsePlan(`on s { if apt.install("nginx")? == err.dbLocked { dir-ensure("/o") } }`)
+	plan, err := ParsePlan(`on s { if apt.install("nginx")? == err.dbLocked { dir.ensure("/o") } }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestParseCatch_InlineErrTest(t *testing.T) {
 }
 
 func TestParseCatch_InlineErrTestRequiresCatch(t *testing.T) {
-	if _, err := ParsePlan(`on s { if apt.install("nginx") == err.dbLocked { dir-ensure("/o") } }`); err == nil {
+	if _, err := ParsePlan(`on s { if apt.install("nginx") == err.dbLocked { dir.ensure("/o") } }`); err == nil {
 		t.Fatal("inline == err without `?` should error")
 	}
 }
@@ -118,7 +118,7 @@ func TestParseAsBlock(t *testing.T) {
 }
 
 func TestParseOnAsBlock(t *testing.T) {
-	plan, err := ParsePlan(`on web as root { dir-ensure("/opt") }`)
+	plan, err := ParsePlan(`on web as root { dir.ensure("/opt") }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestParseOnAsBlock(t *testing.T) {
 	if len(steps) != 1 || steps[0].Become != "root" || len(steps[0].Block) != 1 {
 		t.Fatalf("`on … as root` should wrap the block: %+v", steps)
 	}
-	if steps[0].Block[0].Instruction != "dir-ensure" {
+	if steps[0].Block[0].Instruction != "dir.ensure" {
 		t.Fatalf("wrapped step: %+v", steps[0].Block[0])
 	}
 }
@@ -144,13 +144,13 @@ func TestParseIfQualifiedCallStaysCall(t *testing.T) {
 }
 
 func TestParseUnknownResultField(t *testing.T) {
-	if _, err := ParsePlan(`on s { x = dir-ensure("/o") if x.bogus { apt.install("y") } }`); err == nil {
+	if _, err := ParsePlan(`on s { x = dir.ensure("/o") if x.bogus { apt.install("y") } }`); err == nil {
 		t.Fatal("expected an error for an unknown result field")
 	}
 }
 
 func TestParseCaptureRejectsIf(t *testing.T) {
-	if _, err := ParsePlan(`on s { x = if dir-ensure("/o") { apt.install("y") } }`); err == nil {
+	if _, err := ParsePlan(`on s { x = if dir.ensure("/o") { apt.install("y") } }`); err == nil {
 		t.Fatal("expected an error capturing an if into a variable")
 	}
 }

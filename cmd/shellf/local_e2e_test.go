@@ -24,8 +24,8 @@ func TestLocalTransport_EndToEnd(t *testing.T) {
 	target := filepath.Join(tmp, "provisioned")
 	writeFile(t, tmp, "inv.shellf", `host self = { local: "true" }`)
 	writeFile(t, tmp, "plan.shellf", `on self {
-    dir-ensure("`+target+`")
-    file-write("`+filepath.Join(target, "marker")+`", "made locally")
+    dir.ensure("`+target+`")
+    file.write("`+filepath.Join(target, "marker")+`", "made locally")
 }`)
 
 	shellf := func() (string, error) {

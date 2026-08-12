@@ -1,6 +1,6 @@
 # Restart a compose stack (ADR-0013 action-shaped). A restart is a handler: it
 # always acts, so there is NO observe — the caller gates it on a real change
-# (`if cfg.changed { … }`), exactly like `service-restart`. It exists because a
+# (`if cfg.changed { … }`), exactly like `service.restart`. It exists because a
 # mounted-file edit never recreates a container: `compose-up` correctly sees no
 # compose/image change and the container keeps serving the stale config.
 # `service` = "" restarts every service of the stack; a name restarts just that one.

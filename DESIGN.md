@@ -65,7 +65,7 @@ Séparabilité = prévisualisabilité : le `check` doit être une **phase distin
 | Phase | Rôle |
 |-------|------|
 | `pre-check` | validation des arguments, pure/locale (nom non vide). Peut tourner côté contrôle, avant tout SSH. |
-| `check` | précondition environnementale, ou question read-only (`dir-exists`). Nécessite la cible → l'agent. |
+| `check` | précondition environnementale, ou question read-only (`dir.exists`). Nécessite la cible → l'agent. |
 | `observe` | renvoie l'état *courant* (`state(...)`) ; l'appareil le compare aux arguments → convergé = skip, drift = apply. Remplace `guard` (ADR-0013). |
 | `apply` | l'action réelle. Seule phase avec effet de bord. |
 | `post` | après action (nettoyage). 🟠 sémantique à trancher (finally vs on-success). |
@@ -155,8 +155,8 @@ Un `apply` multi-étapes (`git-clone; build; install`) n'est pas transactionnel.
 
 Un langage ne se prouve pas sur un exemple — il **overfitte**. `apt-install` seul = un DSL d'installeur de paquets. Il faut trois **formes** différentes.
 
-- 🟠 **`file-copy(src, dst)`** — l'`observe` n'est plus « présent/absent » mais « **le contenu correspond-il ?** » → hash/diff. Le mode check doit *differ* sans écrire.
-- 🟠 **`service(name, state, enabled)`** — **deux dimensions orthogonales** (tourne ? + activé au boot ?). Un seul `ok/err` ne suffit plus ; teste si `Result` encaisse la multi-dimension.
+- 🟠 **`file.copy(src, dst)`** — l'`observe` n'est plus « présent/absent » mais « **le contenu correspond-il ?** » → hash/diff. Le mode check doit *differ* sans écrire.
+- 🟠 **`service.ensure(name, state, enabled)`** — **deux dimensions orthogonales** (tourne ? + activé au boot ?). Un seul `ok/err` ne suffit plus ; teste si `Result` encaisse la multi-dimension.
 
 Si le langage exprime **les trois** sans se tordre, il est éprouvé. Sinon = installeur de paquets déguisé.
 

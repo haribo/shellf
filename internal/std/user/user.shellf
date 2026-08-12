@@ -1,7 +1,7 @@
 # Ensure a user exists with a given login shell (create with a home if absent,
 # then set the shell). Group membership is a separate concern — compose with
-# `user-group(name, group)`. Converged when the login shell already matches.
-def user-ensure(name: str, shell: str) as root {
+# `user.group(name, group)`. Converged when the login shell already matches.
+def ensure(name: str, shell: str) as root {
     observe { return state(shell: shell { getent passwd "$name" | cut -d: -f7 }.stdout) }
     apply {
         r = shell {
@@ -10,5 +10,14 @@ def user-ensure(name: str, shell: str) as root {
         }
         if !r { return err.runtime(r) }
         return ok.ensured
+    }
+}
+
+def group(user: str, group: str) as root {
+    observe { return state(member: shell { id -nG "$user" | tr ' ' '\n' | grep -qx "$group" }.exit == 0) }
+    apply {
+        r = shell { usermod -aG "$group" "$user" }
+        if !r { return err.runtime(r) }
+        return ok.added
     }
 }

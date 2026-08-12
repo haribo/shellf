@@ -49,19 +49,57 @@ func TestPackage_DuplicateDef(t *testing.T) {
 	}
 }
 
+// Shadowing is now expressed by placement: a def in a `dir/` sub-package resolves as
+// `dir.ensure`, which is a stdlib name (ADR-0033 §4). The rule itself is unchanged
+// (ADR-0014 §5) — only how the qualified name is written, since a dot may no longer
+// appear in a def name.
 func TestPackage_ShadowStdlibNeedsOverride(t *testing.T) {
-	// A plain def with a stdlib name is an error…
-	_, err := pkg(t, `def dir-ensure(path: str) { apply { shell { mkdir "$path" } } }`, nil)
+	sub := func(src string) map[string]string { return map[string]string{"dir/ensure.shellf": src} }
+
+	// A plain def whose qualified name hits the stdlib is an error…
+	_, _, err := ParsePackage(`on web { }`, sub(`def ensure(path: str) { apply { shell { mkdir "$path" } } }`),
+		nil, map[string]string{}, map[string]string{}, testStdSig)
 	if err == nil || !strings.Contains(err.Error(), "shadows a stdlib def") {
 		t.Fatalf("shadowing must error without override: %v", err)
 	}
+	// …and the message names the qualified form, which is what the caller would type.
+	if !strings.Contains(err.Error(), "dir.ensure") {
+		t.Fatalf("error must name the qualified def, got: %v", err)
+	}
+
 	// …but `override def` is allowed and wins.
-	defs, err := pkg(t, `override def dir-ensure(path: str) { apply { shell { mkdir "$path" } } }`, nil)
+	_, defs, err := ParsePackage(`on web { }`, sub(`override def ensure(path: str) { apply { shell { mkdir "$path" } } }`),
+		nil, map[string]string{}, map[string]string{}, testStdSig)
 	if err != nil {
 		t.Fatalf("override should be allowed: %v", err)
 	}
-	if len(defs) != 1 || !defs["dir-ensure"].Override {
-		t.Fatalf("override def not recorded: %+v", defs)
+	if len(defs) != 1 || !defs["dir.ensure"].Override {
+		t.Fatalf("override def not recorded under its qualified name: %+v", defs)
+	}
+}
+
+// ADR-0033 §1: the dot separates package from action on a call; it is never part of
+// what an author writes after `def`. The package comes from the directory.
+func TestPackage_DotInDefNameRejected(t *testing.T) {
+	_, err := pkg(t, `def dir.ensure(path: str) { apply { shell { mkdir "$path" } } }`, nil)
+	if err == nil {
+		t.Fatal("a dot in a def name must be rejected (ADR-0033)")
+	}
+}
+
+// A sub-package qualifies its defs; a plain (non-stdlib) name is reachable as
+// `<dir>.<def>` and not under its bare name.
+func TestPackage_SubPackageQualifies(t *testing.T) {
+	libs := map[string]string{"tools/helper.shellf": `def helper(path: str) { apply { shell { touch "$path" } } }`}
+	_, defs, err := ParsePackage(`on web { tools.helper("/tmp/x") }`, libs, nil, map[string]string{}, map[string]string{}, testStdSig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := defs["tools.helper"]; !ok {
+		t.Fatalf("sub-package def must register qualified: %+v", defs)
+	}
+	if _, bare := defs["helper"]; bare {
+		t.Fatalf("sub-package def must NOT register bare: %+v", defs)
 	}
 }
 
@@ -158,5 +196,33 @@ func TestPackage_ForwardRefInPlanFile(t *testing.T) {
 	_, err := pkg(t, "on web { later() }\ndef later() { apply { shell { echo hi } } }", nil)
 	if err == nil || !strings.Contains(err.Error(), "unknown instruction") {
 		t.Fatalf("a forward-referenced def should be unknown: %v", err)
+	}
+}
+
+// ADR-0032 §4: the old names are not accepted, but a plan using one must say what to
+// write instead — sixty failures each naming its replacement is a mechanical edit,
+// sixty "unknown instruction" is a treasure hunt. Driven off the rename table itself,
+// so a future rename cannot forget an entry.
+func TestRenamedInstructions_ErrorNamesReplacement(t *testing.T) {
+	if len(Renamed) == 0 {
+		t.Fatal("the rename table is empty")
+	}
+	for old, want := range Renamed {
+		t.Run(old, func(t *testing.T) {
+			_, err := ParsePlanWithVars("on web { "+old+"(\"a\", \"b\") }", nil, nil, testStdSig)
+			if err == nil {
+				t.Fatalf("%q must not resolve any more", old)
+			}
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("error must name the replacement %q, got: %v", want, err)
+			}
+		})
+	}
+	// The replacements themselves must not sit in the table (a rename to itself would
+	// make the message advise what already failed).
+	for old, want := range Renamed {
+		if old == want {
+			t.Fatalf("%q maps to itself", old)
+		}
 	}
 }

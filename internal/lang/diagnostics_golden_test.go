@@ -10,7 +10,7 @@ import "testing"
 func TestGoldenDiagnostics_Plan(t *testing.T) {
 	cases := []struct{ name, src, want string }{
 		{"undefined-binding",
-			"x = nope\non s { file-write(\"/p\", x) }",
+			"x = nope\non s { file.write(\"/p\", x) }",
 			`2:1: undefined variable "nope"`},
 		{"empty-target",
 			`on { }`,
@@ -19,10 +19,10 @@ func TestGoldenDiagnostics_Plan(t *testing.T) {
 			`on s { 123 }`,
 			`1:8: expected instruction or 'parallel', got "123"`},
 		{"missing-comma",
-			`on s { file-write("/p" "q") }`,
+			`on s { file.write("/p" "q") }`,
 			`1:24: expected ), got "q"`},
 		{"unterminated-interpolation",
-			"owner = \"${x\non s { dir-owner(\"/o\", owner) }",
+			"owner = \"${x\non s { dir.owner(\"/o\", owner) }",
 			`1:9: unterminated ${...} interpolation`},
 	}
 	for _, c := range cases {

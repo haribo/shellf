@@ -289,11 +289,11 @@
 <span class="l" style="animation-delay:.35s"><span class="cmt">on web:</span></span>
 <span class="l" style="animation-delay:.5s">  <span class="grp">web1</span>:</span>
 <span class="l" style="animation-delay:.65s">    apt.install(nginx)            <span class="tag-would">would.installed</span></span>
-<span class="l" style="animation-delay:.8s">    file-write(/etc/nginx/…)      <span class="tag-would">would.written</span></span>
+<span class="l" style="animation-delay:.8s">    file.write(/etc/nginx/…)      <span class="tag-would">would.written</span></span>
 <span class="l" style="animation-delay:.95s">    service(nginx)                <span class="tag-would">would.converged</span></span>
 <span class="l" style="animation-delay:1.3s"><span class="prompt">$</span> shellf run <span class="flag">--inventory</span> hosts.shellf site.shellf</span>
 <span class="l" style="animation-delay:1.5s">    apt.install(nginx)            <span class="tag-ok">ok.installed</span></span>
-<span class="l" style="animation-delay:1.62s">    file-write(/etc/nginx/…)      <span class="tag-ok">ok.written</span></span>
+<span class="l" style="animation-delay:1.62s">    file.write(/etc/nginx/…)      <span class="tag-ok">ok.written</span></span>
 <span class="l" style="animation-delay:1.74s">    service(nginx)                <span class="tag-ok">ok.converged</span></span>
 <span class="l" style="animation-delay:2.05s"><span class="prompt">$</span> shellf run <span class="flag">--inventory</span> hosts.shellf site.shellf <span class="cmt"># re-run</span></span>
 <span class="l" style="animation-delay:2.2s">    apt.install(nginx)            <span class="tag-skip">ok.already</span></span>
@@ -364,7 +364,7 @@
 <span class="l"><span class="cmt">on web:</span></span>
 <span class="l">  <span class="grp">web1</span>:</span>
 <span class="l">    apt.install(nginx)      installed: <span class="tag-ok">true</span></span>
-<span class="l">    file-write(/etc/…)      synced: <span class="arrowdiff">false → true</span></span>
+<span class="l">    file.write(/etc/…)      synced: <span class="arrowdiff">false → true</span></span>
 <span class="l">    service(nginx)          running: <span class="arrowdiff">false → true</span>   enabled: <span class="tag-ok">true</span></span>
           </div>
         </div>

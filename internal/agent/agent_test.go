@@ -245,16 +245,17 @@ func TestServe_ImportedDef_QualifiedName(t *testing.T) {
 }
 
 func TestServe_UserDef_OverridesStdlib(t *testing.T) {
-	// `override def dir-ensure` replaces the stdlib one — the user shell runs, the
-	// stdlib's own observe/apply shells do not (ADR-0014). Only bare-named stdlib
-	// defs are overridable; a qualified name like `apt.install` has no def-name
-	// spelling.
+	// An override replaces the stdlib def — the user shell runs, the stdlib's own
+	// observe/apply shells do not (ADR-0014). The source declares a bare `ensure`
+	// (a dot is never valid in a def name, ADR-0033); the qualification lives in the
+	// map key, which is what the agent looks up. Since ADR-0032 gave every stdlib
+	// instruction a package, this is how any of them is overridden.
 	f := newFake()
 	f.set(`my-mkdir "$path"`, "", 0)
 	resp := serve(t, f, proto.Request{
 		Mode:  "apply",
-		Defs:  map[string]string{"dir-ensure": `override def dir-ensure(path: str) { apply { shell { my-mkdir "$path" } } }`},
-		Steps: []proto.Step{{Instruction: "dir-ensure", Args: map[string]string{"path": "/opt"}}},
+		Defs:  map[string]string{"dir.ensure": `override def ensure(path: str) { apply { shell { my-mkdir "$path" } } }`},
+		Steps: []proto.Step{{Instruction: "dir.ensure", Args: map[string]string{"path": "/opt"}}},
 	})
 	if resp.Results[0].Category != "ok" {
 		t.Fatalf("override def should run: %+v", resp.Results)

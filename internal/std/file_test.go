@@ -13,7 +13,7 @@ import (
 // writeFile runs the real file-write def against a real shell.
 func writeFile(t *testing.T, path, content string) engine.Result {
 	t.Helper()
-	def, ok := Lookup("file-write")
+	def, ok := Lookup("file.write")
 	if !ok {
 		t.Fatal("file-write not found")
 	}
@@ -32,7 +32,7 @@ func writeFile(t *testing.T, path, content string) engine.Result {
 func TestFileWrite_DoesNotTruncateInPlace(t *testing.T) {
 	// observe reports drift (exit 1), so apply runs and its shell is captured.
 	f := &fakeExec{observe: drift}
-	eval(t, "file-write", map[string]string{"path": "/etc/x", "content": "c"}, f, engine.Apply)
+	eval(t, "file.write", map[string]string{"path": "/etc/x", "content": "c"}, f, engine.Apply)
 
 	var apply string
 	for _, s := range f.calls {

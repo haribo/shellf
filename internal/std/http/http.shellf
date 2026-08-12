@@ -1,7 +1,7 @@
 # A read-only question: does an URL return the expected HTTP status? Used to
-# validate a deploy — a standalone `http-check("https://x", "200")` halts the run
+# validate a deploy — a standalone `http.check("https://x", "200")` halts the run
 # if it does not match (a failing question is an err).
-def http-check(url: str, status: str) {
+def check(url: str, status: str) {
     check {
         r = shell { test "$(curl -so /dev/null -w '%{http_code}' "$url")" = "$status" }
         if r { return ok.match }

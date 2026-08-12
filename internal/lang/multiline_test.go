@@ -8,7 +8,7 @@ import (
 func TestParseTripleQuotedString(t *testing.T) {
 	src := `
 on server {
-  file-write("/etc/app.conf", """
+  file.write("/etc/app.conf", """
 port=8080
 workers=4
 """)
