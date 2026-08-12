@@ -207,6 +207,20 @@ func (p *parser) unary() Expr {
 	return p.postfix()
 }
 
+// peekQualifiedCall reports whether the current `.` starts a qualified instruction
+// name rather than a field access: it does when an identifier follows and then a `(`.
+func (p *parser) peekQualifiedCall() bool {
+	save := *p.lex
+	tok := p.tok
+	defer func() { *p.lex, p.tok = save, tok }()
+	p.adv() // past '.'
+	if p.tok.kind != tIdent {
+		return false
+	}
+	p.adv()
+	return p.tok.kind == tLParen
+}
+
 func (p *parser) postfix() Expr {
 	e := p.primary()
 	for p.tok.kind == tDot {
@@ -242,6 +256,14 @@ func (p *parser) primary() Expr {
 		}
 		name := p.tok.val
 		p.adv()
+		// A qualified call — `file.write(...)`, `docker.compose-up(...)`. The dot is
+		// package membership here, not a field access, so it must be recognised before
+		// postfix() would read it as one. Distinguished by the `(` that follows: a
+		// bare `r.exit` stays a field (#296).
+		if p.tok.kind == tDot && p.peekQualifiedCall() {
+			p.adv()
+			name += "." + p.expect(tIdent, "instruction name after '.'").val
+		}
 		if p.tok.kind == tLParen { // a call: name(args)
 			return Call{Name: name, Args: p.callArgs()}
 		}

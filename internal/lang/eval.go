@@ -16,7 +16,15 @@ import (
 //
 // The returned error is an evaluation failure (unbound var, unsupported
 // construct) — distinct from an `err.*` Result, which is a normal outcome.
-func EvalDef(def Def, args, with map[string]string, ex engine.Executor, mode engine.Mode) (res engine.Result, err error) {
+func EvalDef(def Def, args, with map[string]string, ex engine.Executor, mode engine.Mode) (engine.Result, error) {
+	return EvalDefWith(def, args, with, ex, mode, nil, nil)
+}
+
+// EvalDefWith is EvalDef with instruction calls enabled (ADR-0030): `resolve` looks a
+// callee up, `stack` is the chain that led here so a cycle names its path. A nil
+// resolver rejects any call, which is what a def evaluated in isolation (a unit test)
+// wants.
+func EvalDefWith(def Def, args, with map[string]string, ex engine.Executor, mode engine.Mode, resolve DefResolver, stack []string) (res engine.Result, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			if ee, ok := r.(evalErr); ok {
@@ -29,7 +37,10 @@ func EvalDef(def Def, args, with map[string]string, ex engine.Executor, mode eng
 
 	// A def's own `as <user>` escalates all its shells; it wins over an enclosing
 	// block's become (applied last). `As("")` is a no-op (ADR-0011).
-	ev := &evaluator{ex: ex.As(def.Become).Using(def.Interp), vars: map[string]value{}}
+	ev := &evaluator{
+		ex: ex.As(def.Become).Using(def.Interp), vars: map[string]value{},
+		resolve: resolve, mode: mode, stack: stack,
+	}
 	for k, v := range args {
 		ev.vars[k] = v
 	}
@@ -96,21 +107,25 @@ func EvalDef(def Def, args, with map[string]string, ex engine.Executor, mode eng
 	for _, ph := range def.Phases {
 		if ph.Name == "apply" || ph.Name == "post" {
 			if o := ev.evalPhase(ph); o != nil {
-				return changedIfOK(ev.toResult(*o)), nil
+				return ev.changedIfActed(ev.toResult(*o)), nil
 			}
 		}
 	}
-	return changedIfOK(engine.Ok("")), nil
+	return ev.changedIfActed(engine.Ok("")), nil
 }
 
-// changedIfOK marks a Result Changed when it comes from a run apply (not a
-// guard skip) and did not err.
-func changedIfOK(r engine.Result) engine.Result {
-	if r.Category == engine.OK {
+// changedIfActed marks a Result Changed when a run apply did something and did not
+// err. "Did something" is a shell that ran, or a callee that itself reported changed
+// (ADR-0030 §3) — a def whose apply only calls an already-converged instruction has
+// changed nothing, and saying otherwise would fire every `if x.changed { … }`
+// downstream for nothing.
+func (ev *evaluator) changedIfActed(r engine.Result) engine.Result {
+	if r.Category == engine.OK && ev.acted {
 		r.Changed = true
 	}
 	return r
 }
+
 
 func retTag(def Def) string {
 	if def.Return != nil {
@@ -121,7 +136,7 @@ func retTag(def Def) string {
 
 // --- evaluator ---
 
-type value interface{} // string | int | bool | engine.ShellResult
+type value interface{} // string | int | bool | engine.ShellResult | engine.Result
 
 type evalErr struct{ err error }
 
@@ -129,7 +144,20 @@ type evaluator struct {
 	ex   engine.Executor
 	vars map[string]value
 	last value // last evaluated shell result, for the `when ok`/`when err` shorthand
+
+	// Set when this def may call others (ADR-0030). resolve is supplied by the
+	// caller so lang stays free of a std import; mode is carried so a callee is
+	// evaluated in the caller's mode, which is what keeps `--check` inert. stack
+	// is the call chain, for a readable cycle error.
+	resolve DefResolver
+	mode    engine.Mode
+	stack   []string
+	acted   bool // a shell ran, or a callee reported changed (ADR-0030 §3)
 }
+
+// DefResolver resolves an instruction name to its def. The agent supplies it (user
+// defs first, then the stdlib), so `lang` needs no import of `std`.
+type DefResolver func(name string) (Def, bool)
 
 func (ev *evaluator) fail(format string, a ...any) {
 	panic(evalErr{fmt.Errorf(format, a...)})
@@ -313,7 +341,21 @@ func (ev *evaluator) evalStmt(s Stmt) *Outcome {
 func (ev *evaluator) evalExpr(e Expr) value {
 	switch x := e.(type) {
 	case StrLit:
-		return x.Value
+		// `${name}` resolves against this def's scope — its params, its lets. A plan
+		// interpolates at parse time against globals; inside a def the values are only
+		// known at evaluation, so it happens here. Same sigil, same meaning, so an
+		// author does not have to know which side of the fence they are on (#296).
+		out, err := Interpolate(x.Value, func(n string) (string, bool) {
+			v, ok := ev.vars[n]
+			if !ok {
+				return "", false
+			}
+			return stringify(v), true
+		})
+		if err != nil {
+			ev.fail("%v", err)
+		}
+		return out
 	case BoolLit:
 		return x.Value
 	case IntLit:
@@ -346,14 +388,61 @@ func (ev *evaluator) evalExpr(e Expr) value {
 		return !truthy(ev.evalExpr(x.X))
 	case ShellExpr:
 		// A per-block `shell(<interp>)` overrides the def-declared interpreter.
+		ev.acted = true
 		res := ev.ex.Using(x.Interp).Shell(x.Cmd, ev.shellEnv())
 		ev.last = res
 		return res
 	case Call:
-		ev.fail("instruction calls are not supported yet: %q", x.Name)
+		return ev.evalCall(x)
 	}
 	ev.fail("unevaluable expression %T", e)
 	return nil
+}
+
+// evalCall runs another instruction from inside this def (ADR-0030).
+//
+//   - scope: the callee sees its own parameters only, never the caller's lets, so a
+//     def means the same thing wherever it is called from (§1);
+//   - escalation: it inherits this def's executor, and its own intrinsic `as` wins
+//     inside EvalDefWith (§2);
+//   - mode: it is evaluated in the caller's mode, so nothing effectful runs in
+//     `--check` (§5);
+//   - errors: an `err` halts the caller, like any failing step (§4);
+//   - cycles: the chain is carried so a repeat names its path (§6).
+func (ev *evaluator) evalCall(c Call) value {
+	if ev.resolve == nil {
+		ev.fail("instruction calls are not available here: %q", c.Name)
+	}
+	for _, seen := range ev.stack {
+		if seen == c.Name {
+			ev.fail("call cycle: %s -> %s", strings.Join(ev.stack, " -> "), c.Name)
+		}
+	}
+	def, ok := ev.resolve(c.Name)
+	if !ok {
+		ev.fail("unknown instruction %q", c.Name)
+	}
+	if len(c.Args) > len(def.Params) {
+		ev.fail("%s takes %d argument(s), got %d", c.Name, len(def.Params), len(c.Args))
+	}
+	// Positional arguments, evaluated in THIS def's scope, then handed over as the
+	// callee's own params. Nothing else of this def crosses over.
+	args := map[string]string{}
+	for i, a := range c.Args {
+		args[def.Params[i].Name] = stringify(ev.evalExpr(a))
+	}
+	res, err := EvalDefWith(def, args, nil, ev.ex, ev.mode, ev.resolve, append(ev.stack, c.Name))
+	if err != nil {
+		ev.fail("%s: %v", c.Name, err)
+	}
+	if res.Changed {
+		ev.acted = true
+	}
+	if res.Category == engine.ERR {
+		ev.fail("%s returned %s", c.Name, res.String())
+	}
+	ev.last = res
+	return res
 }
 
 func (ev *evaluator) evalField(f Field) value {
@@ -423,6 +512,8 @@ func truthy(v value) bool {
 		return t
 	case engine.ShellResult:
 		return t.OK()
+	case engine.Result:
+		return t.Category == engine.OK
 	}
 	return false
 }

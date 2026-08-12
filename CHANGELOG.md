@@ -19,6 +19,16 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A def may call another instruction (ADR-0030), so the stdlib composes instead of
+  every def being an island: a `def sudoers(...)` reuses `file.write` rather than
+  reimplementing a file write in shell. The callee sees its own arguments only,
+  inherits the caller's escalation unless it declares its own, halts the caller on
+  `err`, and is evaluated in the caller's mode so nothing effectful runs in `--check`.
+  A call cycle is refused with its chain (`a -> b -> a`). `changed` now means a shell
+  ran or a callee itself reported changed, so a def whose apply only calls an
+  already-converged instruction no longer claims to have acted (#296).
+- `${…}` is interpolated in a def body against the def's own scope, matching what a
+  plan does against globals (#296).
 - A subdirectory of a package is a sub-package: its defs are qualified `<dir>.<def>`,
   one level deep (ADR-0033). This is how a stdlib instruction is overridden now that
   they all carry a package — create `dir/` and declare `override def ensure(...)`
