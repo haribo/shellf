@@ -1,8 +1,21 @@
+def clone(url: str, dst: str) {
+    # Observed: the current origin remote (empty if not a repo). The `url` field
+    # matches the `url` argument, so a missing clone or a wrong remote both read
+    # as drift and trigger apply. A wrong-remote dst then fails the clone
+    # (destination exists) -> err.runtime, rather than silently accepting it.
+    observe { return state(url: shell { git -C "$dst" remote get-url origin 2>/dev/null }.stdout) }
+    apply {
+        r = shell { git clone "$url" "$dst" }
+        if !r { return err.runtime(r) }
+        return ok.cloned
+    }
+}
+
 # Clone a repo, or update an existing checkout to a pinned ref (tag/branch/SHA).
 # Unlike git-clone (clone-once), this fetches and hard-checks-out `ref`.
 # Converged when HEAD already resolves to `ref`. Warning: `checkout --force`
 # discards local changes in `dst` — intended for a deploy checkout, not a workdir.
-def git-sync(url: str, dst: str, ref: str) {
+def sync(url: str, dst: str, ref: str) {
     observe {
         return state(atRef: shell {
             test -d "$dst/.git" && test "$(git -C "$dst" rev-parse HEAD 2>/dev/null)" = "$(git -C "$dst" rev-parse "$ref^{commit}" 2>/dev/null)"

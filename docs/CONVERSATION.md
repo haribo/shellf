@@ -70,7 +70,7 @@ L'utilisateur a acté : **« coder pour affiner c'est du bullshit »**, on cadre
 (Voir le code dans `DESIGN.md §04`.)
 **Réussites à garder :** (1) **une seule règle de haltage** pour `sh` et instructions ; (2) le **« changed » est un tag** (`ok.pkgInstalled` vs `ok.pkgAlreadyInstalled`), pas un champ `changed_when` séparé → comparaison à deux niveaux (`== ok` / `== ok.tag`).
 **Trous :** (1) l'état **`would.*`** manquant en mode check ; (2) **injection** (interpolation shell) ; (3) **`post`** finally-vs-success. Plus la preuve vivante du mont Everest : `apt-cache show` ment si le cache est périmé.
-**Avertissement :** un langage prouvé sur `apt-install` seul **overfitte** (forme binaire installé/pas-installé). Il faut aussi **`file-copy`** (garde par contenu = hash/diff) et **`service`** (deux dimensions orthogonales).
+**Avertissement :** un langage prouvé sur `apt-install` seul **overfitte** (forme binaire installé/pas-installé). Il faut aussi **`file.copy`** (garde par contenu = hash/diff) et **`service`** (deux dimensions orthogonales).
 
 ## Le nom
 
@@ -82,4 +82,4 @@ Décision du **contrat d'interpolation `sh`** (le trou 🔴 injection). Proposit
 - `sh "cmd" [args...]` → exec direct, **pas de shell**, zéro injection (défaut).
 - `shell "..."` → `/bin/sh -c`, pipes/glob/`&&`, **utilisateur responsable** (le nom signale le danger).
 
-Prochaine étape après validation : écrire **`file-copy`** pour faire hurler le langage sur une autre forme de garde.
+Prochaine étape après validation : écrire **`file.copy`** pour faire hurler le langage sur une autre forme de garde.

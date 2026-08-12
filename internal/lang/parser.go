@@ -68,6 +68,12 @@ func ParsePackage(planSrc string, libs map[string]string, imports map[string][]s
 	for fname, src := range libs {
 		lp := newParser(src)
 		lp.sig, lp.userDefs = stdSig, defsByName
+		// A file keyed `<dir>/<file>` comes from a sub-package: its defs are
+		// qualified `<dir>.<def>` (ADR-0033). The declaration itself never carries
+		// a dot — the directory names, the author does not.
+		if i := strings.IndexByte(fname, '/'); i > 0 {
+			lp.defPrefix = fname[:i] + "."
+		}
 		for lp.tok.kind != tEOF {
 			if !isDefStart(lp.tok) {
 				lp.fail("package file %s may only contain defs, not %q", fname, lp.tok.val)
@@ -173,17 +179,21 @@ func (p *parser) registerDef(d Def) {
 	if p.userDefs == nil {
 		p.userDefs = map[string]Def{}
 	}
-	if _, dup := p.userDefs[d.Name]; dup {
-		p.fail("duplicate def %q in the package", d.Name)
+	// The name a caller writes: bare in the package root, `<dir>.<def>` in a
+	// sub-package (ADR-0033). Errors name it too, so the message matches what the
+	// author would have to type at the call site.
+	name := p.defPrefix + d.Name
+	if _, dup := p.userDefs[name]; dup {
+		p.fail("duplicate def %q in the package", name)
 	}
-	std := p.stdHas(d.Name)
+	std := p.stdHas(name)
 	switch {
 	case d.Override && !std:
-		p.fail("override def %q overrides nothing (no stdlib def by that name)", d.Name)
+		p.fail("override def %q overrides nothing (no stdlib def by that name)", name)
 	case !d.Override && std:
-		p.fail("def %q shadows a stdlib def; use `override def` to replace it", d.Name)
+		p.fail("def %q shadows a stdlib def; use `override def` to replace it", name)
 	}
-	p.userDefs[d.Name] = d
+	p.userDefs[name] = d
 }
 
 func (p *parser) stdHas(name string) bool {
@@ -229,6 +239,7 @@ type parser struct {
 	caught   map[string]bool   // vars bound with `?` in the current `on` block (ADR-0009)
 	sig      InstructionSig    // stdlib/builtin instruction parameter names (#107)
 	userDefs map[string]Def    // package + imported defs, resolved before the stdlib (ADR-0014/0015)
+	defPrefix string        // sub-package prefix for defs declared in this file (ADR-0033)
 
 	imports         map[string][]string // alias → imported package's def sources (ADR-0015)
 	importedAliases map[string]bool     // aliases already imported (duplicate check)
@@ -729,9 +740,32 @@ func (p *parser) asBlock() proto.Step {
 	return proto.Step{Become: user, Block: p.block()}
 }
 
+// Renamed maps every pre-ADR-0032 instruction name to its package form. It exists
+// only to turn "unknown instruction" into an actionable message — the old names are
+// NOT accepted (ADR-0032 §4: no aliases, no transition). A plan using one still fails;
+// it just says what to write instead.
+var Renamed = map[string]string{
+	"file-write": "file.write", "file-mode": "file.mode", "file-line": "file.line",
+	"file-delete": "file.delete", "file-replace": "file.replace",
+	"file-exists": "file.exists", "file-download": "file.download",
+	"file-copy": "file.copy", "template": "file.template",
+	"dir-ensure": "dir.ensure", "dir-exists": "dir.exists", "dir-owner": "dir.owner",
+	"dir-copy": "dir.copy",
+	"archive-extract": "archive.extract", "archive-extract-member": "archive.extract-member",
+	"git-clone": "git.clone", "git-sync": "git.sync",
+	"service": "service.ensure", "service-restart": "service.restart",
+	"service-reload": "service.reload",
+	"systemd-daemon-reload": "systemd.daemon-reload",
+	"user-ensure":           "user.ensure", "user-group": "user.group",
+	"http-check": "http.check", "wait-for": "http.wait-for",
+}
+
 func (p *parser) call(name string) proto.Step {
 	argNames, required, ok := p.resolveSig(name)
 	if !ok {
+		if to, was := Renamed[name]; was {
+			p.fail("unknown instruction %q — renamed to %q (ADR-0032)", name, to)
+		}
 		p.fail("unknown instruction %q", name)
 	}
 	p.expect(tLParen, "(")

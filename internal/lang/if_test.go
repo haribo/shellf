@@ -4,7 +4,7 @@ import "testing"
 
 func TestParseIf(t *testing.T) {
 	src := `on s {
-  if dir-ensure("/opt") {
+  if dir.ensure("/opt") {
     apt.install("nginx")
   } else {
     apt.install("apache")
@@ -18,7 +18,7 @@ func TestParseIf(t *testing.T) {
 	if st.If == nil {
 		t.Fatalf("expected an if step: %+v", st)
 	}
-	if st.If.Cond.Instruction != "dir-ensure" || st.If.Cond.Args["path"] != "/opt" {
+	if st.If.Cond.Instruction != "dir.ensure" || st.If.Cond.Args["path"] != "/opt" {
 		t.Fatalf("cond: %+v", st.If.Cond)
 	}
 	if len(st.If.Then) != 1 || st.If.Then[0].Args["pkg"] != "nginx" {
@@ -30,7 +30,7 @@ func TestParseIf(t *testing.T) {
 }
 
 func TestParseIfNoElse(t *testing.T) {
-	plan, err := ParsePlan(`on s { if dir-ensure("/opt") { apt.install("nginx") } }`)
+	plan, err := ParsePlan(`on s { if dir.ensure("/opt") { apt.install("nginx") } }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestParseIfNoElse(t *testing.T) {
 }
 
 func TestParseIfNegation(t *testing.T) {
-	plan, err := ParsePlan(`on s { if !dir-exists("/opt") { dir-ensure("/opt") } }`)
+	plan, err := ParsePlan(`on s { if !dir.exists("/opt") { dir.ensure("/opt") } }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestParseIfNegation(t *testing.T) {
 	if st.If == nil || !st.If.Negate {
 		t.Fatalf("expected a negated if: %+v", st.If)
 	}
-	if st.If.Cond == nil || st.If.Cond.Instruction != "dir-exists" {
+	if st.If.Cond == nil || st.If.Cond.Instruction != "dir.exists" {
 		t.Fatalf("cond: %+v", st.If.Cond)
 	}
 }

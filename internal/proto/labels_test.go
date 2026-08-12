@@ -38,16 +38,16 @@ func TestIfBlock_CondLabel(t *testing.T) {
 		t.Errorf("inline+match label: %q", got)
 	}
 	// Inline instruction, no match → bare instruction label.
-	bare := &IfBlock{Cond: &Step{Instruction: "dir-exists", Args: map[string]string{"path": "/opt"}}}
-	if got := bare.CondLabel(); got != "dir-exists(path=/opt)" {
+	bare := &IfBlock{Cond: &Step{Instruction: "dir.exists", Args: map[string]string{"path": "/opt"}}}
+	if got := bare.CondLabel(); got != "dir.exists(path=/opt)" {
 		t.Errorf("bare inline label: %q", got)
 	}
 }
 
 func TestStep_Label(t *testing.T) {
 	// Args are sorted by key and joined.
-	s := Step{Instruction: "service", Args: map[string]string{"name": "nginx", "enable": "true"}}
-	if got := s.Label(); got != "service(enable=true, name=nginx)" { // sorted by key
+	s := Step{Instruction: "service.ensure", Args: map[string]string{"name": "nginx", "enable": "true"}}
+	if got := s.Label(); got != "service.ensure(enable=true, name=nginx)" { // sorted by key
 		t.Errorf("instruction label: %q", got)
 	}
 	if got := (Step{Parallel: []Step{{}}}).Label(); got != "parallel" {
@@ -82,7 +82,7 @@ func TestResolveRefs_RecursesIntoBlockAndIf(t *testing.T) {
 			{Instruction: "apt.install", Refs: map[string]string{"pkg": "pkg"}},
 		}},
 		{If: &IfBlock{
-			Cond: &Step{Instruction: "dir-exists", Refs: map[string]string{"path": "pkg"}},
+			Cond: &Step{Instruction: "dir.exists", Refs: map[string]string{"path": "pkg"}},
 			Then: []Step{{Instruction: "shell", Args: map[string]string{"cmd": "echo hi"}}},
 			Else: []Step{{Instruction: "apt.install", Refs: map[string]string{"pkg": "pkg"}}},
 		}},
@@ -114,10 +114,10 @@ func TestResolveRefs_UndefinedInNestedBlock(t *testing.T) {
 }
 
 // Regression for #258: args are labelled name=value, not bare values in sorted
-// order — the latter reads as swapped, e.g. file-mode(755, /path).
+// order — the latter reads as swapped, e.g. file.mode(755, /path).
 func TestStep_Label_NameValue(t *testing.T) {
-	s := Step{Instruction: "file-mode", Args: map[string]string{"path": "/opt/backup.sh", "mode": "755"}}
-	if got := s.Label(); got != "file-mode(mode=755, path=/opt/backup.sh)" {
+	s := Step{Instruction: "file.mode", Args: map[string]string{"path": "/opt/backup.sh", "mode": "755"}}
+	if got := s.Label(); got != "file.mode(mode=755, path=/opt/backup.sh)" {
 		t.Fatalf("label should be name=value (sorted by name): %q", got)
 	}
 }

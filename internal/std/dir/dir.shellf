@@ -1,4 +1,4 @@
-def dir-ensure(path: str) {
+def ensure(path: str) {
     observe { return state(present: shell { test -d "$path" }.exit == 0) }
     apply {
         r = shell { mkdir -p "$path" }
@@ -7,7 +7,7 @@ def dir-ensure(path: str) {
     }
 }
 
-def dir-owner(path: str, owner: str) as root {
+def owner(path: str, owner: str) as root {
     observe { return state(owner: shell { stat -c '%U:%G' "$path" 2>/dev/null }.stdout) }
     apply {
         r = shell { chown -R "$owner" "$path" }
@@ -17,7 +17,7 @@ def dir-owner(path: str, owner: str) as root {
 }
 
 # A read-only question: no apply phase, deterministic in check (never `would`).
-def dir-exists(path: str) {
+def exists(path: str) {
     check {
         r = shell { test -d "$path" }
         if r { return ok.present }

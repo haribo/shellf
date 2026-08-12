@@ -7,7 +7,7 @@ type FileCopy struct {
 	Dst string
 }
 
-func (f FileCopy) Name() string       { return "file-copy" }
+func (f FileCopy) Name() string       { return "file.copy" }
 func (f FileCopy) ChangedTag() string { return "copied" }
 
 func (f FileCopy) PreCheck() *Result {

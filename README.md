@@ -20,8 +20,8 @@ is agentless: a single static binary pushes an **ephemeral agent** over SSH that
 evaluates the plan **on the target**, then vanishes. Nothing stays installed.
 
 > Status: experimental (0.1.0). Ships a **stdlib of instructions** (`apt.install`,
-> `service`, `dir-ensure`, `file-*`, `ufw.*`, `docker.*`, …) written as shellf
-> `def`s, plus `file-copy` and a raw **`shell`** form; you write the plan and
+> `service.ensure`, `dir.ensure`, `file-*`, `ufw.*`, `docker.*`, …) written as shellf
+> `def`s, plus `file.copy` and a raw **`shell`** form; you write the plan and
 > inventory. User-supplied instruction libraries (imports), cross-distro, and
 > cross-arch agents are not there yet. Debian/systemd targets, `linux/amd64`
 > control host.
@@ -56,8 +56,8 @@ Describe what to do in a **plan** file (`plan.shellf`):
 ```
 on web {
   apt.install("nginx")
-  file-copy("/tmp/nginx.conf", "/etc/nginx/nginx.conf")
-  service("nginx", "true", "true")       # running now, enabled at boot
+  file.copy("/tmp/nginx.conf", "/etc/nginx/nginx.conf")
+  service.ensure("nginx", "true", "true")       # running now, enabled at boot
 }
 ```
 
@@ -120,7 +120,7 @@ host web = { address: "10.0.0.1", pkg: "nginx", webroot: "/var/www/app" }
 ```
 on web {
   apt.install(pkg)                 # `pkg` resolves per host
-  dir-ensure(webroot)
+  dir.ensure(webroot)
 }
 ```
 
@@ -137,19 +137,19 @@ secret still reaches the target (in the request file, `0600`, and the process
 env) — root there can read it; at-rest secrecy is not yet solved.
 
 **Control flow.** `if` takes an instruction (or a captured result); the branch is
-taken on its outcome. `dir-exists` is a read-only *question*, so it stays honest
+taken on its outcome. `dir.exists` is a read-only *question*, so it stays honest
 in `--check`:
 
 ```
-if dir-exists("/opt/app") { service("app", "true", "true") }
-if !dir-exists("/opt/app") { dir-ensure("/opt/app") }   # act only when absent
+if dir.exists("/opt/app") { service.ensure("app", "true", "true") }
+if !dir.exists("/opt/app") { dir.ensure("/opt/app") }   # act only when absent
 ```
 
 **Capture and match outcomes.** An instruction returns a `Result`: a tagged
 outcome (`ok`/`err` + a tag), plus a `changed` flag.
 
 ```
-x = file-write("/etc/app.conf", cfg)
+x = file.write("/etc/app.conf", cfg)
 if x { restart() }               # `if x` = it succeeded; `if !x` = it failed
 if x == ok.written { reload() }  # match a specific tag
 if x.changed { … }               # did it actually act (not a converged skip)?
@@ -165,15 +165,15 @@ if x == err.dbLocked { retry() } else { report() }
 ```
 
 **Privilege escalation.** shellf runs as the SSH user. `as <user>` escalates a
-block (via sudo/doas); many stdlib defs (`apt.install`, `service`, …) declare
+block (via sudo/doas); many stdlib defs (`apt.install`, `service.ensure`, …) declare
 `as root` themselves and escalate on their own:
 
 ```
 on web {
   apt.install("nginx")           # escalates itself (intrinsic `as root`)
   as root {                      # escalate a block of generic instructions
-    dir-ensure("/opt/app")
-    file-write("/etc/app.conf", cfg)
+    dir.ensure("/opt/app")
+    file.write("/etc/app.conf", cfg)
   }
 }
 ```
@@ -199,7 +199,7 @@ def install(pkg: str) as root {
 ```
 
 A field with no same-named argument (like `installed`) must simply hold;
-fields that match a parameter (`service` → `running`, `git-clone` → `url`) are
+fields that match a parameter (`service.ensure` → `running`, `git.clone` → `url`) are
 compared to it. See [ADR-0013](docs/adr/0013-observe-state-contract.md).
 
 **Preview, then apply.** `--check` runs only the read-only phases, never mutates,
@@ -210,14 +210,14 @@ as `current → desired`, without acting.
 ## Instructions
 
 Most instructions are `def`s written in shellf and embedded in the binary; only
-`shell` and `file-copy` are Go builtins. All are idempotent (`observe` skips
+`shell` and `file.copy` are Go builtins. All are idempotent (`observe` skips
 `apply` when the desired state already holds).
 
-- **Packages & services** — `apt.install(pkg)` · `apt.update()` · `service(name, running, enabled)` (running/enabled are `"true"`/`"false"`; a `.timer` unit works as the name) · `service-restart(name)` · `service-reload(name)` · `systemd-daemon-reload()` · `user-group(user, group)` · `user-ensure(name, shell)`
-- **Files & directories** — `file-copy(src, dst)` (target-side copy) · `template(src, dst)` (render a control-host file's `@{var}` and deliver it) · `dir-copy(src, dst)` (deliver a control-host tree verbatim, binary-safe) · `file-write(path, content)` · `file-mode(path, mode)` · `file-replace(path, key, value)` (a `key=value` line) · `file-line(path, line)` · `file-delete(path)` · `file-download(url, dst, sha256)` · `dir-ensure(path)` · `dir-owner(path, owner)` · `archive-extract(src, dst)` · `archive-extract-member(src, dst, member)` (one file out of a tarball) · `git-clone(url, dst)` · `git-sync(url, dst, ref)` (update to a pinned ref)
-- **Questions** (read-only, deterministic in `--check`) — `dir-exists(path)` · `file-exists(path)` · `http-check(url, status)` · `wait-for(url, timeout)` (retries until ready)
+- **Packages & services** — `apt.install(pkg)` · `apt.update()` · `service.ensure(name, running, enabled)` (running/enabled are `"true"`/`"false"`; a `.timer` unit works as the name) · `service.restart(name)` · `service.reload(name)` · `systemd.daemon-reload()` · `user.group(user, group)` · `user.ensure(name, shell)`
+- **Files & directories** — `file.copy(src, dst)` (target-side copy) · `file.template(src, dst)` (render a control-host file's `@{var}` and deliver it) · `dir.copy(src, dst)` (deliver a control-host tree verbatim, binary-safe) · `file.write(path, content)` · `file.mode(path, mode)` · `file.replace(path, key, value)` (a `key=value` line) · `file.line(path, line)` · `file.delete(path)` · `file.download(url, dst, sha256)` · `dir.ensure(path)` · `dir.owner(path, owner)` · `archive.extract(src, dst)` · `archive.extract-member(src, dst, member)` (one file out of a tarball) · `git.clone(url, dst)` · `git.sync(url, dst, ref)` (update to a pinned ref)
+- **Questions** (read-only, deterministic in `--check`) — `dir.exists(path)` · `file.exists(path)` · `http.check(url, status)` · `http.wait-for(url, timeout)` (retries until ready)
 - **Firewall** — `ufw.enable()` · `ufw.default(incoming, outgoing)` · `ufw.open(port, proto)`
-- **Docker** — `docker.install()` · `docker.network(name)` · `docker.compose-up(dir, build)` (`build` `"true"` rebuilds local images; always re-applies — `up -d` is idempotent) · `docker.compose-restart(dir, service)` (handler — omit `service` for the whole stack; gate it on `.changed`, e.g. after a mounted config is edited)
+- **Docker** — `docker.install()` · `docker.network(name)` · `docker.compose-up(dir, build)` (`build` `"true"` rebuilds local images; always re-applies — `up -d` is idempotent) · `docker.compose-restart(dir, service)` (handler — omit `service.ensure` for the whole stack; gate it on `.changed`, e.g. after a mounted config is edited)
 
 Write your own — see [Writing shellf](#writing-shellf).
 

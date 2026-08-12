@@ -12,13 +12,13 @@ import (
 // Request — decoded in Go, never through a shell arg/env (which would hit ARG_MAX
 // for a large file). To honor `as root`, the decoded bytes are staged in a temp
 // file and placed by the (possibly escalated) executor. Idempotent by content
-// sha256. Built by `dir-copy`'s control-side resolution (ADR-0028).
+// sha256. Built by `dir.copy`'s control-side resolution (ADR-0028).
 type FilePut struct {
 	Path    string
 	Content string // base64
 }
 
-func (f FilePut) Name() string       { return "file-put" }
+func (f FilePut) Name() string       { return "file.put" }
 func (f FilePut) ChangedTag() string { return "written" }
 
 func (f FilePut) decode() ([]byte, error) { return base64.StdEncoding.DecodeString(f.Content) }

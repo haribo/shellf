@@ -300,9 +300,9 @@ func runInstruction(step proto.Step, ex engine.Executor, m engine.Mode, defs map
 
 func dispatch(step proto.Step) (engine.Instruction, error) {
 	switch step.Instruction {
-	case "file-copy":
+	case "file.copy":
 		return engine.FileCopy{Src: step.Args["src"], Dst: step.Args["dst"]}, nil
-	case "file-put":
+	case "file.put":
 		return engine.FilePut{Path: step.Args["path"], Content: step.Args["content"]}, nil
 	case "shell":
 		return engine.Shell{Cmd: step.Args["cmd"], Unless: step.Args["unless"], Env: engine.Env(step.Env)}, nil

@@ -51,13 +51,13 @@ var converged = engine.ShellResult{Exit: 0}
 var drift = engine.ShellResult{Exit: 1}
 
 func TestStd_IntrinsicBecome(t *testing.T) {
-	for _, name := range []string{"apt.install", "service", "ufw.enable", "ufw.open", "docker.install", "docker.network", "user-group", "dir-owner"} {
+	for _, name := range []string{"apt.install", "service.ensure", "ufw.enable", "ufw.open", "docker.install", "docker.network", "user.group", "dir.owner"} {
 		def, ok := Lookup(name)
 		if !ok || def.Become != "root" {
 			t.Fatalf("%s should be intrinsic `as root`: ok=%v become=%q", name, ok, def.Become)
 		}
 	}
-	for _, name := range []string{"dir-ensure", "file-write", "dir-exists"} {
+	for _, name := range []string{"dir.ensure", "file.write", "dir.exists"} {
 		if def, _ := Lookup(name); def.Become != "" {
 			t.Fatalf("%s should not be intrinsic: become=%q", name, def.Become)
 		}
@@ -66,13 +66,13 @@ func TestStd_IntrinsicBecome(t *testing.T) {
 
 func TestStdlib_AllPresent(t *testing.T) {
 	for _, name := range []string{
-		"apt.install", "file-download", "archive-extract", "git-clone",
-		"dir-ensure", "file-write", "file-line", "file-delete",
-		"user-group", "dir-owner", "dir-exists", "file-exists", "service",
+		"apt.install", "file.download", "archive.extract", "git.clone",
+		"dir.ensure", "file.write", "file.line", "file.delete",
+		"user.group", "dir.owner", "dir.exists", "file.exists", "service.ensure",
 		"docker.install", "docker.network", "docker.compose-up", "ufw.open", "ufw.enable",
 		// deployment dogfood additions
-		"file-mode", "file-replace", "systemd-daemon-reload", "service-restart", "service-reload",
-		"apt.update", "ufw.default", "user-ensure", "git-sync", "http-check", "wait-for",
+		"file.mode", "file.replace", "systemd.daemon-reload", "service.restart", "service.reload",
+		"apt.update", "ufw.default", "user.ensure", "git.sync", "http.check", "http.wait-for",
 		"docker.compose-restart",
 	} {
 		if _, ok := Lookup(name); !ok {
@@ -87,9 +87,9 @@ func TestDeployDefs_ActionShaped(t *testing.T) {
 		name, apply, tag string
 		args             map[string]string
 	}{
-		{"systemd-daemon-reload", "daemon-reload", "reloaded", nil},
-		{"service-restart", "restart", "restarted", map[string]string{"name": "sshd"}},
-		{"service-reload", "reload", "reloaded", map[string]string{"name": "nginx"}},
+		{"systemd.daemon-reload", "daemon-reload", "reloaded", nil},
+		{"service.restart", "restart", "restarted", map[string]string{"name": "sshd"}},
+		{"service.reload", "reload", "reloaded", map[string]string{"name": "nginx"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -103,18 +103,18 @@ func TestDeployDefs_ActionShaped(t *testing.T) {
 func TestDeployDefs_TruthyAndValue(t *testing.T) {
 	// A truthy-field resource (file-replace): converged skips, drift applies.
 	rep := map[string]string{"path": "/etc/x", "key": "K", "value": "v"}
-	if got := eval(t, "file-replace", rep, &fakeExec{observe: converged, applyMatch: "sed"}, engine.Apply).String(); got != "ok.already" {
+	if got := eval(t, "file.replace", rep, &fakeExec{observe: converged, applyMatch: "sed"}, engine.Apply).String(); got != "ok.already" {
 		t.Fatalf("file-replace converged: got %s", got)
 	}
-	if got := eval(t, "file-replace", rep, &fakeExec{observe: drift, apply: converged, applyMatch: "printf"}, engine.Apply).String(); got != "ok.set" {
+	if got := eval(t, "file.replace", rep, &fakeExec{observe: drift, apply: converged, applyMatch: "printf"}, engine.Apply).String(); got != "ok.set" {
 		t.Fatalf("file-replace drift: got %s", got)
 	}
 	// A value-field resource (file-mode): observed mode matches the arg → skip.
 	fm := map[string]string{"path": "/b", "mode": "755"}
-	if got := eval(t, "file-mode", fm, &fakeExec{observe: engine.ShellResult{Stdout: "755\n"}, applyMatch: "chmod"}, engine.Apply).String(); got != "ok.already" {
+	if got := eval(t, "file.mode", fm, &fakeExec{observe: engine.ShellResult{Stdout: "755\n"}, applyMatch: "chmod"}, engine.Apply).String(); got != "ok.already" {
 		t.Fatalf("file-mode converged: got %s", got)
 	}
-	if got := eval(t, "file-mode", fm, &fakeExec{observe: engine.ShellResult{Stdout: "644\n"}, apply: converged, applyMatch: "chmod"}, engine.Apply).String(); got != "ok.changed" {
+	if got := eval(t, "file.mode", fm, &fakeExec{observe: engine.ShellResult{Stdout: "644\n"}, apply: converged, applyMatch: "chmod"}, engine.Apply).String(); got != "ok.changed" {
 		t.Fatalf("file-mode drift: got %s", got)
 	}
 }
@@ -122,10 +122,10 @@ func TestDeployDefs_TruthyAndValue(t *testing.T) {
 func TestDeployDefs_Questions(t *testing.T) {
 	// http-check is a read-only question (check phase): match → ok, else err.
 	args := map[string]string{"url": "http://x", "status": "200"}
-	if got := eval(t, "http-check", args, &fakeExec{observe: converged}, engine.Check).String(); got != "ok.match" {
+	if got := eval(t, "http.check", args, &fakeExec{observe: converged}, engine.Check).String(); got != "ok.match" {
 		t.Fatalf("http-check match: got %s", got)
 	}
-	if got := eval(t, "http-check", args, &fakeExec{observe: drift}, engine.Check).String(); got != "err.mismatch" {
+	if got := eval(t, "http.check", args, &fakeExec{observe: drift}, engine.Check).String(); got != "err.mismatch" {
 		t.Fatalf("http-check mismatch: got %s", got)
 	}
 }
@@ -142,12 +142,12 @@ func TestTruthyResources(t *testing.T) {
 		{"docker.network", "network create", "created", map[string]string{"name": "web"}},
 		{"ufw.enable", "--force enable", "enabled", nil},
 		{"ufw.open", "ufw allow", "opened", map[string]string{"port": "443", "proto": "tcp"}},
-		{"dir-ensure", "mkdir", "created", map[string]string{"path": "/opt/x"}},
-		{"file-line", ">>", "added", map[string]string{"path": "/etc/x", "line": "z"}},
-		{"file-delete", "rm -rf", "deleted", map[string]string{"path": "/tmp/gone"}},
-		{"archive-extract", "tar", "extracted", map[string]string{"src": "/a.tgz", "dst": "/opt"}},
-		{"user-group", "usermod", "added", map[string]string{"user": "x", "group": "docker"}},
-		{"file-download", "curl", "downloaded", map[string]string{"url": "http://x", "dst": "/d", "sha256": "abc"}},
+		{"dir.ensure", "mkdir", "created", map[string]string{"path": "/opt/x"}},
+		{"file.line", ">>", "added", map[string]string{"path": "/etc/x", "line": "z"}},
+		{"file.delete", "rm -rf", "deleted", map[string]string{"path": "/tmp/gone"}},
+		{"archive.extract", "tar", "extracted", map[string]string{"src": "/a.tgz", "dst": "/opt"}},
+		{"user.group", "usermod", "added", map[string]string{"user": "x", "group": "docker"}},
+		{"file.download", "curl", "downloaded", map[string]string{"url": "http://x", "dst": "/d", "sha256": "abc"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -205,19 +205,19 @@ func TestComposeRestart_ActionShaped(t *testing.T) {
 		t.Fatalf("compose-restart whole stack: got %s, want ok.restarted", got)
 	}
 	// A named service restarts just that one.
-	if got := eval(t, "docker.compose-restart", map[string]string{"dir": "/opt/app", "service": "grafana"},
+	if got := eval(t, "docker.compose-restart", map[string]string{"dir": "/opt/app", "service.ensure": "grafana"},
 		&fakeExec{apply: converged, applyMatch: "compose restart"}, engine.Apply).String(); got != "ok.restarted" {
 		t.Fatalf("compose-restart named service: got %s, want ok.restarted", got)
 	}
 	// A failing apply surfaces err.runtime.
-	if got := eval(t, "docker.compose-restart", map[string]string{"dir": "/opt/app", "service": "grafana"},
+	if got := eval(t, "docker.compose-restart", map[string]string{"dir": "/opt/app", "service.ensure": "grafana"},
 		&fakeExec{apply: drift, applyMatch: "compose restart"}, engine.Apply).String(); got != "err.runtime" {
 		t.Fatalf("compose-restart apply-fail: got %s, want err.runtime", got)
 	}
 	// `--check` previews via the read-only `--dry-run` and never runs the real
 	// restart: every shell it issues carries the flag.
 	f := &fakeExec{observe: converged, apply: converged, applyMatch: "compose restart"}
-	if got := eval(t, "docker.compose-restart", map[string]string{"dir": "/opt/app", "service": "grafana"},
+	if got := eval(t, "docker.compose-restart", map[string]string{"dir": "/opt/app", "service.ensure": "grafana"},
 		f, engine.Check).String(); got != "would.restarted" {
 		t.Fatalf("compose-restart check: got %s, want would.restarted", got)
 	}
@@ -234,14 +234,14 @@ func TestComposeRestart_ActionShaped(t *testing.T) {
 func TestValueResource_Service(t *testing.T) {
 	args := map[string]string{"name": "nginx", "running": "true", "enabled": "true"}
 	// Both observe fields (is-active/is-enabled) true == desired → converged.
-	if got := eval(t, "service", args, &fakeExec{observe: converged, applyMatch: "systemctl start"}, engine.Apply).String(); got != "ok.already" {
+	if got := eval(t, "service.ensure", args, &fakeExec{observe: converged, applyMatch: "systemctl start"}, engine.Apply).String(); got != "ok.already" {
 		t.Fatalf("service converged: got %s, want ok.already", got)
 	}
 	// Not running → running "false" ≠ "true" → drift → apply.
-	if got := eval(t, "service", args, &fakeExec{observe: drift, apply: engine.ShellResult{Exit: 0}, applyMatch: "systemctl start"}, engine.Apply).String(); got != "ok.converged" {
+	if got := eval(t, "service.ensure", args, &fakeExec{observe: drift, apply: engine.ShellResult{Exit: 0}, applyMatch: "systemctl start"}, engine.Apply).String(); got != "ok.converged" {
 		t.Fatalf("service drift: got %s, want ok.converged", got)
 	}
-	if got := eval(t, "service", args, &fakeExec{observe: drift, apply: engine.ShellResult{Exit: 1}, applyMatch: "systemctl start"}, engine.Apply).String(); got != "err.runtime" {
+	if got := eval(t, "service.ensure", args, &fakeExec{observe: drift, apply: engine.ShellResult{Exit: 1}, applyMatch: "systemctl start"}, engine.Apply).String(); got != "err.runtime" {
 		t.Fatalf("service apply-fail: got %s, want err.runtime", got)
 	}
 }
@@ -249,11 +249,11 @@ func TestValueResource_Service(t *testing.T) {
 func TestValueResource_DirOwner(t *testing.T) {
 	args := map[string]string{"path": "/opt", "owner": "haribo:haribo"}
 	// observed owner matches the argument → converged.
-	if got := eval(t, "dir-owner", args, &fakeExec{observe: engine.ShellResult{Stdout: "haribo:haribo\n"}, applyMatch: "chown"}, engine.Apply).String(); got != "ok.already" {
+	if got := eval(t, "dir.owner", args, &fakeExec{observe: engine.ShellResult{Stdout: "haribo:haribo\n"}, applyMatch: "chown"}, engine.Apply).String(); got != "ok.already" {
 		t.Fatalf("dir-owner converged: got %s, want ok.already", got)
 	}
 	// observed owner differs → chown.
-	if got := eval(t, "dir-owner", args, &fakeExec{observe: engine.ShellResult{Stdout: "root:root\n"}, apply: engine.ShellResult{Exit: 0}, applyMatch: "chown"}, engine.Apply).String(); got != "ok.changed" {
+	if got := eval(t, "dir.owner", args, &fakeExec{observe: engine.ShellResult{Stdout: "root:root\n"}, apply: engine.ShellResult{Exit: 0}, applyMatch: "chown"}, engine.Apply).String(); got != "ok.changed" {
 		t.Fatalf("dir-owner drift: got %s, want ok.changed", got)
 	}
 }
@@ -261,16 +261,16 @@ func TestValueResource_DirOwner(t *testing.T) {
 func TestValueResource_GitClone(t *testing.T) {
 	args := map[string]string{"url": "http://x/r", "dst": "/opt/r"}
 	// origin remote matches the wanted url → converged.
-	if got := eval(t, "git-clone", args, &fakeExec{observe: engine.ShellResult{Stdout: "http://x/r\n"}, applyMatch: "git clone"}, engine.Apply).String(); got != "ok.already" {
+	if got := eval(t, "git.clone", args, &fakeExec{observe: engine.ShellResult{Stdout: "http://x/r\n"}, applyMatch: "git clone"}, engine.Apply).String(); got != "ok.already" {
 		t.Fatalf("git-clone matching: got %s, want ok.already", got)
 	}
 	// absent (empty remote) → clone.
-	if got := eval(t, "git-clone", args, &fakeExec{observe: engine.ShellResult{Stdout: ""}, apply: engine.ShellResult{Exit: 0}, applyMatch: "git clone"}, engine.Apply).String(); got != "ok.cloned" {
+	if got := eval(t, "git.clone", args, &fakeExec{observe: engine.ShellResult{Stdout: ""}, apply: engine.ShellResult{Exit: 0}, applyMatch: "git clone"}, engine.Apply).String(); got != "ok.cloned" {
 		t.Fatalf("git-clone absent: got %s, want ok.cloned", got)
 	}
 	// wrong remote → drift → clone fails on an existing dst → err.runtime
 	// (the v1 tradeoff: no precise err.wrongRemote).
-	if got := eval(t, "git-clone", args, &fakeExec{observe: engine.ShellResult{Stdout: "http://other\n"}, apply: engine.ShellResult{Exit: 128}, applyMatch: "git clone"}, engine.Apply).String(); got != "err.runtime" {
+	if got := eval(t, "git.clone", args, &fakeExec{observe: engine.ShellResult{Stdout: "http://other\n"}, apply: engine.ShellResult{Exit: 128}, applyMatch: "git clone"}, engine.Apply).String(); got != "err.runtime" {
 		t.Fatalf("git-clone wrong remote: got %s, want err.runtime", got)
 	}
 }
@@ -278,11 +278,11 @@ func TestValueResource_GitClone(t *testing.T) {
 func TestFileWrite_ContentSync(t *testing.T) {
 	args := map[string]string{"path": "/etc/x", "content": "a\nb\n"}
 	// synced (content matches) → skip.
-	if got := eval(t, "file-write", args, &fakeExec{observe: converged, applyMatch: " > "}, engine.Apply).String(); got != "ok.already" {
+	if got := eval(t, "file.write", args, &fakeExec{observe: converged, applyMatch: " > "}, engine.Apply).String(); got != "ok.already" {
 		t.Fatalf("file-write synced: got %s, want ok.already", got)
 	}
 	// differs → write.
-	if got := eval(t, "file-write", args, &fakeExec{observe: drift, apply: engine.ShellResult{Exit: 0}, applyMatch: " > "}, engine.Apply).String(); got != "ok.written" {
+	if got := eval(t, "file.write", args, &fakeExec{observe: drift, apply: engine.ShellResult{Exit: 0}, applyMatch: " > "}, engine.Apply).String(); got != "ok.written" {
 		t.Fatalf("file-write drift: got %s, want ok.written", got)
 	}
 }
@@ -291,7 +291,7 @@ func TestStatusMode(t *testing.T) {
 	// A truthy field (dir-ensure `present`, no parameter): converged when the
 	// observe shell succeeds, drift otherwise — reported, never applied.
 	conv := &fakeExec{observe: converged, applyMatch: "mkdir"}
-	res := eval(t, "dir-ensure", map[string]string{"path": "/opt/x"}, conv, engine.Status)
+	res := eval(t, "dir.ensure", map[string]string{"path": "/opt/x"}, conv, engine.Status)
 	if res.Category != engine.OK || len(res.Fields) != 1 || res.Fields[0].Name != "present" || !res.Fields[0].Converged {
 		t.Fatalf("dir-ensure status converged: %s %+v", res, res.Fields)
 	}
@@ -301,7 +301,7 @@ func TestStatusMode(t *testing.T) {
 		}
 	}
 	dr := &fakeExec{observe: drift, applyMatch: "mkdir"}
-	res = eval(t, "dir-ensure", map[string]string{"path": "/opt/x"}, dr, engine.Status)
+	res = eval(t, "dir.ensure", map[string]string{"path": "/opt/x"}, dr, engine.Status)
 	if res.Category != engine.WOULD || res.Fields[0].Converged || res.Fields[0].Current != "false" || res.Fields[0].Desired != "true" {
 		t.Fatalf("dir-ensure status drift: %s %+v", res, res.Fields)
 	}
@@ -309,13 +309,13 @@ func TestStatusMode(t *testing.T) {
 
 func TestReadOnlyQuestions(t *testing.T) {
 	// A question resolves in pass 1: deterministic even in CHECK (never `would`).
-	if got := eval(t, "dir-exists", map[string]string{"path": "/opt"}, &fakeExec{observe: converged}, engine.Check).String(); got != "ok.present" {
+	if got := eval(t, "dir.exists", map[string]string{"path": "/opt"}, &fakeExec{observe: converged}, engine.Check).String(); got != "ok.present" {
 		t.Fatalf("dir-exists present: got %s, want ok.present", got)
 	}
-	if got := eval(t, "dir-exists", map[string]string{"path": "/opt"}, &fakeExec{observe: drift}, engine.Check).String(); got != "err.absent" {
+	if got := eval(t, "dir.exists", map[string]string{"path": "/opt"}, &fakeExec{observe: drift}, engine.Check).String(); got != "err.absent" {
 		t.Fatalf("dir-exists absent: got %s, want err.absent", got)
 	}
-	if got := eval(t, "file-exists", map[string]string{"path": "/etc/x"}, &fakeExec{observe: converged}, engine.Check).String(); got != "ok.present" {
+	if got := eval(t, "file.exists", map[string]string{"path": "/etc/x"}, &fakeExec{observe: converged}, engine.Check).String(); got != "ok.present" {
 		t.Fatalf("file-exists present: got %s, want ok.present", got)
 	}
 }

@@ -178,10 +178,10 @@ func loadPlanPackage(planPath, invPath string, baseVars, setVars map[string]stri
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s: %v", planPath, err)
 	}
-	// `template` steps are NOT resolved here: they render per host, in the
+	// `file.template` steps are NOT resolved here: they render per host, in the
 	// orchestrator, over each host's env (ADR-0024). See templateRenderer.
 	//
-	// `dir-copy` IS resolved here: its bytes are control-side and identical for
+	// `dir.copy` IS resolved here: its bytes are control-side and identical for
 	// every host, so it expands once into dir-ensure + file-put steps (ADR-0028).
 	planDir := filepath.Dir(planPath)
 	for bi := range plan {
@@ -199,14 +199,14 @@ func loadPlanPackage(planPath, invPath string, baseVars, setVars map[string]stri
 // A var, not a const, so a test can lower it without a 32 MB fixture.
 var dirCopyCeiling int64 = 32 << 20
 
-// resolveDirCopy expands every `dir-copy(src, dst)` step into a `dir-ensure` per
-// directory and a `file-put(dst, base64)` per file, reading src relative to the
+// resolveDirCopy expands every `dir.copy(src, dst)` step into a `dir.ensure` per
+// directory and a `file.put(dst, base64)` per file, reading src relative to the
 // plan dir. Recurses into if/block/parallel; other steps pass through.
 func resolveDirCopy(steps []proto.Step, dir string) ([]proto.Step, error) {
 	var out []proto.Step
 	for _, s := range steps {
 		switch {
-		case s.Instruction == "dir-copy":
+		case s.Instruction == "dir.copy":
 			if s.Refs["src"] != "" || s.Refs["dst"] != "" {
 				return nil, fmt.Errorf("dir-copy: src and dst must be literal paths, not per-host refs")
 			}
@@ -218,9 +218,9 @@ func resolveDirCopy(steps []proto.Step, dir string) ([]proto.Step, error) {
 		case s.If != nil:
 			// A condition is one step yielding one Result, but dir-copy expands to
 			// one step per file — there is nothing sound to put there. Refuse it
-			// here, with the reason, rather than ship `dir-copy` to the agent and
+			// here, with the reason, rather than ship `dir.copy` to the agent and
 			// surface the opaque `err.agent` it dies on (#293).
-			if s.If.Cond != nil && s.If.Cond.Instruction == "dir-copy" {
+			if s.If.Cond != nil && s.If.Cond.Instruction == "dir.copy" {
 				return nil, fmt.Errorf("dir-copy: cannot be used as a condition (it expands to one step per file)")
 			}
 			then, err := resolveDirCopy(s.If.Then, dir)
@@ -259,8 +259,43 @@ func resolveDirCopy(steps []proto.Step, dir string) ([]proto.Step, error) {
 	return out, nil
 }
 
+// readSubPackage reads one sub-package directory into libs, keyed `<name>/<file>`.
+// A directory holding no `.shellf` file is ignored (it is content, not code — a
+// `templates/` or `html/` tree next to a plan is ordinary). A directory that does hold
+// code but nests another one is refused: ADR-0032 fixes exactly one dot per name, so a
+// second level would produce `a.b.c`.
+func readSubPackage(parent, name string, libs map[string]string) error {
+	sub := filepath.Join(parent, name)
+	entries, err := os.ReadDir(sub)
+	if err != nil {
+		return err
+	}
+	var code []os.DirEntry
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".shellf") {
+			code = append(code, e)
+		}
+	}
+	if len(code) == 0 {
+		return nil // content directory, not a sub-package
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			return fmt.Errorf("%s: a sub-package may not contain a directory (%q) — one level only, ADR-0033", sub, e.Name())
+		}
+	}
+	for _, e := range code {
+		src, err := os.ReadFile(filepath.Join(sub, e.Name()))
+		if err != nil {
+			return err
+		}
+		libs[name+"/"+e.Name()] = string(src)
+	}
+	return nil
+}
+
 // srcPath resolves a control-side `src`: absolute paths are used as-is, relative
-// ones are joined to the plan dir (#281). Shared by `dir-copy` and `template` so
+// ones are joined to the plan dir (#281). Shared by `dir.copy` and `file.template` so
 // the two cannot drift.
 func srcPath(planDir, src string) string {
 	if filepath.IsAbs(src) {
@@ -280,7 +315,7 @@ func expandTree(srcRoot, dstRoot string) ([]proto.Step, error) {
 	if !info.IsDir() {
 		return nil, fmt.Errorf("dir-copy: %s is not a directory", srcRoot)
 	}
-	steps := []proto.Step{{Instruction: "dir-ensure", Args: map[string]string{"path": dstRoot}}}
+	steps := []proto.Step{{Instruction: "dir.ensure", Args: map[string]string{"path": dstRoot}}}
 	var total int64
 	walkErr := filepath.WalkDir(srcRoot, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -295,7 +330,7 @@ func expandTree(srcRoot, dstRoot string) ([]proto.Step, error) {
 		}
 		dst := filepath.Join(dstRoot, rel)
 		if d.IsDir() {
-			steps = append(steps, proto.Step{Instruction: "dir-ensure", Args: map[string]string{"path": dst}})
+			steps = append(steps, proto.Step{Instruction: "dir.ensure", Args: map[string]string{"path": dst}})
 			return nil
 		}
 		b, err := os.ReadFile(path)
@@ -307,7 +342,7 @@ func expandTree(srcRoot, dstRoot string) ([]proto.Step, error) {
 		if total > dirCopyCeiling {
 			return fmt.Errorf("dir-copy: %s exceeds the %d MB payload ceiling (ADR-0028)", srcRoot, dirCopyCeiling>>20)
 		}
-		steps = append(steps, proto.Step{Instruction: "file-put", Args: map[string]string{"path": dst, "content": enc}})
+		steps = append(steps, proto.Step{Instruction: "file.put", Args: map[string]string{"path": dst, "content": enc}})
 		return nil
 	})
 	if walkErr != nil {
@@ -328,7 +363,7 @@ func templateRenderer(planDir string) orchestrator.TemplateRenderer {
 func renderTemplate(path string, vars map[string]string) (string, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return "", fmt.Errorf("template: %v", err)
+		return "", fmt.Errorf("file.template: %v", err)
 	}
 	return lang.Template(string(b), func(n string) (string, bool) { v, ok := vars[n]; return v, ok })
 }
@@ -412,7 +447,11 @@ func shellfSources(dir string) ([]string, error) {
 }
 
 // packageLibs reads every sibling `*.shellf` file in the plan's directory (the
-// package), excluding the plan file itself and the inventory file.
+// package), excluding the plan file itself and the inventory file. It also reads one
+// level of subdirectories: each is a sub-package, and its files are keyed `<dir>/<file>`
+// so the parser qualifies their defs as `<dir>.<def>` (ADR-0033). Two levels down is an
+// error, not a silent skip — a skipped directory is how an override fails to apply
+// while the plan reports success.
 func packageLibs(planPath, invPath string) (map[string]string, error) {
 	dir := filepath.Dir(planPath)
 	entries, err := os.ReadDir(dir)
@@ -423,7 +462,13 @@ func packageLibs(planPath, invPath string) (map[string]string, error) {
 	invAbs, _ := filepath.Abs(invPath)
 	libs := map[string]string{}
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".shellf") {
+		if e.IsDir() {
+			if err := readSubPackage(dir, e.Name(), libs); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if !strings.HasSuffix(e.Name(), ".shellf") {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
@@ -467,7 +512,7 @@ func loadInventory(invPath string) (inventory.Inventory, error) {
 // stdlib (signatures live with the defs, self-hosting) plus the Go builtins —
 // so adding a def needs no parser-side edit (#107).
 func stdSignatures() lang.InstructionSig {
-	builtins := map[string][]string{"file-copy": {"src", "dst"}, "template": {"src", "dst"}, "dir-copy": {"src", "dst"}}
+	builtins := map[string][]string{"file.copy": {"src", "dst"}, "file.template": {"src", "dst"}, "dir.copy": {"src", "dst"}}
 	return func(name string) ([]string, int, bool) {
 		if p, ok := builtins[name]; ok {
 			return p, len(p), true // builtins have no optional params

@@ -1,4 +1,33 @@
-def file-download(url: str, dst: str, sha256: str) {
+# chmod a path to an exact mode. Path-dependent (not intrinsically root — the
+# caller escalates with `as root` for system paths), like dir-ensure/file-write.
+def mode(path: str, mode: str) {
+    observe { return state(mode: shell { stat -c '%a' "$path" 2>/dev/null }.stdout) }
+    apply {
+        r = shell { chmod "$mode" "$path" }
+        if !r { return err.runtime(r) }
+        return ok.changed
+    }
+}
+
+# Ensure a `key=value` line in a file (e.g. an .env): replace the line if the key
+# is present, else append it. Idempotent on the exact line. Note: key/value are
+# used in a sed pattern, so keep them free of sed metacharacters (`|`, `&`, `/`).
+def replace(path: str, key: str, value: str) {
+    observe { return state(set: shell { grep -qxF -- "$key=$value" "$path" 2>/dev/null }.exit == 0) }
+    apply {
+        r = shell {
+            if grep -q "^$key=" "$path" 2>/dev/null; then
+                sed -i "s|^$key=.*|$key=$value|" "$path"
+            else
+                printf '%s=%s\n' "$key" "$value" >> "$path"
+            fi
+        }
+        if !r { return err.runtime(r) }
+        return ok.set
+    }
+}
+
+def download(url: str, dst: str, sha256: str) {
     observe {
         return state(present: shell { test -f "$dst" && echo "$sha256  $dst" | sha256sum -c --status }.exit == 0)
     }
@@ -22,7 +51,7 @@ def file-download(url: str, dst: str, sha256: str) {
 # mode and owner onto the staging file: a redirection preserved them, a bare rename
 # would silently reset them to the umask default. The trap removes the staging file if
 # anything fails; after a successful rename it is already gone.
-def file-write(path: str, content: str) {
+def write(path: str, content: str) {
     observe {
         return state(synced: shell { test -f "$path" && printf '%s' "$content" | cmp -s - "$path" }.exit == 0)
     }
@@ -39,7 +68,7 @@ def file-write(path: str, content: str) {
     }
 }
 
-def file-line(path: str, line: str) {
+def line(path: str, line: str) {
     observe { return state(present: shell { grep -qF -- "$line" "$path" }.exit == 0) }
     apply {
         r = shell { printf '%s\n' "$line" >> "$path" }
@@ -48,7 +77,7 @@ def file-line(path: str, line: str) {
     }
 }
 
-def file-delete(path: str) {
+def delete(path: str) {
     observe { return state(absent: shell { test ! -e "$path" }.exit == 0) }
     apply {
         r = shell { rm -rf -- "$path" }
@@ -58,7 +87,7 @@ def file-delete(path: str) {
 }
 
 # A read-only question: no apply phase -> deterministic in check (never `would`).
-def file-exists(path: str) {
+def exists(path: str) {
     check {
         r = shell { test -f "$path" }
         if r { return ok.present }
