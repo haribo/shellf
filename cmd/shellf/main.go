@@ -49,6 +49,17 @@ func main() {
 		return
 	}
 
+	// Bridge: copies this session's stdin/stdout to the detached agent's Unix socket
+	// (ADR-0031). Hidden, launched by the control host over SSH for the duration of a
+	// job that needs the channel. It dies with its session by design.
+	if len(os.Args) > 2 && os.Args[1] == "__bridge" {
+		if err := agent.Bridge(os.Args[2], os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// Run a plan file against an inventory file.
 	if len(os.Args) > 1 && os.Args[1] == "run" {
 		runCmd(os.Args[2:])
