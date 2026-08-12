@@ -175,7 +175,7 @@ func runIf(ib *proto.IfBlock, ex engine.Executor, m engine.Mode, scope map[strin
 	} else {
 		res, err := runInstruction(*ib.Cond, ex, m, defs)
 		if err != nil {
-			return proto.StepResult{Label: label, Category: "err", Tag: "agent"}
+			return agentErr(label, err)
 		}
 		condResult = res
 		condSub = &proto.StepResult{Label: ib.Cond.Label(), Category: res.Category.String(), Tag: res.Tag, Changed: res.Changed, Shell: res.Shell}
@@ -264,7 +264,7 @@ func runStep(step proto.Step, ex engine.Executor, m engine.Mode, scope map[strin
 
 	res, err := runInstruction(step, ex.As(step.Become).Using(step.Interp), m, defs) // step-level `as <user>` + `shell(<interp>)`
 	if err != nil {
-		return proto.StepResult{Label: step.Label(), Category: "err", Tag: "agent"}
+		return agentErr(step.Label(), err)
 	}
 	if step.Bind != "" {
 		scope[step.Bind] = res
@@ -283,19 +283,44 @@ func copyScope(s map[string]engine.Result) map[string]engine.Result {
 // runInstruction resolves an instruction to an embedded stdlib def (run by the
 // language) or a remaining Go builtin.
 func runInstruction(step proto.Step, ex engine.Executor, m engine.Mode, defs map[string]lang.Def) (engine.Result, error) {
+	// A def may call another one (ADR-0030); the resolver is the same lookup order
+	// used here, passed down so `lang` needs no import of `std`.
+	resolve := resolver(defs)
 	// A package user def resolves first, so it can add new instructions and
 	// (with `override def`) replace a stdlib one (ADR-0014).
 	if def, ok := defs[step.Instruction]; ok {
-		return lang.EvalDef(def, step.Args, step.With, ex, m)
+		return lang.EvalDefWith(def, step.Args, step.With, ex, m, resolve, []string{step.Instruction})
 	}
 	if def, ok := std.Lookup(step.Instruction); ok {
-		return lang.EvalDef(def, step.Args, step.With, ex, m)
+		return lang.EvalDefWith(def, step.Args, step.With, ex, m, resolve, []string{step.Instruction})
 	}
 	inst, err := dispatch(step)
 	if err != nil {
 		return engine.Result{}, err
 	}
 	return engine.Run(inst, ex, m), nil
+}
+
+// resolver looks an instruction up the way runInstruction does: package user defs
+// first (so an `override def` wins), then the stdlib. Primitives (shell, file.put,
+// file.copy) are engine instructions, not defs, and are deliberately not reachable
+// from a def body — exposing them is its own decision.
+func resolver(defs map[string]lang.Def) lang.DefResolver {
+	return func(name string) (lang.Def, bool) {
+		if d, ok := defs[name]; ok {
+			return d, true
+		}
+		return std.Lookup(name)
+	}
+}
+
+// agentErr reports an evaluation failure — an unbound variable, an unsupported
+// construct, a call cycle (ADR-0030 §6) — carrying its message instead of dropping it.
+// A bare `err.agent` says something broke on the target and nothing more, which sends
+// the reader looking in the wrong place.
+func agentErr(label string, err error) proto.StepResult {
+	return proto.StepResult{Label: label, Category: "err", Tag: "agent",
+		Shell: &engine.ShellResult{Exit: 1, Stderr: err.Error()}}
 }
 
 func dispatch(step proto.Step) (engine.Instruction, error) {
