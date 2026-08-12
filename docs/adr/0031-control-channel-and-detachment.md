@@ -50,6 +50,29 @@ The channel carries **data only** — never a command to execute. The control ho
 renders, and answers; it never runs a shell on the operator's machine. Shell execution
 stays what shellf is for: commands on remote targets.
 
+#### Shape: a Unix socket in the workdir, bridged by the agent binary
+
+The agent listens on a Unix socket in its workdir. The control host opens an SSH
+session running `shellf __bridge <socket>`, which copies both ways between the session
+and the socket. Messages are one JSON object per line, each carrying an id its answer
+repeats, and the exchange opens with a version handshake — a resident agent may predate
+the client that finds it, and must be replaced rather than misread.
+
+The reason for a socket rather than a named pipe is failure detection, which §2 below
+requires: a pipe leaves a blocked writer unaware that the reader is gone, so a job
+would hang instead of failing with its pending request named. A socket reports the
+peer's departure. The bridge lives in the agent binary, already on the target, so
+nothing depends on `socat` or `nc` being installed.
+
+This is a **Unix** socket: it is a file in the workdir, not a listening port. The
+"listening socket" rejected by [ADR-0005](0005-agent-lifecycle.md) was a network
+surface with its own authentication; this has neither. It is removed with the workdir,
+and the bridge dies with its session, so "no trace" is unaffected.
+
+JSON, not a binary encoding: the payload is configuration files, `dir.copy` is already
+capped at 32 MB (ADR-0028), and a tolerant format lets an older agent ignore a field it
+does not know. A strict binary framing would turn a version skew into a crash.
+
 ### 2. Detachment is conditional, not abandoned
 
 A job that requests nothing from the control host stays **detached**: it survives an SSH
@@ -61,6 +84,12 @@ message naming the pending request, so the cause is not mistaken for a target pr
 
 Detachment is therefore a property of a job, not of the agent. Plans that never touch
 control-host data keep today's resilience with no change.
+
+The socket makes this survivable rather than fatal: the agent stays detached and keeps
+its socket open, so a dropped session kills the bridge, not the job. The control host
+reconnects, relaunches the bridge, and the dialogue resumes. Only a job actually
+waiting on an answer when the session dies fails — and it fails naming what it was
+waiting for.
 
 ### 3. The control host serves only what the plan declared
 
@@ -96,13 +125,30 @@ The model remains a **transient resident**.
   permanently, where a declared, per-run set is bounded.
 - **Serve any request the agent makes.** Rejected in §3: it hands arbitrary read access
   to the operator's machine to any imported def.
+- **A named pipe instead of a socket.** No dependency to write, but a blocked writer
+  cannot tell that the reader is gone, so §2's "fail naming the pending request" is not
+  implementable — the job would hang.
+- **Polling the workdir faster** (20 ms instead of 1 s), keeping today's file mechanism.
+  It would make a request cost ~40 ms rather than 2 s, with no protocol at all. Rejected
+  for the busy-wait it implies: fifty round trips per second per host, for the whole
+  deploy, when almost every plan asks nothing.
+- **SSH port forwarding.** Recreates a network surface, which ADR-0005 rejected.
+- **A binary protocol.** The payload is configuration files, and a strict framing turns
+  a version skew between a resident agent and a newer client into a crash.
 - **Run shell on the control host.** The channel would then execute code locally, and a
   third-party def could do anything on the operator's machine. Data only.
 
 ## Consequences
 
-- The protocol gains a request/response channel; the agent gains a blocking wait with
-  a failure path when the connection is gone.
+- The protocol gains a request/response channel over a Unix socket bridged by
+  `shellf __bridge`; the agent gains a blocking wait with a failure path when the peer
+  is gone.
+- A third process exists on the target while a job uses the channel (agent, bridge). It
+  must die with its session and leave no socket behind, or ADR-0005's "no trace" is
+  broken.
+- Reconnection is the property that justifies the whole arrangement, so it is tested
+  explicitly: cut the session mid-request, the agent survives, the bridge is relaunched,
+  the dialogue resumes.
 - The control host computes, per run, the set of resources it will serve, and refuses
   the rest by name.
 - Two classes of job now exist — detachable and control-dependent — and the report must
