@@ -13,6 +13,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the plan halted. `dir-copy` in the same position is refused control-side with an
   explicit reason — it expands to one step per file, which a condition cannot hold
   (#293).
+- `file-write` (and `template`, which becomes one) now stages next to the destination
+  and renames over it, instead of redirecting at the destination and truncating it.
+  A reader can no longer catch the file empty or partial mid-write — a window that
+  existed on every write, not only on an interrupted run. The destination's mode and
+  owner are carried onto the staging file, so a rewrite keeps them as before (#298).
 
 ## [0.4.0] - 2026-08-08
 

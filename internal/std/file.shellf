@@ -12,12 +12,28 @@ def file-download(url: str, dst: str, sha256: str) {
     }
 }
 
+# Stage-then-rename, never a redirection at the destination (#298). `> "$path"`
+# truncates the file before writing it, so on the happy path — not just on a crash —
+# there is a window where a reader sees an empty or partial file. For an sshd_config
+# picked up by a concurrent reload, that window is a lockout.
+#
+# The staging file sits in the destination's own directory so the rename is within one
+# filesystem, hence atomic. `cp -p` first (when the destination exists) carries its
+# mode and owner onto the staging file: a redirection preserved them, a bare rename
+# would silently reset them to the umask default. The trap removes the staging file if
+# anything fails; after a successful rename it is already gone.
 def file-write(path: str, content: str) {
     observe {
         return state(synced: shell { test -f "$path" && printf '%s' "$content" | cmp -s - "$path" }.exit == 0)
     }
     apply {
-        r = shell { printf '%s' "$content" > "$path" }
+        r = shell {
+            tmp="$path.shellf.$$"
+            trap 'rm -f "$tmp"' EXIT
+            if [ -f "$path" ]; then cp -p "$path" "$tmp"; fi
+            printf '%s' "$content" > "$tmp"
+            mv -f "$tmp" "$path"
+        }
         if !r { return err.runtime(r) }
         return ok.written
     }
