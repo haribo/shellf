@@ -512,10 +512,19 @@ func loadInventory(invPath string) (inventory.Inventory, error) {
 // stdlib (signatures live with the defs, self-hosting) plus the Go builtins —
 // so adding a def needs no parser-side edit (#107).
 func stdSignatures() lang.InstructionSig {
-	builtins := map[string][]string{"file.copy": {"src", "dst"}, "file.template": {"src", "dst"}, "dir.copy": {"src", "dst"}}
+	// params, and how many are required. `file.template` takes an optional third:
+	// it is rewritten to `file.write`, which carries the checker (#299).
+	builtins := map[string]struct {
+		params   []string
+		required int
+	}{
+		"file.copy":     {[]string{"src", "dst"}, 2},
+		"file.template": {[]string{"src", "dst", "validate"}, 2},
+		"dir.copy":      {[]string{"src", "dst"}, 2},
+	}
 	return func(name string) ([]string, int, bool) {
-		if p, ok := builtins[name]; ok {
-			return p, len(p), true // builtins have no optional params
+		if b, ok := builtins[name]; ok {
+			return b.params, b.required, true
 		}
 		if def, ok := std.Lookup(name); ok {
 			names := make([]string, len(def.Params))
