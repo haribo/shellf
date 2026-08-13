@@ -2,7 +2,8 @@
 
 ## Status
 
-Active
+**Superseded by [ADR-0037](0037-explicit-verdict.md)**, which keeps §1–3 and reverses
+§4: an `apply` must now end with an explicit `return`, and that return may be a def call.
 
 ## Context
 
