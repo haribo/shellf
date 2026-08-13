@@ -1,4 +1,4 @@
-# ADR 0035 — Phase vocabulary: fold `pre-check`, drop `post`, rename `check` and `--check`
+# ADR 0035 — Phase vocabulary: fold `pre-check`, drop `post`, rename `--check`
 
 ## Status
 
@@ -47,13 +47,13 @@ Unused, and its meaning was never settled beyond "after apply". Removing an empt
 concept costs nothing and shrinks what an author must learn. Re-adding it later, with a
 purpose, is a smaller change than keeping a placeholder that means nothing.
 
-### 3. The phase becomes `question`
+### 3. The phase keeps its name
 
-`check` says nothing about what the phase does. `question` does: it asks something about
-the target and answers `ok`/`err`, which is exactly how `dir.exists`, `file.exists` and
-`http.check` behave — the ADR-0013 term for them is already "questions". The name now
-matches the concept the docs already use.
-
+`check` was a candidate for renaming, on the grounds that it says what it does less
+precisely than "question" — the word ADR-0013 already uses for `dir.exists` and friends.
+Rejected: the collision that motivated it is with the *mode*, and renaming the mode
+settles it. Renaming the phase as well would be a break that fixes nothing, and `check`
+is understood everywhere.
 ### 4. The mode becomes `--dry-run`
 
 `--preview` was the obvious candidate and is rejected: it repeats the mistake, since a
@@ -68,7 +68,7 @@ replacement handles that — not an alias, which would keep both names alive for
 `docs/language.md` gains one table saying which phases each mode runs. Its absence is
 how the collision went unnoticed:
 
-| Mode | question | observe | preview | apply |
+| Mode | check | observe | preview | apply |
 |---|---|---|---|---|
 | `run` | yes | yes | no | yes |
 | `run --dry-run` | yes | yes | yes | **no** |
@@ -85,15 +85,15 @@ how the collision went unnoticed:
   levels). Rejected: it makes every mode the name of a phase, so an operator must know
   the internals of instructions to pick a flag. A mode names an intent — show me, tell
   me where things stand, do it — while phases are the instruction author's business.
-  Worse, a mode running only the `question` phase would print almost nothing, since 4
+  Worse, a mode running only the `check` phase would print almost nothing, since 4
   instructions of 31 have one.
 - **Aliases during a transition.** Same reasoning as [ADR-0032](0032-stdlib-naming.md):
   one consumer today, and a good error beats two spellings kept forever.
 
 ## Consequences
 
-- Breaking for any plan passing `--check`, and for any def declaring `pre-check`,
-  `post`, or `check`. All are stdlib or the one consuming repository.
+- Breaking for any plan passing `--check`, and for any def declaring `pre-check` or
+  `post`. Both are stdlib only — no plan declares phases.
 - The parser refuses the removed names, and the CLI refuses the removed flag, each
   naming its replacement — the mechanism ADR-0032 already established.
 - `eval.go` loses a branch; the phase table loses two entries.
