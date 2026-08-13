@@ -8,6 +8,19 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **BREAKING** — `~` now marks a primitive and `%` marks a control-host path
+  (ADR-0036); `%file.read(…)` becomes `~file.read(…)`. One marker could not express a
+  primitive that writes on the target, which is what `~file.write` does. The old
+  spelling is refused, naming the new one (#332).
+
+### Added
+
+- `~file.write(path, bytes)` writes on the target, and `~file.read` now reads **either
+  side**: the control host when its argument is marked `%"…"`, the target otherwise.
+  Together they close a gap — until now no plan could deliver a single binary file, only
+  a whole directory through `dir.copy`. `file.copy` is now an ordinary def over the two
+  (#332).
+
 - **BREAKING** — phase and mode vocabulary (ADR-0035). `pre-check` is folded into
   `check`, which now also runs under `status` — a def refusing its arguments refuses
   them there too. `post` is removed: nothing declared it and its meaning was never
@@ -35,7 +48,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Control-host primitives (ADR-0034): `%file.read`, `%file.render` and `%dir.list` read
+- Control-host primitives (ADR-0034): `~file.read`, `~file.render` and `~dir.list` read
   from the machine running shellf, and `%"path"` marks a path as living there. One rule
   — `%` means my machine — for a call and for a path alike. A def can therefore reach a
   template or a tree on the operator's disk, which is what `file.template` and

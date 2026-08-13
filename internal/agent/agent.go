@@ -305,10 +305,10 @@ func runInstruction(step proto.Step, ex engine.Executor, m engine.Mode, defs map
 	// A package user def resolves first, so it can add new instructions and
 	// (with `override def`) replace a stdlib one (ADR-0014).
 	if def, ok := defs[step.Instruction]; ok {
-		return lang.EvalDefWith(def, step.Args, step.With, ex, m, resolve, []string{step.Instruction}, fetch)
+		return lang.EvalDefFull(def, step.Args, step.With, step.Control, ex, m, resolve, []string{step.Instruction}, fetch)
 	}
 	if def, ok := std.Lookup(step.Instruction); ok {
-		return lang.EvalDefWith(def, step.Args, step.With, ex, m, resolve, []string{step.Instruction}, fetch)
+		return lang.EvalDefFull(def, step.Args, step.With, step.Control, ex, m, resolve, []string{step.Instruction}, fetch)
 	}
 	inst, err := dispatch(step)
 	if err != nil {

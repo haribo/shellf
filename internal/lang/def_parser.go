@@ -235,19 +235,17 @@ func (p *parser) peekQualifiedCall() bool {
 	return p.tok.kind == tLParen
 }
 
-// controlExpr parses what follows a `%`: either a path literal (`%"conf.j2"`) or a
-// call to a control-host primitive (`%file.read(…)`). Anything else is refused here,
-// naming what was found — that refusal is the rule keeping shell off the operator's
-// machine, so it must not be a silent fallback to an ordinary call.
-func (p *parser) controlExpr() Expr {
-	p.adv() // consume '%'
-	if p.tok.kind == tString || p.tok.kind == tRawString {
-		v := p.tok.val
-		p.adv()
-		return ControlPath{Value: v}
-	}
+// primitiveCall parses `~name.action(args)` — an engine primitive (ADR-0036 §1). The
+// marker says what it is, not where it runs: `~file.write` acts on the target, and the
+// `%` on an argument is what says a path is the operator's.
+//
+// The name must be in the closed set. That refusal is the rule keeping shell off the
+// operator machine: a def can run shell, so if `~` could prefix a def, shell would run
+// where every SSH key lives.
+func (p *parser) primitiveCall() Expr {
+	p.adv() // consume '~'
 	if p.tok.kind != tIdent {
-		p.fail("%% must be followed by a control-host path or primitive, got %q", p.tok.val)
+		p.fail("~ must be followed by a primitive name, got %q", p.tok.val)
 	}
 	name := p.tok.val
 	p.adv()
@@ -256,18 +254,37 @@ func (p *parser) controlExpr() Expr {
 		name += "." + p.expect(tIdent, "primitive name after '.'").val
 	}
 	if !ControlPrimitives[name] {
-		p.fail("%%%s is not a control-host primitive (ADR-0034); only %s may carry %%", name, controlPrimitiveList())
+		p.fail("~%s is not a primitive (ADR-0036); only %s may carry ~", name, controlPrimitiveList())
 	}
 	if p.tok.kind != tLParen {
-		p.fail("%%%s must be called", name)
+		p.fail("~%s must be called", name)
 	}
 	return Call{Name: name, Args: p.callArgs(), Control: true}
+}
+
+// controlPathLit parses `%"conf.j2"` — a path on the control host. `%` before anything
+// else is refused: it used to prefix a primitive (ADR-0034) and that spelling is gone,
+// so the error names what to write instead.
+func (p *parser) controlPathLit() Expr {
+	p.adv() // consume '%'
+	if p.tok.kind != tString && p.tok.kind != tRawString {
+		if p.tok.kind == tIdent {
+			// `%name(…)` was how a primitive was written until ADR-0036. Point at the
+			// new spelling without claiming this particular name is one — it may not be.
+			p.fail("%% now marks a control-host path, not a call; primitives are written ~%s and only %s exist (ADR-0036)",
+				p.tok.val, controlPrimitiveList())
+		}
+		p.fail("%% must be followed by a path string, got %q", p.tok.val)
+	}
+	v := p.tok.val
+	p.adv()
+	return ControlPath{Value: v}
 }
 
 func controlPrimitiveList() string {
 	names := make([]string, 0, len(ControlPrimitives))
 	for n := range ControlPrimitives {
-		names = append(names, "%"+n)
+		names = append(names, "~"+n)
 	}
 	sort.Strings(names)
 	return strings.Join(names, ", ")
@@ -282,19 +299,22 @@ func (p *parser) postfix() Expr {
 	return e
 }
 
-// ControlPrimitives is the closed set a `%` may prefix (ADR-0034 §2). It is closed on
+// ControlPrimitives is the closed set a `~` may prefix (ADR-0036 §1). It is closed on
 // purpose: if `%` could prefix a def, a def could run shell, and shell would run on the
 // machine holding every SSH key and every secret. shellf runs shell on targets.
 var ControlPrimitives = map[string]bool{
 	"file.read":   true,
+	"file.write":  true,
 	"file.render": true,
 	"dir.list":    true,
 }
 
 func (p *parser) primary() Expr {
 	switch p.tok.kind {
+	case tTilde:
+		return p.primitiveCall()
 	case tPercent:
-		return p.controlExpr()
+		return p.controlPathLit()
 	case tString, tRawString:
 		v := p.tok.val
 		p.adv()

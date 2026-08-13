@@ -20,9 +20,9 @@ func parseDef(src string) error {
 // more than the acceptances.
 func TestControl_PercentOnlyBeforeAPrimitive(t *testing.T) {
 	ok := []string{
-		`def t(p: str) { apply { x = %file.read(p) } }`,
-		`def t(c: str) { apply { x = %file.render(c) } }`,
-		`def t(d: str) { apply { x = %dir.list(d) } }`,
+		`def t(p: str) { apply { x = ~file.read(p) } }`,
+		`def t(c: str) { apply { x = ~file.render(c) } }`,
+		`def t(d: str) { apply { x = ~dir.list(d) } }`,
 		`def t() { apply { x = %"conf.j2" } }`,
 	}
 	for _, src := range ok {
@@ -37,7 +37,7 @@ func TestControl_PercentOnlyBeforeAPrimitive(t *testing.T) {
 		"shell":            `def t() { apply { x = %shell { rm -rf / } } }`,
 		"an unknown name":  `def t() { apply { x = %file.write("/etc/x", "y") } }`,
 		"nothing":          `def t() { apply { x = % } }`,
-		"a bare primitive": `def t(p: str) { apply { x = %file.read } }`,
+		"a bare primitive": `def t(p: str) { apply { x = ~file.read } }`,
 	}
 	for what, src := range refused {
 		t.Run(what, func(t *testing.T) {
@@ -51,15 +51,28 @@ func TestControl_PercentOnlyBeforeAPrimitive(t *testing.T) {
 
 // The refusal has to name what was written, or the author cannot see what to fix.
 func TestControl_RefusalNamesTheOffender(t *testing.T) {
-	err := parseDef(`def t() { apply { x = %docker.compose-up("/opt") } }`)
+	// A def marked as a primitive: named, and told what is allowed.
+	err := parseDef(`def t() { apply { x = ~docker.compose-up("/opt") } }`)
 	if err == nil {
 		t.Fatal("must be refused")
 	}
 	if !strings.Contains(err.Error(), "docker.compose-up") {
 		t.Fatalf("the error must name the offending call: %v", err)
 	}
-	if !strings.Contains(err.Error(), "%file.read") {
+	if !strings.Contains(err.Error(), "~file.read") {
 		t.Fatalf("the error must list what is allowed: %v", err)
+	}
+}
+
+// `%name(…)` was the ADR-0034 spelling and shipped this morning, so it will be typed.
+// It must point at `~`, without claiming that particular name is a primitive.
+func TestControl_OldPercentCallSpellingIsRefused(t *testing.T) {
+	err := parseDef(`def t() { apply { x = %file.read("conf.j2") } }`)
+	if err == nil {
+		t.Fatal("the old spelling must be refused")
+	}
+	if !strings.Contains(err.Error(), "~file.read") {
+		t.Fatalf("the error must point at the new spelling: %v", err)
 	}
 }
 
@@ -82,6 +95,12 @@ func TestControl_PercentInsideAStringIsNotAMarker(t *testing.T) {
 // evalDef with a control-host fetcher, so the primitives can be exercised without the
 // whole channel behind them.
 func evalWithFetch(t *testing.T, src, entry string, args map[string]string, fetch ControlFetcher) (engine.Result, error) {
+	return evalWithFetchControl(t, src, entry, args, nil, fetch)
+}
+
+// evalWithFetchControl marks some arguments as control-host paths, as a plan writing
+// `%"…"` would — without it a primitive reads the target instead (#332).
+func evalWithFetchControl(t *testing.T, src, entry string, args map[string]string, control []string, fetch ControlFetcher) (engine.Result, error) {
 	t.Helper()
 	defs, err := ParseDefs(src)
 	if err != nil {
@@ -92,7 +111,7 @@ func evalWithFetch(t *testing.T, src, entry string, args map[string]string, fetc
 		byName[d.Name] = d
 	}
 	resolve := func(n string) (Def, bool) { d, ok := byName[n]; return d, ok }
-	return EvalDefWith(byName[entry], args, nil, noopExec{}, engine.Apply, resolve, []string{entry}, fetch)
+	return EvalDefFull(byName[entry], args, nil, control, noopExec{}, engine.Apply, resolve, []string{entry}, fetch)
 }
 
 type noopExec struct{}
@@ -105,8 +124,8 @@ func TestControl_ReadAsksTheControlHost(t *testing.T) {
 	var asked string
 	fetch := func(r string) ([]byte, error) { asked = r; return []byte("contents"), nil }
 
-	_, err := evalWithFetch(t, `def t(p: str) { apply { x = %file.read(p) } }`, "t",
-		map[string]string{"p": "conf.j2"}, fetch)
+	_, err := evalWithFetchControl(t, `def t(p: str) { apply { x = ~file.read(p) } }`, "t",
+		map[string]string{"p": "conf.j2"}, []string{"p"}, fetch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +138,7 @@ func TestControl_ReadAsksTheControlHost(t *testing.T) {
 
 func TestControl_RenderSubstitutesTheDefScope(t *testing.T) {
 	fetch := func(string) ([]byte, error) { return []byte("port = @{port}"), nil }
-	src := `def t(p: str, port: str) { apply { x = %file.render(%file.read(p)) return ok.done } }`
+	src := `def t(p: str, port: str) { apply { x = ~file.render(~file.read(p)) return ok.done } }`
 	res, err := evalWithFetch(t, src, "t", map[string]string{"p": "c.j2", "port": "8080"}, fetch)
 	if err != nil {
 		t.Fatalf("render must resolve against the def's own scope: %v", err)
@@ -133,16 +152,16 @@ func TestControl_RenderSubstitutesTheDefScope(t *testing.T) {
 // empty content — which would deliver a truncated file and report success.
 func TestControl_FetchErrorSurfaces(t *testing.T) {
 	fetch := func(string) ([]byte, error) { return nil, errors.New(`refused: "x" was not declared`) }
-	_, err := evalWithFetch(t, `def t(p: str) { apply { x = %file.read(p) } }`, "t",
-		map[string]string{"p": "x"}, fetch)
+	_, err := evalWithFetchControl(t, `def t(p: str) { apply { x = ~file.read(p) } }`, "t",
+		map[string]string{"p": "x"}, []string{"p"}, fetch)
 	if err == nil || !strings.Contains(err.Error(), "refused") {
 		t.Fatalf("a refusal must surface: %v", err)
 	}
 }
 
 func TestControl_NoFetcherFails(t *testing.T) {
-	_, err := evalWithFetch(t, `def t(p: str) { apply { x = %file.read(p) } }`, "t",
-		map[string]string{"p": "x"}, nil)
+	_, err := evalWithFetchControl(t, `def t(p: str) { apply { x = ~file.read(p) } }`, "t",
+		map[string]string{"p": "x"}, []string{"p"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "file.read") {
 		t.Fatalf("no channel must fail naming the primitive: %v", err)
 	}
@@ -152,7 +171,7 @@ func TestControl_NoFetcherFails(t *testing.T) {
 func TestControl_PathLiteralIsInterpolated(t *testing.T) {
 	var asked string
 	fetch := func(r string) ([]byte, error) { asked = r; return []byte("x"), nil }
-	_, err := evalWithFetch(t, `def t(name: str) { apply { x = %file.read(%"conf/${name}.j2") } }`, "t",
+	_, err := evalWithFetch(t, `def t(name: str) { apply { x = ~file.read(%"conf/${name}.j2") } }`, "t",
 		map[string]string{"name": "web"}, fetch)
 	if err != nil {
 		t.Fatal(err)
@@ -167,9 +186,9 @@ func TestControl_PathLiteralIsInterpolated(t *testing.T) {
 // runtime for a resource it legitimately needs.
 func TestControl_ResourcesAreExtractable(t *testing.T) {
 	defs, err := ParseDefs(`
-def a(dst: str) { apply { x = %file.render(%file.read(%"conf.j2")) } }
-def b() { observe { return state(there: %file.read(%"other.txt")) } }
-def c(p: str) { apply { if %dir.list(%"tree") { shell { echo hi } } } }
+def a(dst: str) { apply { x = ~file.render(~file.read(%"conf.j2")) } }
+def b() { observe { return state(there: ~file.read(%"other.txt")) } }
+def c(p: str) { apply { if ~dir.list(%"tree") { shell { echo hi } } } }
 `)
 	if err != nil {
 		t.Fatal(err)
@@ -194,7 +213,7 @@ def c(p: str) { apply { if %dir.list(%"tree") { shell { echo hi } } } }
 // A path the target computes cannot be known before the run, so it is not in the set —
 // and the request it makes is refused by name rather than silently served.
 func TestControl_ComputedPathIsNotDeclared(t *testing.T) {
-	defs, err := ParseDefs(`def a(p: str) { apply { x = %file.read(p) } }`)
+	defs, err := ParseDefs(`def a(p: str) { apply { x = ~file.read(p) } }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,11 +300,11 @@ on web {
 	}
 }
 
-// %file.render accepts content from a shell — the case that motivated splitting read
+// ~file.render accepts content from a shell — the case that motivated splitting read
 // from render, and that neither Go transformation could do.
 func TestControl_RenderRejectsAPath(t *testing.T) {
 	fetch := func(string) ([]byte, error) { return []byte("x"), nil }
-	_, err := evalWithFetch(t, `def t() { apply { x = %file.render(%"conf.j2") } }`, "t", nil, fetch)
+	_, err := evalWithFetch(t, `def t() { apply { x = ~file.render(%"conf.j2") } }`, "t", nil, fetch)
 	if err == nil {
 		t.Fatal("render takes content, not a control-host path: passing one must fail")
 	}
@@ -294,7 +313,7 @@ func TestControl_RenderRejectsAPath(t *testing.T) {
 // A primitive name that survives the parser but not the evaluator would be a silent
 // hole; assert the evaluator has its own guard.
 func TestControl_UnknownPrimitiveAtEval(t *testing.T) {
-	defs, err := ParseDefs(`def t(p: str) { apply { x = %file.read(p) } }`)
+	defs, err := ParseDefs(`def t(p: str) { apply { x = ~file.read(p) } }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -377,5 +396,65 @@ def b() { apply { a() } }
 		noopExec{}, engine.Apply, nil, nil, nil)
 	if err == nil {
 		t.Fatal("no resolver must refuse the call")
+	}
+}
+
+// ADR-0036 §1: the same primitive reads either side, and the argument decides. Getting
+// this backwards delivers the wrong file with no error at all, so both directions are
+// asserted.
+func TestControl_ReadSideDependsOnTheArgument(t *testing.T) {
+	asked := ""
+	fetch := func(r string) ([]byte, error) { asked = r; return []byte("from control"), nil }
+
+	// Marked: goes through the channel.
+	_, err := evalWithFetchControl(t, `def t(p: str) { apply { x = ~file.read(p) } }`, "t",
+		map[string]string{"p": "conf.j2"}, []string{"p"}, fetch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asked != "file.read:conf.j2" {
+		t.Fatalf("a marked path must go to the control host: %q", asked)
+	}
+
+	// Unmarked: must not touch the channel at all.
+	asked = ""
+	_, _ = evalWithFetchControl(t, `def t(p: str) { apply { x = ~file.read(p) } }`, "t",
+		map[string]string{"p": "/etc/motd"}, nil, fetch)
+	if asked != "" {
+		t.Fatalf("an unmarked path must be read on the target, not asked for: %q", asked)
+	}
+}
+
+// The marker must survive the call boundary. Without it a def receives plain strings and
+// reads the target — the opposite of what the plan asked.
+func TestControl_MarkerCrossesTheCallBoundary(t *testing.T) {
+	asked := ""
+	fetch := func(r string) ([]byte, error) { asked = r; return []byte("x"), nil }
+
+	src := `
+def inner(p: str) { apply { x = ~file.read(p) return ok.read } }
+def outer(p: str) { apply { inner(p) } }
+`
+	_, err := evalWithFetchControl(t, src, "outer", map[string]string{"p": "conf.j2"},
+		[]string{"p"}, fetch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asked != "file.read:conf.j2" {
+		t.Fatalf("the mark must reach a def called by a def: %q", asked)
+	}
+}
+
+// ~file.write refuses a control-host path: there is no allow-list for writes, so a plan
+// must not be able to write on the operator's machine (ADR-0036 §4).
+func TestControl_WriteRefusesTheControlHost(t *testing.T) {
+	_, err := evalWithFetchControl(t, `def t(p: str) { apply { ~file.write(p, "data") } }`, "t",
+		map[string]string{"p": "/tmp/x"}, []string{"p"},
+		func(string) ([]byte, error) { return nil, nil })
+	if err == nil {
+		t.Fatal("writing on the control host must be refused")
+	}
+	if !strings.Contains(err.Error(), "control host") {
+		t.Fatalf("the refusal must say why: %v", err)
 	}
 }

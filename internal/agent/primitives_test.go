@@ -54,11 +54,11 @@ func TestPrimitives_ReadReachesTheControlHost(t *testing.T) {
 	resp := serveCompCh(t, f, ch, proto.Request{
 		Mode: "apply",
 		Defs: map[string]string{
-			"deliver": `def deliver(src: str, port: str) { apply { out = %file.render(%file.read(src)) shell { printf '%s' "$out" } } }`,
+			"deliver": `def deliver(src: str, port: str) { apply { out = ~file.render(~file.read(src)) shell { printf '%s' "$out" } } }`,
 		},
 		Steps: []proto.Step{{Instruction: "deliver", Args: map[string]string{
 			"src": filepath.Join(planDir, "conf.j2"), "port": "8080",
-		}}},
+		}, Control: []string{"src"}}}, // the plan wrote %"conf.j2"
 	})
 	if resp.Results[0].Category != "ok" {
 		t.Fatalf("the primitive chain must run: %+v", resp.Results[0])
@@ -81,11 +81,11 @@ func TestPrimitives_UndeclaredIsRefused(t *testing.T) {
 	resp := serveCompCh(t, f, ch, proto.Request{
 		Mode: "apply",
 		Defs: map[string]string{
-			"steal": `def steal(src: str) { apply { x = %file.read(src) } }`,
+			"steal": `def steal(src: str) { apply { x = ~file.read(src) } }`,
 		},
 		Steps: []proto.Step{{Instruction: "steal", Args: map[string]string{
 			"src": filepath.Join(planDir, "id_ed25519"),
-		}}},
+		}, Control: []string{"src"}}},
 	})
 	if resp.Results[0].Category != "err" {
 		t.Fatalf("an undeclared resource must fail the step: %+v", resp.Results[0])
@@ -105,8 +105,8 @@ func TestPrimitives_NoChannelFailsLoudly(t *testing.T) {
 	f := newComp()
 	resp := serveComp(t, f, proto.Request{
 		Mode:  "apply",
-		Defs:  map[string]string{"r": `def r(src: str) { apply { x = %file.read(src) } }`},
-		Steps: []proto.Step{{Instruction: "r", Args: map[string]string{"src": "conf.j2"}}},
+		Defs:  map[string]string{"r": `def r(src: str) { apply { x = ~file.read(src) } }`},
+		Steps: []proto.Step{{Instruction: "r", Args: map[string]string{"src": "conf.j2"}, Control: []string{"src"}}},
 	})
 	if resp.Results[0].Category != "err" {
 		t.Fatalf("a %% with no channel must fail: %+v", resp.Results[0])
@@ -119,7 +119,7 @@ func serveCompCh(t *testing.T, c *compExec, ch *Channel, req proto.Request) prot
 	return runRequest(req, c, ch)
 }
 
-// %file.render takes content, not a path — which is what lets a template whose source
+// ~file.render takes content, not a path — which is what lets a template whose source
 // lives on the *target* be rendered. Neither Go transformation could do this.
 func TestPrimitives_RenderContentFromTheTarget(t *testing.T) {
 	f := newComp()
@@ -128,7 +128,7 @@ func TestPrimitives_RenderContentFromTheTarget(t *testing.T) {
 	resp := serveCompCh(t, f, wire(t, t.TempDir(), nil), proto.Request{
 		Mode: "apply",
 		Defs: map[string]string{
-			"r": `def r(h: str) { apply { out = %file.render(shell { cat /etc/model.j2 }) shell { echo "$out" } } }`,
+			"r": `def r(h: str) { apply { out = ~file.render(shell { cat /etc/model.j2 }) shell { echo "$out" } } }`,
 		},
 		Steps: []proto.Step{{Instruction: "r", Args: map[string]string{"h": "web1"}}},
 	})
@@ -152,11 +152,11 @@ func TestPrimitives_BytesCannotBeInterpolated(t *testing.T) {
 	resp := serveCompCh(t, newComp(), ch, proto.Request{
 		Mode: "apply",
 		Defs: map[string]string{
-			"b": `def b(src: str) { apply { raw = %file.read(src) shell { echo "${raw}" } } }`,
+			"b": `def b(src: str) { apply { raw = ~file.read(src) shell { echo "${raw}" } } }`,
 		},
 		Steps: []proto.Step{{Instruction: "b", Args: map[string]string{
 			"src": filepath.Join(planDir, "logo.png"),
-		}}},
+		}, Control: []string{"src"}}},
 	})
 	if resp.Results[0].Category != "err" {
 		t.Fatalf("interpolating bytes must fail rather than mangle them: %+v", resp.Results[0])
@@ -167,7 +167,7 @@ func TestPrimitives_BytesCannotBeInterpolated(t *testing.T) {
 func TestPrimitives_ArityIsChecked(t *testing.T) {
 	resp := serveCompCh(t, newComp(), wire(t, t.TempDir(), nil), proto.Request{
 		Mode:  "apply",
-		Defs:  map[string]string{"a": `def a() { apply { x = %file.read() } }`},
+		Defs:  map[string]string{"a": `def a() { apply { x = ~file.read() } }`},
 		Steps: []proto.Step{{Instruction: "a"}},
 	})
 	if resp.Results[0].Category != "err" {

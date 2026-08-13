@@ -112,7 +112,7 @@ type Unary struct { // !x — negate truthiness (ADR-0010)
 type Call struct { // apt-cache-show(pkg)
 	Name string
 	Args []Expr
-	// Control marks `%file.read(…)`: a primitive evaluated on the control host rather
+	// Control marks `~file.read(…)`: a primitive evaluated on the control host rather
 	// than an instruction run on the target (ADR-0034). Only a name from the closed set
 	// may carry it — `%` before a def is a parse error, because a def can run shell and
 	// shell prefixed by `%` would run on the operator's machine.

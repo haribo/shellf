@@ -1,6 +1,7 @@
 package lang
 
 import (
+	"encoding/base64"
 	"fmt"
 	"sort"
 	"strconv"
@@ -25,6 +26,14 @@ func EvalDef(def Def, args, with map[string]string, ex engine.Executor, mode eng
 // resolver rejects any call, which is what a def evaluated in isolation (a unit test)
 // wants.
 func EvalDefWith(def Def, args, with map[string]string, ex engine.Executor, mode engine.Mode, resolve DefResolver, stack []string, fetch ControlFetcher) (res engine.Result, err error) {
+	return EvalDefFull(def, args, with, nil, ex, mode, resolve, stack, fetch)
+}
+
+// EvalDefFull is EvalDefWith plus `control`: the names of arguments the caller wrote
+// `%"…"`. Without it the marker dies at the call boundary — a def receives strings, so
+// `deliver(%"conf.j2", dst)` would read on the target, which is the opposite of what
+// the plan asked (#332).
+func EvalDefFull(def Def, args, with map[string]string, control []string, ex engine.Executor, mode engine.Mode, resolve DefResolver, stack []string, fetch ControlFetcher) (res engine.Result, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			if ee, ok := r.(evalErr); ok {
@@ -43,6 +52,13 @@ func EvalDefWith(def Def, args, with map[string]string, ex engine.Executor, mode
 	}
 	for k, v := range args {
 		ev.vars[k] = v
+	}
+	// Arguments the plan marked `%"…"` keep that marking inside the def, so a primitive
+	// reading them goes to the control host rather than the target.
+	for _, name := range control {
+		if v, ok := ev.vars[name].(string); ok {
+			ev.vars[name] = controlPath(v)
+		}
 	}
 	// Param defaults fill any argument the caller omitted (ADR-0013 intent params
 	// like `ensure = "present"`), so shells and the diff see the effective value.
@@ -299,6 +315,8 @@ func stringify(v value) string {
 		return strconv.FormatBool(t)
 	case int:
 		return strconv.Itoa(t)
+	case controlPath:
+		return string(t)
 	case engine.ShellResult:
 		return strings.TrimRight(t.Stdout, " \t\r\n") // a bare shell field → its output
 	}
@@ -398,7 +416,7 @@ func (ev *evaluator) evalExpr(e Expr) value {
 		return res
 	case ControlPath:
 		// A control-host path is data until a primitive reads it: `%"conf.j2"` names a
-		// file on the operator's machine, and only `%file.read` turns it into content.
+		// file on the operator's machine, and only `~file.read` turns it into content.
 		return controlPath(ev.interpolate(x.Value))
 	case Call:
 		if x.Control {
@@ -439,10 +457,18 @@ func (ev *evaluator) evalCall(c Call) value {
 	// Positional arguments, evaluated in THIS def's scope, then handed over as the
 	// callee's own params. Nothing else of this def crosses over.
 	args := map[string]string{}
+	var control []string
 	for i, a := range c.Args {
-		args[def.Params[i].Name] = stringify(ev.evalExpr(a))
+		name := def.Params[i].Name
+		v := ev.evalExpr(a)
+		args[name] = stringify(v)
+		// A control-host path stays one across the call, or the callee reads the target
+		// while the plan asked for the operator's machine (#332).
+		if _, isControl := v.(controlPath); isControl {
+			control = append(control, name)
+		}
 	}
-	res, err := EvalDefWith(def, args, nil, ev.ex, ev.mode, ev.resolve, append(ev.stack, c.Name), ev.fetch)
+	res, err := EvalDefFull(def, args, nil, control, ev.ex, ev.mode, ev.resolve, append(ev.stack, c.Name), ev.fetch)
 	if err != nil {
 		ev.fail("%s: %v", c.Name, err)
 	}
@@ -487,36 +513,77 @@ type controlPath string
 // the channel of ADR-0031). It reads; it never acts.
 func (ev *evaluator) evalControlCall(c Call) value {
 	if ev.fetch == nil {
-		ev.fail("%%%s: no control host channel available for this run", c.Name)
+		ev.fail("~%s: no control host channel available for this run", c.Name)
 	}
-	if len(c.Args) != 1 {
-		ev.fail("%%%s takes exactly one argument", c.Name)
+	// Arity per primitive: write takes a destination and content, the readers take one.
+	want := 1
+	if c.Name == "file.write" {
+		want = 2
+	}
+	if len(c.Args) != want {
+		ev.fail("~%s takes exactly %d argument(s), got %d", c.Name, want, len(c.Args))
 	}
 	arg := ev.evalExpr(c.Args[0])
 
 	switch c.Name {
+	case "file.write":
+		// Writes on the target, always (ADR-0036 §4): the allow-list bounds what a plan
+		// may read from the operator's machine, and there is no equivalent for writes.
+		path, ok := arg.(string)
+		if !ok {
+			if _, isControl := arg.(controlPath); isControl {
+				ev.fail("~file.write cannot write on the control host (ADR-0036)")
+			}
+			ev.fail("~file.write expects a target path")
+		}
+		var content []byte
+		switch t := ev.evalExpr(c.Args[1]).(type) {
+		case Bytes:
+			content = t
+		case string:
+			content = []byte(t)
+		default:
+			ev.fail("~file.write expects content")
+		}
+		res := engine.Run(engine.FilePut{
+			Path: path, Content: base64.StdEncoding.EncodeToString(content),
+		}, ev.ex, ev.mode)
+		if res.Changed {
+			ev.acted = true
+		}
+		if res.Category == engine.ERR {
+			ev.fail("~file.write: %s", res.String())
+		}
+		return res
+
 	case "file.read", "dir.list":
 		// These name something on the control host, so a plain string is a mistake
-		// worth catching: `%file.read("conf.j2")` reads a target path by accident,
-		// `%file.read(%"conf.j2")` says what it means.
-		var path string
+		// worth catching: `~file.read("conf.j2")` reads a target path by accident,
+		// `~file.read(%"conf.j2")` says what it means.
 		switch t := arg.(type) {
 		case controlPath:
-			path = string(t)
+			// Marked `%"…"`: the operator's machine, so it goes through the channel and
+			// the allow-list.
+			if ev.fetch == nil {
+				ev.fail("~%s: no control host channel available for this run", c.Name)
+			}
+			b, err := ev.fetch(resourceKey(c.Name, string(t)))
+			if err != nil {
+				ev.fail("%v", err)
+			}
+			return Bytes(b)
 		case string:
-			path = t // a def parameter already carrying a control-host path
+			// An ordinary path: the target, read through the shell. base64 so a binary
+			// survives the trip — a raw read would stop at the first null byte.
+			return Bytes(ev.readTarget(c.Name, t))
 		default:
-			ev.fail("%%%s expects a path", c.Name)
+			ev.fail("~%s expects a path", c.Name)
 		}
-		b, err := ev.fetch(resourceKey(c.Name, path))
-		if err != nil {
-			ev.fail("%v", err)
-		}
-		return Bytes(b)
+		return nil
 
 	case "file.render":
 		// Render takes content, not a path — which is what lets a template whose source
-		// lives on the target be rendered too: `%file.render(shell { cat … })`.
+		// lives on the target be rendered too: `~file.render(shell { cat … })`.
 		var content string
 		switch t := arg.(type) {
 		case Bytes:
@@ -526,7 +593,7 @@ func (ev *evaluator) evalControlCall(c Call) value {
 		case engine.ShellResult:
 			content = t.Stdout
 		default:
-			ev.fail("%%file.render expects content")
+			ev.fail("~file.render expects content")
 		}
 		out, err := Template(content, func(n string) (string, bool) {
 			v, ok := ev.vars[n]
@@ -540,8 +607,30 @@ func (ev *evaluator) evalControlCall(c Call) value {
 		}
 		return out
 	}
-	ev.fail("%%%s is not a control-host primitive", c.Name)
+	ev.fail("~%s is not a primitive", c.Name)
 	return nil
+}
+
+// readTarget reads a path on the target. Content comes back base64-encoded so a binary
+// file survives: a shell variable stops at the first null byte, which would truncate an
+// image without a word.
+func (ev *evaluator) readTarget(primitive, path string) []byte {
+	var cmd string
+	switch primitive {
+	case "file.read":
+		cmd = `base64 < "$__p"`
+	case "dir.list":
+		cmd = `ls -A "$__p" | base64`
+	}
+	r := ev.ex.Shell(cmd, engine.Env{"__p": path})
+	if !r.OK() {
+		ev.fail("~%s(%s) on the target: %s", primitive, path, strings.TrimSpace(r.Stderr))
+	}
+	b, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(r.Stdout, "\n", ""))
+	if err != nil {
+		ev.fail("~%s(%s): unreadable content from the target", primitive, path)
+	}
+	return b
 }
 
 // resourceKey is what the control host is asked for. The primitive is part of the key
