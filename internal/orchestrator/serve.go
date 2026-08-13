@@ -23,14 +23,15 @@ import (
 type Allowed struct {
 	paths map[string]string // as written in the plan → absolute path on disk
 
-	// Render substitutes `@{var}` over this host's environment (ADR-0024). It lives
-	// here because rendering needs the operator's variables, which never leave the
-	// control host — the agent sends content and receives the result.
+	// Render substitutes `@{var}` over this host's environment (ADR-0024), with `scope`
+	// — the variables in scope where the call was made — layered on top. It lives here
+	// because rendering needs the operator's variables, which never leave the control
+	// host; the agent sends content plus its scope and receives the result.
 	//
 	// The content may come from the target (`~file.render(shell { cat … })`), so what a
 	// plan hands to rendering is the plan author's business: the substituted values are
 	// this host's, secrets included.
-	Render func(content string) (string, error)
+	Render func(content string, scope map[string]string) (string, error)
 }
 
 // NewAllowed builds the set from the resources a plan declared. A declaration is
@@ -99,7 +100,7 @@ func answer(allow *Allowed, m proto.Msg) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("file.render: unreadable content")
 		}
-		out, err := allow.Render(string(content))
+		out, err := allow.Render(string(content), m.Vars)
 		if err != nil {
 			return nil, fmt.Errorf("file.render: %v", err)
 		}

@@ -148,7 +148,7 @@ func TestAllowed_AbsoluteDeclaration(t *testing.T) {
 // here and never travel. The agent sends content and gets the substituted result.
 func TestServe_Render(t *testing.T) {
 	allow := NewAllowed(t.TempDir(), nil)
-	allow.Render = func(content string) (string, error) {
+	allow.Render = func(content string, _ map[string]string) (string, error) {
 		return strings.ReplaceAll(content, "@{who}", "web1"), nil
 	}
 
@@ -173,6 +173,34 @@ func TestServe_Render(t *testing.T) {
 	}
 }
 
+// #334: an ask carries the scope of the call site alongside the content, and Serve must
+// hand it to the renderer. Dropping it here loses every `with { }` override, which the
+// control host has no other way to learn.
+func TestServe_RenderReceivesTheAskScope(t *testing.T) {
+	allow := NewAllowed(t.TempDir(), nil)
+	allow.Render = func(content string, scope map[string]string) (string, error) {
+		return strings.ReplaceAll(content, "@{who}", scope["who"]), nil
+	}
+
+	agent, control, done := chanPair()
+	defer done()
+	go func() { _ = Serve(control, allow) }()
+
+	payload := base64.StdEncoding.EncodeToString([]byte("host = @{who}"))
+	if err := agent.Send(proto.Msg{Kind: proto.KindAsk, ID: "1", Resource: "file.render:",
+		Data: payload, Vars: map[string]string{"who": "from-the-call-site"}}); err != nil {
+		t.Fatal(err)
+	}
+	m, err := agent.Recv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := base64.StdEncoding.DecodeString(m.Data)
+	if string(got) != "host = from-the-call-site" {
+		t.Fatalf("the ask's scope must reach the renderer, got %q", got)
+	}
+}
+
 // A run whose plan never renders has no renderer; asking anyway must say so rather than
 // answer empty content, which would deliver a blank file and report success.
 func TestServe_RenderWithoutRendererFails(t *testing.T) {
@@ -194,7 +222,7 @@ func TestServe_RenderWithoutRendererFails(t *testing.T) {
 // halts instead of writing a file with a hole in it.
 func TestServe_RenderErrorSurfaces(t *testing.T) {
 	allow := NewAllowed(t.TempDir(), nil)
-	allow.Render = func(string) (string, error) { return "", errors.New(`undefined variable "nope"`) }
+	allow.Render = func(string, map[string]string) (string, error) { return "", errors.New(`undefined variable "nope"`) }
 
 	agent, control, done := chanPair()
 	defer done()

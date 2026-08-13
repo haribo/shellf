@@ -39,6 +39,13 @@ type Msg struct {
 	// a second framing. An answer carries exactly one of Data or Error.
 	Data  string `json:"data,omitempty"`
 	Error string `json:"error,omitempty"`
+
+	// Vars carries the variables in scope where the primitive was called, for an ask
+	// that substitutes (`file.render`). The control host owns the host environment and
+	// the secrets; the caller owns its params and its `with` override (ADR-0022), and a
+	// template needs both. These values came from the plan in the first place, so
+	// sending them back is a return trip, not a disclosure.
+	Vars map[string]string `json:"vars,omitempty"`
 }
 
 // Conn is a channel endpoint: line-delimited JSON over any duplex stream.

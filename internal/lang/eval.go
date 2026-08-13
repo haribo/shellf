@@ -193,7 +193,9 @@ type DefResolver func(name string) (Def, bool)
 // ControlFetcher answers a `%` primitive by asking the control host (ADR-0031). The
 // agent supplies it; nil means no channel, and any `%` then fails naming the resource
 // rather than silently returning nothing.
-type ControlFetcher func(resource string, payload []byte) ([]byte, error)
+// vars carries the caller's scope for a primitive that substitutes; it is nil for one
+// that only names a path.
+type ControlFetcher func(resource string, payload []byte, vars map[string]string) ([]byte, error)
 
 func (ev *evaluator) fail(format string, a ...any) {
 	panic(evalErr{fmt.Errorf(format, a...)})
@@ -572,7 +574,7 @@ func (ev *evaluator) evalControlCall(c Call) value {
 			if ev.fetch == nil {
 				ev.fail("~%s: no control host channel available for this run", c.Name)
 			}
-			b, err := ev.fetch(resourceKey(c.Name, string(t)), nil)
+			b, err := ev.fetch(resourceKey(c.Name, string(t)), nil, nil)
 			if err != nil {
 				ev.fail("%v", err)
 			}
@@ -605,7 +607,11 @@ func (ev *evaluator) evalControlCall(c Call) value {
 		if ev.fetch == nil {
 			ev.fail("~file.render: no control host channel available for this run")
 		}
-		out, err := ev.fetch("file.render:", []byte(content))
+		// The scope travels with the content: a template names variables that live on
+		// the control host (host vars, secrets) *and* variables that live here (the
+		// def's params, a `with` override at the call site). Rendering with only one of
+		// the two would fail on the other's names.
+		out, err := ev.fetch("file.render:", []byte(content), ev.renderScope())
 		if err != nil {
 			ev.fail("%v", err)
 		}
@@ -659,6 +665,29 @@ func (ev *evaluator) evalField(f Field) value {
 	// ADR-0010: a ShellResult is a product; success is `if r` / `r.exit == 0`, not `.ok`.
 	ev.fail("no field .%s on a shell result; use `if r` / `if !r`, or .exit/.stdout/.stderr", f.Name)
 	return nil
+}
+
+// renderScope is the caller's half of a template's namespace: the scalar variables in
+// scope here, sent with a `~file.render` ask so the control host can layer them over
+// the host environment.
+//
+// A `Bytes` var is skipped rather than refused, where shellEnv refuses: bytes are what a
+// def holds while delivering a file (`~file.read` → `~file.write`), so failing would
+// break the ordinary case. A template naming one gets "undefined variable", which says
+// what to fix.
+func (ev *evaluator) renderScope() map[string]string {
+	scope := map[string]string{}
+	for k, v := range ev.vars {
+		switch t := v.(type) {
+		case string:
+			scope[k] = t
+		case bool:
+			scope[k] = strconv.FormatBool(t)
+		case int:
+			scope[k] = strconv.Itoa(t)
+		}
+	}
+	return scope
 }
 
 // shellEnv exposes string/bool vars to the shell via the environment (injection-safe).

@@ -259,7 +259,7 @@ func TestLoadPlanPackage_KeepsTemplateStepsForPerHostRender(t *testing.T) {
 	writeFile(t, dir, "svc.tmpl", "service=@{svc}\n")
 	writeFile(t, dir, "plan.shellf", `on t {
 		for svc in ["alpha", "beta"] {
-			file.template("svc.tmpl", "/opt/${svc}/x") with { svc = "${svc}" }
+			file.template(%"svc.tmpl", "/opt/${svc}/x") with { svc = "${svc}" }
 		}
 	}`)
 	writeFile(t, dir, "inv.shellf", `host t = { address: "x", user: "u" }`)

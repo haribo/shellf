@@ -38,7 +38,7 @@ func wire(t *testing.T, planDir string, declared []string, hostVars map[string]s
 		}
 		allow := orchestrator.NewAllowed(planDir, declared)
 		// Rendering happens on the control host, over this host's variables.
-		allow.Render = func(content string) (string, error) {
+		allow.Render = func(content string, _ map[string]string) (string, error) {
 			return lang.Template(content, func(n string) (string, bool) {
 				v, ok := hostVars[n]
 				return v, ok

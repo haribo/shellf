@@ -1,11 +1,11 @@
 package main
 
 import (
-	"io"
 	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -168,36 +168,7 @@ func runCmd(args []string) {
 		os.Exit(1)
 	}
 
-	// What the plan may ask the control host for (ADR-0034 §5 → ADR-0031 §3). Derived
-	// from the defs before anything is sent: the channel serves this set and refuses
-	// the rest by name, which is what keeps an imported def from reading ~/.ssh.
-	planDir := filepath.Dir(fs.Arg(0))
-	var allSteps []proto.Step
-	for _, b := range plan {
-		allSteps = append(allSteps, b.Steps...)
-	}
-	declared := lang.ControlResources(parseDefsFor(defsSrc), allSteps)
-	needsChannel := len(declared) > 0 || usesRender(parseDefsFor(defsSrc))
-	// One channel per host: rendering substitutes over *that host's* environment
-	// (ADR-0024), and the variables never leave the control host (ADR-0018).
-	channelFor := func(alias string) func(io.Reader, io.WriteCloser) error {
-		if !needsChannel {
-			return nil
-		}
-		host, _ := inv.Resolve(alias)
-		env := mergeVars(baseVars, host.Vars, setVars)
-		allow := orchestrator.NewAllowed(planDir, declared)
-		allow.Render = func(content string) (string, error) {
-			return lang.Template(content, func(n string) (string, bool) { v, ok := env[n]; return v, ok })
-		}
-		return func(r io.Reader, w io.WriteCloser) error {
-			c := proto.NewConnRW(r, w)
-			if err := c.Handshake(); err != nil {
-				return err
-			}
-			return orchestrator.Serve(c, allow)
-		}
-	}
+	channelFor := controlChannel(fs.Arg(0), plan, defsSrc, inv, baseVars, setVars)
 
 	dial := func(alias string) transport.Transport {
 		h, _ := inv.Resolve(alias)
@@ -212,6 +183,59 @@ func runCmd(args []string) {
 	}
 
 	printReports(orchestrator.Run(plan, inv, self, mode, dial, baseVars, setVars, defsSrc), secretValues)
+}
+
+// controlChannel builds the per-host control-host server (ADR-0031), or returns a
+// function yielding nil when the plan asks the control host for nothing — no bridge is
+// opened then.
+//
+// Shared by `run` and `status` on purpose. `status` runs each def's `observe`, and an
+// observe may call a primitive — `file.template` renders there to decide whether the
+// destination is in sync (#334). Wiring this in `run` alone made `status` report
+// `err.agent` for every template, which is how it was found.
+func controlChannel(planPath string, plan []orchestrator.Block, defsSrc map[string]string, inv inventory.Inventory,
+	baseVars, setVars map[string]string) func(alias string) func(io.Reader, io.WriteCloser) error {
+
+	// What the plan may ask for (ADR-0034 §5 → ADR-0031 §3). Derived from the defs
+	// before anything is sent: the channel serves this set and refuses the rest by
+	// name, which is what keeps an imported def from reading ~/.ssh.
+	planDir := filepath.Dir(planPath)
+	var allSteps []proto.Step
+	for _, b := range plan {
+		allSteps = append(allSteps, b.Steps...)
+	}
+	defs := parseDefsFor(defsSrc)
+	declared := lang.ControlResources(defs, allSteps)
+	needsChannel := len(declared) > 0 || usesRender(defs)
+
+	// One channel per host: rendering substitutes over *that host's* environment
+	// (ADR-0024), and the variables never leave the control host (ADR-0018).
+	return func(alias string) func(io.Reader, io.WriteCloser) error {
+		if !needsChannel {
+			return nil
+		}
+		host, _ := inv.Resolve(alias)
+		env := mergeVars(baseVars, host.Vars, setVars)
+		allow := orchestrator.NewAllowed(planDir, declared)
+		allow.Render = func(content string, scope map[string]string) (string, error) {
+			// The call site wins over the host environment: that is what `with { }`
+			// means (ADR-0022), and a def's own params are more local still.
+			return lang.Template(content, func(n string) (string, bool) {
+				if v, ok := scope[n]; ok {
+					return v, true
+				}
+				v, ok := env[n]
+				return v, ok
+			})
+		}
+		return func(r io.Reader, w io.WriteCloser) error {
+			c := proto.NewConnRW(r, w)
+			if err := c.Handshake(); err != nil {
+				return err
+			}
+			return orchestrator.Serve(c, allow)
+		}
+	}
 }
 
 // mergeVars layers the variable tables the way the orchestrator does: globals, then the
@@ -612,8 +636,8 @@ func stdSignatures() lang.InstructionSig {
 		params   []string
 		required int
 	}{
-		"file.copy":     {[]string{"src", "dst"}, 2},
-		"dir.copy":      {[]string{"src", "dst"}, 2},
+		"file.copy": {[]string{"src", "dst"}, 2},
+		"dir.copy":  {[]string{"src", "dst"}, 2},
 	}
 	return func(name string) ([]string, int, bool) {
 		if b, ok := builtins[name]; ok {
@@ -808,14 +832,21 @@ func statusCmd(args []string) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	// `status` needs the channel too: an `observe` may call a primitive (#334).
+	// `secrets` sits in the --set layer here, exactly as `run` merges it (ADR-0018):
+	// a template naming a secret must render in `status` too, or `status` reports an
+	// error on a plan that applies cleanly.
+	channelFor := controlChannel(fs.Arg(0), plan, defsSrc, inv, base, secrets)
+
 	dial := func(alias string) transport.Transport {
 		h, _ := inv.Resolve(alias)
 		if h.Local { // reached on the control host, no SSH (ADR-0027)
-			return transport.Local{}
+			return transport.Local{Channel: channelFor(alias)}
 		}
 		return transport.SSH{
 			User: h.User, Host: h.Address, Port: h.Port, Key: h.Key,
 			KnownHosts: *knownHosts, Insecure: *insecure,
+			Channel: channelFor(alias),
 		}
 	}
 	fmt.Print(redact(statusReport(orchestrator.Run(plan, inv, self, "status", dial, base, secrets, defsSrc)), secretValues))
@@ -861,6 +892,12 @@ func statusStep(b *strings.Builder, s proto.StepResult, indent string) {
 			label += "." + s.Tag
 		}
 		fmt.Fprintf(b, "%s%-28s %s\n", indent, s.Label, label)
+		// An error with no message is a dead end: `err.agent` alone sends the operator
+		// looking at the target when the cause may be on their own machine. `run`
+		// already prints it; `status` was silent.
+		if s.Category == "err" && s.Shell != nil && strings.TrimSpace(s.Shell.Stderr) != "" {
+			fmt.Fprintf(b, "%s  ! %s\n", indent, strings.TrimSpace(s.Shell.Stderr))
+		}
 	}
 	for _, sub := range s.Sub {
 		statusStep(b, sub, indent+"  ")
@@ -921,6 +958,14 @@ func stepText(b *strings.Builder, s proto.StepResult, indent string) {
 	if s.Shell != nil && s.Shell.Stdout != "" {
 		for _, line := range strings.Split(strings.TrimRight(s.Shell.Stdout, "\n"), "\n") {
 			fmt.Fprintf(b, "%s    | %s\n", indent, line)
+		}
+	}
+	// On a failure, what went wrong. Without this the diagnostics the agent attaches —
+	// an unbound variable, a refused resource, a call cycle — are written and never
+	// seen, leaving `err.agent` to mean "something broke, good luck".
+	if s.Category == "err" && s.Shell != nil && s.Shell.Stderr != "" {
+		for _, line := range strings.Split(strings.TrimRight(s.Shell.Stderr, "\n"), "\n") {
+			fmt.Fprintf(b, "%s    ! %s\n", indent, line)
 		}
 	}
 	// An action-shaped def's `--check` preview: what apply would do, marked so it

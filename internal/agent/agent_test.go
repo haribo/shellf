@@ -171,7 +171,7 @@ func TestAgentBecome_ShellStepEscalates(t *testing.T) {
 
 func TestServe_Sequential_HaltsOnErr(t *testing.T) {
 	f := newFake()
-	f.set(dpkgScript, "a", 1) // a not installed
+	f.set(dpkgScript, "a", 1)  // a not installed
 	f.set(aptScript, "a", 100) // a install fails → err.runtime
 
 	resp := serve(t, f, proto.Request{Mode: "apply", Steps: []proto.Step{apt("a"), apt("b")}})
