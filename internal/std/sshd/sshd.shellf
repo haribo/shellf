@@ -1,0 +1,28 @@
+# Deliver a validated sshd_config drop-in (#328).
+#
+# An invalid sshd_config breaks the transport shellf itself uses: on a host without
+# another way in, that is provider rescue mode. `sshd -t -f` is the official checker,
+# and like visudo it is useless once the file is installed.
+#
+# Same shape as sudo.write: the validation is in `check`, on its own temporary, so a
+# refused content never reaches the write and `--dry-run` catches it before any run.
+#
+# Note: `sshd -t` also validates the *running* configuration it includes, so a drop-in
+# that conflicts with an existing directive is caught here rather than at reload.
+def config(name: str, content: str) as root {
+    check {
+        r = shell {
+            tmp=$(mktemp)
+            trap 'rm -f "$tmp"' EXIT
+            printf '%s\n' "$content" > "$tmp"
+            sshd -t -f "$tmp"
+        }
+        if !r { return err.validation(r) }
+    }
+    apply {
+        file.write("/etc/ssh/sshd_config.d/${name}.conf", "${content}\n")
+        # sshd refuses to start if a config file is group- or world-writable.
+        file.mode("/etc/ssh/sshd_config.d/${name}.conf", "600")
+        return ok.written
+    }
+}

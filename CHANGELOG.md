@@ -15,6 +15,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `sudo.write(name, content)` and `sshd.config(name, content)` deliver a validated
+  drop-in: `visudo -cf` and `sshd -t -f` run in the `check` phase, on the def's own
+  temporary, so a refused content never reaches the write — and since `check` runs in
+  `--dry-run`, a broken config is caught before any real run. Both set the mode the
+  daemon requires (0440, 0600): sudo *ignores* a drop-in with any other mode, so a rule
+  written 644 looks installed and does nothing. `sudo.write` also rejects a drop-in name
+  containing a dot, which sudo silently skips (#328).
 - `~file.write(path, bytes)` writes on the target, and `~file.read` now reads **either
   side**: the control host when its argument is marked `%"…"`, the target otherwise.
   Together they close a gap — until now no plan could deliver a single binary file, only
@@ -77,6 +84,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   nesting a further directory is refused rather than silently skipped (#306).
 
 ### Fixed
+
+- A def whose decision phase runs a shell no longer reports `changed` on a converged
+  run. `check` and `observe` are reads; counting their shells as "acted" fired every
+  `if x.changed { … }` on every re-run — the exact false positive idempotence exists to
+  prevent (#328).
 
 - A `template` used as an `if` condition is now rendered on the control host like
   any other, instead of reaching the agent verbatim and failing `err.agent` with

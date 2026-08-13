@@ -23,7 +23,7 @@ import (
 
 //go:embed apt/*.shellf archive/*.shellf dir/*.shellf docker/*.shellf file/*.shellf
 //go:embed git/*.shellf http/*.shellf service/*.shellf systemd/*.shellf ufw/*.shellf
-//go:embed user/*.shellf
+//go:embed sshd/*.shellf sudo/*.shellf user/*.shellf
 var files embed.FS
 
 var (
