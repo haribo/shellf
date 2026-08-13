@@ -122,7 +122,7 @@ func (noopExec) Using(string) engine.Executor                { return noopExec{}
 
 func TestControl_ReadAsksTheControlHost(t *testing.T) {
 	var asked string
-	fetch := func(r string) ([]byte, error) { asked = r; return []byte("contents"), nil }
+	fetch := func(r string, _ []byte, _ map[string]string) ([]byte, error) { asked = r; return []byte("contents"), nil }
 
 	_, err := evalWithFetchControl(t, `def t(p: str) { apply { x = ~file.read(p) } }`, "t",
 		map[string]string{"p": "conf.j2"}, []string{"p"}, fetch)
@@ -137,21 +137,63 @@ func TestControl_ReadAsksTheControlHost(t *testing.T) {
 }
 
 func TestControl_RenderSubstitutesTheDefScope(t *testing.T) {
-	fetch := func(string) ([]byte, error) { return []byte("port = @{port}"), nil }
+	// The control host is what substitutes (ADR-0036 §5), over the scope the ask
+	// carries; this stands in for it, so the assertion is on the substitution itself
+	// rather than on the def merely finishing.
+	var rendered string
+	fetch := func(resource string, payload []byte, vars map[string]string) ([]byte, error) {
+		if resource != "file.render:" {
+			return []byte("port = @{port}"), nil // the template, read from the control host
+		}
+		rendered = strings.ReplaceAll(string(payload), "@{port}", vars["port"])
+		return []byte(rendered), nil
+	}
+	// `p` is marked as a control-host path, as a plan writing `%"c.j2"` would: unmarked,
+	// `~file.read` reads the target and the render receives nothing to substitute.
 	src := `def t(p: str, port: str) { apply { x = ~file.render(~file.read(p)) return ok.done } }`
-	res, err := evalWithFetch(t, src, "t", map[string]string{"p": "c.j2", "port": "8080"}, fetch)
+	res, err := evalWithFetchControl(t, src, "t", map[string]string{"p": "c.j2", "port": "8080"},
+		[]string{"p"}, fetch)
 	if err != nil {
 		t.Fatalf("render must resolve against the def's own scope: %v", err)
+	}
+	if rendered != "port = 8080" {
+		t.Fatalf("the def's own scope must reach the render: got %q", rendered)
 	}
 	if res.String() != "ok.done" {
 		t.Fatalf("got %s", res.String())
 	}
 }
 
+// #334: the caller's scope travels with the ask. A template names variables from both
+// sides — the host's, which stay on the control host, and the call site's params and
+// `with` override, which exist only here — so sending the content alone renders a
+// `with { }` binding as an undefined variable.
+func TestControl_RenderSendsTheCallerScope(t *testing.T) {
+	var got map[string]string
+	fetch := func(_ string, payload []byte, vars map[string]string) ([]byte, error) {
+		got = vars
+		return payload, nil
+	}
+	defs, err := ParseDefs(`def t(p: str) { apply { x = ~file.render("body") return ok.done } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EvalDefWith(defs[0], map[string]string{"p": "c.j2"},
+		map[string]string{"greeting": "hello-with"}, noopExec{}, engine.Apply, nil, nil, fetch); err != nil {
+		t.Fatal(err)
+	}
+	if got["greeting"] != "hello-with" {
+		t.Fatalf("a `with` override must reach the renderer, got %q", got["greeting"])
+	}
+	if got["p"] != "c.j2" {
+		t.Fatalf("a def parameter must reach the renderer, got %q", got["p"])
+	}
+}
+
 // A refusal from the control host surfaces as an evaluation failure naming it, never as
 // empty content — which would deliver a truncated file and report success.
 func TestControl_FetchErrorSurfaces(t *testing.T) {
-	fetch := func(string) ([]byte, error) { return nil, errors.New(`refused: "x" was not declared`) }
+	fetch := func(string, []byte, map[string]string) ([]byte, error) { return nil, errors.New(`refused: "x" was not declared`) }
 	_, err := evalWithFetchControl(t, `def t(p: str) { apply { x = ~file.read(p) } }`, "t",
 		map[string]string{"p": "x"}, []string{"p"}, fetch)
 	if err == nil || !strings.Contains(err.Error(), "refused") {
@@ -170,7 +212,7 @@ func TestControl_NoFetcherFails(t *testing.T) {
 // A control-host path literal is data until a primitive reads it.
 func TestControl_PathLiteralIsInterpolated(t *testing.T) {
 	var asked string
-	fetch := func(r string) ([]byte, error) { asked = r; return []byte("x"), nil }
+	fetch := func(r string, _ []byte, _ map[string]string) ([]byte, error) { asked = r; return []byte("x"), nil }
 	_, err := evalWithFetch(t, `def t(name: str) { apply { x = ~file.read(%"conf/${name}.j2") } }`, "t",
 		map[string]string{"name": "web"}, fetch)
 	if err != nil {
@@ -303,7 +345,7 @@ on web {
 // ~file.render accepts content from a shell — the case that motivated splitting read
 // from render, and that neither Go transformation could do.
 func TestControl_RenderRejectsAPath(t *testing.T) {
-	fetch := func(string) ([]byte, error) { return []byte("x"), nil }
+	fetch := func(string, []byte, map[string]string) ([]byte, error) { return []byte("x"), nil }
 	_, err := evalWithFetch(t, `def t() { apply { x = ~file.render(%"conf.j2") } }`, "t", nil, fetch)
 	if err == nil {
 		t.Fatal("render takes content, not a control-host path: passing one must fail")
@@ -328,7 +370,7 @@ func TestControl_UnknownPrimitiveAtEval(t *testing.T) {
 	d.Phases[0] = ph
 
 	_, err = EvalDefWith(d, map[string]string{"p": "x"}, nil, noopExec{}, engine.Apply, nil, nil,
-		func(string) ([]byte, error) { return nil, nil })
+		func(string, []byte, map[string]string) ([]byte, error) { return nil, nil })
 	if err == nil {
 		t.Fatal("the evaluator must refuse a primitive it does not know")
 	}
@@ -404,7 +446,7 @@ def b() { apply { a() } }
 // asserted.
 func TestControl_ReadSideDependsOnTheArgument(t *testing.T) {
 	asked := ""
-	fetch := func(r string) ([]byte, error) { asked = r; return []byte("from control"), nil }
+	fetch := func(r string, _ []byte, _ map[string]string) ([]byte, error) { asked = r; return []byte("from control"), nil }
 
 	// Marked: goes through the channel.
 	_, err := evalWithFetchControl(t, `def t(p: str) { apply { x = ~file.read(p) } }`, "t",
@@ -429,7 +471,7 @@ func TestControl_ReadSideDependsOnTheArgument(t *testing.T) {
 // reads the target — the opposite of what the plan asked.
 func TestControl_MarkerCrossesTheCallBoundary(t *testing.T) {
 	asked := ""
-	fetch := func(r string) ([]byte, error) { asked = r; return []byte("x"), nil }
+	fetch := func(r string, _ []byte, _ map[string]string) ([]byte, error) { asked = r; return []byte("x"), nil }
 
 	src := `
 def inner(p: str) { apply { x = ~file.read(p) return ok.read } }
@@ -450,11 +492,40 @@ def outer(p: str) { apply { inner(p) } }
 func TestControl_WriteRefusesTheControlHost(t *testing.T) {
 	_, err := evalWithFetchControl(t, `def t(p: str) { apply { ~file.write(p, "data") } }`, "t",
 		map[string]string{"p": "/tmp/x"}, []string{"p"},
-		func(string) ([]byte, error) { return nil, nil })
+		func(string, []byte, map[string]string) ([]byte, error) { return nil, nil })
 	if err == nil {
 		t.Fatal("writing on the control host must be refused")
 	}
 	if !strings.Contains(err.Error(), "control host") {
 		t.Fatalf("the refusal must say why: %v", err)
+	}
+}
+
+// A plan may need the channel without declaring a single `%"…"` path: `~file.render`
+// can be handed content read from the target. Detecting that from the parsed defs is
+// what decides whether a channel is opened at all — a text search on Def.Source does
+// not work, since ParseDefs leaves it empty.
+func TestControl_UsesPrimitiveWalksTheTree(t *testing.T) {
+	cases := map[string]struct {
+		src  string
+		want bool
+	}{
+		"direct":        {`def t(c: str) { apply { x = ~file.render(c) } }`, true},
+		"nested in arg": {`def t(p: str) { apply { x = ~file.render(~file.read(p)) } }`, true},
+		"inside an if":  {`def t(c: str) { apply { if c { x = ~file.render(c) } } }`, true},
+		"in observe":    {`def t(c: str) { observe { return state(v: ~file.render(c)) } }`, true},
+		"another one":   {`def t(p: str) { apply { x = ~file.read(p) } }`, false},
+		"none":          {`def t(p: str) { apply { shell { echo "$p" } } }`, false},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			defs, err := ParseDefs(c.src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := UsesPrimitive(map[string]Def{"t": defs[0]}, "file.render"); got != c.want {
+				t.Fatalf("got %v, want %v", got, c.want)
+			}
+		})
 	}
 }

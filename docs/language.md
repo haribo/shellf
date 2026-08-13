@@ -216,8 +216,8 @@ by `with { k = <value>, … }` to add or override variables **for that call only
 ```
 on host {
   # explicit, local inputs — no need to read the file to know what it uses
-  file.template("nginx.conf", "/etc/nginx/a.conf") with { port = "8080", root = "/srv/a" }
-  file.template("nginx.conf", "/etc/nginx/b.conf") with { port = "8081", root = "/srv/b" }
+  file.template(%"nginx.conf", "/etc/nginx/a.conf") with { port = "8080", root = "/srv/a" }
+  file.template(%"nginx.conf", "/etc/nginx/b.conf") with { port = "8081", root = "/srv/b" }
 
   shell { echo "$msg" } with { msg = "hi" }
 }
@@ -235,13 +235,13 @@ on host {
 A `file.template(src, dst)` file is rendered **per host**, over that host's full
 variable scope — `--vars`, plan bindings, **per-host inventory vars**, `--set`,
 secrets — plus the call's `with { }`. `dst` may be a bare per-host ref
-(`file.template("nginx.conf", conf_path)`); `src` is always a literal control-host
+(`file.template(%"nginx.conf", conf_path)`); `src` is always a literal control-host
 path. A `for` loop variable is **not** in that scope, so to use the loop item
 inside a template's content, pass it with `with { }`:
 
 ```
 for svc in ["traefik", "app"] {
-  file.template("unit.tmpl", "/opt/${svc}/unit") with { svc = "${svc}" }
+  file.template(%"unit.tmpl", "/opt/${svc}/unit") with { svc = "${svc}" }
 }
 ```
 

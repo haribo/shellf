@@ -33,10 +33,19 @@ type Msg struct {
 
 	Resource string `json:"resource,omitempty"` // ask: what is wanted
 
-	// answer: exactly one of Data or Error. Data is base64 so the channel carries
-	// bytes (a template is text, a delivered file may not be) without a second framing.
+	// Data is base64 both ways: on an ask it is the primitive's input (the content
+	// `file.render` must substitute); on an answer it is the result. Base64 so the
+	// channel carries bytes — a template is text, a delivered file may not be — without
+	// a second framing. An answer carries exactly one of Data or Error.
 	Data  string `json:"data,omitempty"`
 	Error string `json:"error,omitempty"`
+
+	// Vars carries the variables in scope where the primitive was called, for an ask
+	// that substitutes (`file.render`). The control host owns the host environment and
+	// the secrets; the caller owns its params and its `with` override (ADR-0022), and a
+	// template needs both. These values came from the plan in the first place, so
+	// sending them back is a return trip, not a disclosure.
+	Vars map[string]string `json:"vars,omitempty"`
 }
 
 // Conn is a channel endpoint: line-delimited JSON over any duplex stream.

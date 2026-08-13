@@ -76,6 +76,14 @@ write `~/.ssh/authorized_keys`.
 
 `shell { }` stays a language block, not a call, so it carries no marker.
 
+`~file.render` substitutes over **both** halves of a template's namespace: the host's
+variables and secrets, which stay on the control host, and the variables in scope where
+the call was made — a def's parameters, a `with { }` override at the call site
+([ADR-0022](0022-with-block.md)) — which exist only on the target. The ask carries the
+caller's scope, and the control host layers it over the host environment, so the most
+local binding wins. Sending only the content renders a `with { }` binding as an
+undefined variable; recorded because the split is not visible from either side alone.
+
 ### 6. `~dir.sync` replaces `dir.copy`; a copy is a parameterised sync
 
 `dir.copy` reads a whole tree into memory, base64-encodes it, and sends it in one

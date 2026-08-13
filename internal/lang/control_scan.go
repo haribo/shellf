@@ -98,3 +98,54 @@ func scanExpr(e Expr, seen map[string]bool) {
 		scanExpr(x.Recv, seen)
 	}
 }
+
+// UsesPrimitive reports whether any def calls the named primitive. `~file.render` needs
+// the control-host channel even when the plan declares no `%"…"` path — the content it
+// renders may come from the target — so the caller cannot rely on the resource set
+// alone to decide whether to open one.
+func UsesPrimitive(defs map[string]Def, name string) bool {
+	found := false
+	var walkE func(Expr)
+	var walkS func([]Stmt)
+	walkE = func(e Expr) {
+		switch x := e.(type) {
+		case Call:
+			if x.Control && x.Name == name {
+				found = true
+			}
+			for _, a := range x.Args {
+				walkE(a)
+			}
+		case Binary:
+			walkE(x.L)
+			walkE(x.R)
+		case Unary:
+			walkE(x.X)
+		case Field:
+			walkE(x.Recv)
+		}
+	}
+	walkS = func(stmts []Stmt) {
+		for _, st := range stmts {
+			switch t := st.(type) {
+			case LetStmt:
+				walkE(t.Value)
+			case EffectStmt:
+				walkE(t.Expr)
+			case IfStmt:
+				walkE(t.Cond)
+				walkS(t.Body)
+			case StateReturnStmt:
+				for _, f := range t.Fields {
+					walkE(f.Value)
+				}
+			}
+		}
+	}
+	for _, d := range defs {
+		for _, ph := range d.Phases {
+			walkS(ph.Stmts)
+		}
+	}
+	return found
+}

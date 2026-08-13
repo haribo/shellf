@@ -1,12 +1,13 @@
 package agent
 
 import (
-	"os"
 	"encoding/base64"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"shellf/internal/proto"
 )
@@ -73,6 +74,10 @@ func TestChannel_AskGetsAnAnswer(t *testing.T) {
 // the bridge, not the job. The agent keeps its socket, a new bridge attaches, and the
 // dialogue resumes.
 func TestChannel_SurvivesADroppedSession(t *testing.T) {
+	old := attachWait
+	attachWait = 200 * time.Millisecond
+	defer func() { attachWait = old }()
+
 	wd := shortDir(t)
 	ch, err := Listen(wd)
 	if err != nil {
@@ -169,6 +174,10 @@ func TestChannel_ReplacesAStaleSocket(t *testing.T) {
 // A peer speaking another wire version is refused at the handshake, and the failure
 // names the resource so the operator knows which request died.
 func TestChannel_AskFailsOnVersionSkew(t *testing.T) {
+	old := attachWait
+	attachWait = 200 * time.Millisecond
+	defer func() { attachWait = old }()
+
 	wd := shortDir(t)
 	ch, err := Listen(wd)
 	if err != nil {
@@ -194,4 +203,61 @@ func TestChannel_AskFailsOnVersionSkew(t *testing.T) {
 	if !strings.Contains(err.Error(), "conf.j2") {
 		t.Fatalf("the failure must name the resource: %v", err)
 	}
+}
+
+// #334: a resident agent outlives the command that created it (ADR-0005), so it can be
+// holding the bridge of a session that has already ended — `shellf status` then
+// `shellf run`. The dead connection looks alive until it is used, and then answers EOF.
+// Observed as an intermittent `err.agent` in the SSH harness:
+//
+//	file.read:motd.tmpl: control host went away before answering: EOF
+//
+// The ask must survive it by asking the bridge that has since attached.
+func TestChannel_AskRetriesAfterAStaleBridge(t *testing.T) {
+	old := attachWait
+	attachWait = 2 * time.Second
+	defer func() { attachWait = old }()
+
+	wd := shortDir(t)
+	ch, err := Listen(wd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ch.Close() }()
+
+	sock := filepath.Join(wd, SockName)
+	// The first session attaches, then dies without the agent noticing.
+	dead := control(t, sock, "never")
+	waitAttached(t, ch)
+	_ = dead.Close()
+
+	// The next command opens its own bridge a moment later, as the control host does.
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		_ = control(t, sock, "rendered")
+	}()
+
+	got, err := ch.Ask("conf.j2")
+	if err != nil {
+		t.Fatalf("an ask must survive a bridge left over from a previous session: %v", err)
+	}
+	if string(got) != "rendered" {
+		t.Fatalf("the answer must come from the live bridge, got %q", got)
+	}
+}
+
+// waitAttached blocks until the channel has greeted a bridge, so a test can act on the
+// connection the agent actually holds rather than on a race.
+func waitAttached(t *testing.T, ch *Channel) {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		ch.mu.Lock()
+		attached := ch.conn != nil
+		ch.mu.Unlock()
+		if attached {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("no bridge attached")
 }

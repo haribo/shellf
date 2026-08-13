@@ -15,6 +15,18 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `~file.render` now runs on the control host, over the target's own variable set, so a
+  template substitutes per host as before (ADR-0024). `file.template` is therefore an
+  ordinary def over `~file.read` + `~file.render` + `~file.write`, and the Go
+  transformation that rewrote it is gone — one of the two remaining special cases in the
+  engine (#334).
+- A `~file.render` ask carries the variables in scope at the call site, so a template
+  substitutes over the host's variables *and* the caller's — a `with { }` override
+  (ADR-0022) or a def parameter. The control host layers the call site on top: the most
+  local binding wins (#334).
+- `shellf status` opens the control channel too. An `observe` may call a primitive —
+  `file.template` renders there to decide whether the destination is in sync — and
+  without the channel every template reported `err.agent` (#334).
 - `sudo.write(name, content)` and `sshd.config(name, content)` deliver a validated
   drop-in: `visudo -cf` and `sshd -t -f` run in the `check` phase, on the def's own
   temporary, so a refused content never reaches the write — and since `check` runs in
@@ -85,6 +97,20 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- An ask survives a bridge left over from a previous session. A resident agent outlives
+  the command that created it (ADR-0005), so `shellf status` and the `shellf run` that
+  follows attach different bridges; the agent held the dead one, which looks alive until
+  it is used and then answers EOF. Seen as an intermittent `err.agent` — about one run in
+  two against a real target, and invisible to every unit test (#334).
+- `file.template` is idempotent again. As a def it had no `observe`, so it rewrote the
+  destination on every run and reported `written`; it now renders in `observe`, compares
+  the result with the destination, and the binding it makes there is reused by `apply` —
+  one round trip to the control host per run, not two (#334).
+- `ResolveRefs` no longer drops a step's control-host marking on the way to the agent.
+  It rebuilt each step field by field and omitted the one saying which arguments the plan
+  wrote `%"…"`, so `file.template(%"conf.j2", …)` read `conf.j2` on the *target* — with
+  no error to show for it when a file of that name happened to exist there. Local runs
+  were unaffected, which is why the unit suite stayed green (#334).
 - A def whose decision phase runs a shell no longer reports `changed` on a converged
   run. `check` and `observe` are reads; counting their shells as "acted" fired every
   `if x.changed { … }` on every re-run — the exact false positive idempotence exists to

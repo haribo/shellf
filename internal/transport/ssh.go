@@ -334,13 +334,19 @@ func (s SSH) bridge(binPath, wd string) (stop func()) {
 	// stop closes the session, which kills the bridge on the target and unblocks the
 	// serving goroutine. Closing is what ends it: waiting alone would hang, since
 	// serving only returns when the channel closes.
+	//
+	// The wait that follows is bounded: the run must not hang because a bridge did not
+	// notice its session went away — the job's result is already in hand by then.
 	return func() {
 		mu.Lock()
 		for _, c := range sessions {
 			_ = c.Close()
 		}
 		mu.Unlock()
-		<-done
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+		}
 	}
 }
 

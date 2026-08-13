@@ -259,7 +259,7 @@ func TestLoadPlanPackage_KeepsTemplateStepsForPerHostRender(t *testing.T) {
 	writeFile(t, dir, "svc.tmpl", "service=@{svc}\n")
 	writeFile(t, dir, "plan.shellf", `on t {
 		for svc in ["alpha", "beta"] {
-			file.template("svc.tmpl", "/opt/${svc}/x") with { svc = "${svc}" }
+			file.template(%"svc.tmpl", "/opt/${svc}/x") with { svc = "${svc}" }
 		}
 	}`)
 	writeFile(t, dir, "inv.shellf", `host t = { address: "x", user: "u" }`)
@@ -736,5 +736,37 @@ func TestRemovedFlag(t *testing.T) {
 	got := removedFlag(true)
 	if !strings.Contains(got, "--dry-run") || !strings.Contains(got, "--check") {
 		t.Fatalf("must name both the old and the new spelling: %q", got)
+	}
+}
+
+// A plan that renders needs the channel even when it declares no `%"…"` path of its
+// own — the content may come from the target. Missing this leaves ~file.render with no
+// renderer at runtime.
+func TestUsesRender(t *testing.T) {
+	renders := parseDefsFor(map[string]string{
+		"t": `def t(c: str) { apply { x = ~file.render(c) } }`,
+	})
+	if !usesRender(renders) {
+		t.Fatal("a def calling ~file.render must require the channel")
+	}
+	plain := parseDefsFor(map[string]string{
+		"t": `def t(p: str) { apply { shell { echo "$p" } } }`,
+	})
+	if usesRender(plain) {
+		t.Fatal("a def that never renders must not force a channel open")
+	}
+}
+
+func TestMergeVars(t *testing.T) {
+	// ADR-0022 precedence: --set wins over the host, the host wins over globals.
+	got := mergeVars(
+		map[string]string{"a": "global", "b": "global"},
+		map[string]string{"b": "host", "c": "host"},
+		map[string]string{"c": "set"},
+	)
+	for k, want := range map[string]string{"a": "global", "b": "host", "c": "set"} {
+		if got[k] != want {
+			t.Errorf("%s: got %q, want %q", k, got[k], want)
+		}
 	}
 }

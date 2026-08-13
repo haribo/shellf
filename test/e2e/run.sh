@@ -81,6 +81,10 @@ say "1b. status on a fresh host shows drift (current → desired)"
 out="$("$work/shellf" status --inventory "$work/inventory.shellf" --insecure --secret-file apisecret="$work/secret" "$here/plan.shellf" 2>&1)"
 printf '%s\n' "$out"
 printf '%s' "$out" | grep -q 'present: false → true' || fail "status should show present drift on a fresh host"
+# #334: `status` runs each def's observe, and an observe may call a control-host
+# primitive — so status needs the channel too. Without it every template reports
+# err.agent while the greps above still pass, which is how this was missed.
+printf '%s' "$out" | grep -q 'err.agent' && fail "status could not reach the control host (a def's observe failed)"
 
 say "2. apply provisions the marker tree (created/written)"
 out="$(run 2>&1)"; printf '%s\n' "$out"
@@ -127,6 +131,9 @@ say "4. status reports the converged state (no drift arrows)"
 out="$("$work/shellf" status --inventory "$work/inventory.shellf" --insecure --secret-file apisecret="$work/secret" "$here/plan.shellf" 2>&1)"
 printf '%s\n' "$out"
 printf '%s' "$out" | grep -q 'present: true' || fail "status should report present: true"
+printf '%s' "$out" | grep -q 'err.agent' && fail "status could not reach the control host (a def's observe failed)"
+# a template's own state must be reported, not just the instructions around it (#334)
+printf '%s' "$out" | grep -q 'synced: true' || fail "status should report a template as synced"
 if printf '%s' "$out" | grep -q '→'; then
   fail "status after apply should show no drift arrows (all converged)"
 fi

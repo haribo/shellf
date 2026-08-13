@@ -101,3 +101,25 @@ func TestResolveRefs_Undefined(t *testing.T) {
 		t.Fatal("expected an error for an undefined ref")
 	}
 }
+
+// Control says which arguments the plan marked `%"…"`. ResolveRefs rebuilds each step
+// field by field, so a field left out is dropped silently — and dropping this one makes
+// the agent read a control-host path on the target instead. It cost an end-to-end
+// failure to find, because the local transport never goes through here (#334).
+func TestResolveRefs_KeepsControl(t *testing.T) {
+	in := []Step{
+		{Instruction: "file.template", Args: map[string]string{"src": "conf.j2", "dst": "/etc/x"},
+			Control: []string{"src"}},
+		{Block: []Step{{Instruction: "x"}}, Control: []string{"a"}},
+		{If: &IfBlock{CondRef: &ResultRef{Name: "r"}, Then: []Step{{Instruction: "y"}}}, Control: []string{"b"}},
+	}
+	out, err := ResolveRefs(in, map[string]string{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range [][]string{{"src"}, {"a"}, {"b"}} {
+		if len(out[i].Control) != len(want) || (len(want) > 0 && out[i].Control[0] != want[0]) {
+			t.Errorf("step %d: control lost: got %v, want %v", i, out[i].Control, want)
+		}
+	}
+}

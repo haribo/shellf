@@ -34,7 +34,7 @@ func ResolveRefs(steps []Step, env map[string]string, interp string) ([]Step, er
 			if err != nil {
 				return nil, err
 			}
-			out[i] = Step{If: &IfBlock{Cond: cond, Match: s.If.Match, CondRef: s.If.CondRef, Negate: s.If.Negate, Then: then, Else: els}}
+			out[i] = Step{If: &IfBlock{Cond: cond, Match: s.If.Match, CondRef: s.If.CondRef, Negate: s.If.Negate, Then: then, Else: els}, Control: s.Control}
 			continue
 		}
 		if len(s.Block) > 0 {
@@ -42,7 +42,7 @@ func ResolveRefs(steps []Step, env map[string]string, interp string) ([]Step, er
 			if err != nil {
 				return nil, err
 			}
-			out[i] = Step{Block: sub, Become: s.Become}
+			out[i] = Step{Block: sub, Become: s.Become, Control: s.Control}
 			continue
 		}
 		if len(s.Parallel) > 0 {
@@ -64,7 +64,11 @@ func ResolveRefs(steps []Step, env map[string]string, interp string) ([]Step, er
 			}
 			args[argName] = v
 		}
-		step := Step{Instruction: s.Instruction, Args: args, Bind: s.Bind, Caught: s.Caught, Become: s.Become, Interp: s.Interp, With: s.With}
+		// Control must survive: it says which arguments the plan marked `%"…"`, and
+		// dropping it makes the agent read those paths on the target instead of the
+		// control host — silently, since a path is a path (#334).
+		step := Step{Instruction: s.Instruction, Args: args, Bind: s.Bind, Caught: s.Caught,
+			Become: s.Become, Interp: s.Interp, With: s.With, Control: s.Control}
 		if s.Instruction == "shell" { // a plan-level shell sees the per-host env via $name (#106)
 			step.Env = env
 			if len(s.With) > 0 { // a `with` binding overrides the host env for this call (ADR-0022)

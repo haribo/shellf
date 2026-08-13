@@ -123,3 +123,26 @@ def copy(src: str, dst: str) {
         return ok.copied
     }
 }
+
+# Render a control-host template and deliver it (ADR-0036). An ordinary def since #334:
+# `~file.render` runs on the control host, where the host's variables live, so per-host
+# rendering (ADR-0024) works exactly as the Go transformation did.
+#
+# `src` must be marked `%"…"` at the call site — an unmarked path is read on the target,
+# which is a different (and valid) thing: rendering a template that already lives there.
+#
+# The render happens in `observe`, not in `apply`, for two reasons. It is the only way to
+# know whether the destination is already in sync — the answer is the *rendered* content,
+# not the template — so without it every run rewrites the file and reports `written`. And
+# the binding survives into `apply` (same scope across phases), so the control host is
+# asked once per run, not twice.
+def template(src: str, dst: str) {
+    observe {
+        rendered = ~file.render(~file.read(src))
+        return state(synced: shell { test -f "$dst" && printf '%s' "$rendered" | cmp -s - "$dst" }.exit == 0)
+    }
+    apply {
+        ~file.write(dst, rendered)
+        return ok.written
+    }
+}

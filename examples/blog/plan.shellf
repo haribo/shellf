@@ -38,7 +38,7 @@ on app {
     # Render the .env per host (ADR-0019/0024): `@{domain}` is the host's inventory
     # var, `@{db_password}` is the secret passed via --secret-file (redacted in all
     # output, ADR-0018). Config files keep their own `${...}` untouched.
-    file.template("compose.env.tmpl", "/opt/blog/.env")
+    file.template(%"compose.env.tmpl", "/opt/blog/.env")
 
     # Bring the stack up. `compose-up` is action-shaped; `--dry-run` still previews
     # what it would recreate (docker compose --dry-run, ADR-0029).

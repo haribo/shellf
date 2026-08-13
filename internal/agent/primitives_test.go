@@ -7,13 +7,14 @@ import (
 	"strings"
 	"testing"
 
+	"shellf/internal/lang"
 	"shellf/internal/orchestrator"
 	"shellf/internal/proto"
 )
 
 // wire stands up the whole path: a listening agent, a bridge, and the control host
 // serving what the plan declared. Returns the channel the agent evaluates against.
-func wire(t *testing.T, planDir string, declared []string) *Channel {
+func wire(t *testing.T, planDir string, declared []string, hostVars map[string]string) *Channel {
 	t.Helper()
 	wd, err := os.MkdirTemp("/dev/shm", "sf")
 	if err != nil {
@@ -35,7 +36,15 @@ func wire(t *testing.T, planDir string, declared []string) *Channel {
 		if err := c.Handshake(); err != nil {
 			return
 		}
-		_ = orchestrator.Serve(c, orchestrator.NewAllowed(planDir, declared))
+		allow := orchestrator.NewAllowed(planDir, declared)
+		// Rendering happens on the control host, over this host's variables.
+		allow.Render = func(content string, _ map[string]string) (string, error) {
+			return lang.Template(content, func(n string) (string, bool) {
+				v, ok := hostVars[n]
+				return v, ok
+			})
+		}
+		_ = orchestrator.Serve(c, allow)
 	}()
 	return ch
 }
@@ -47,7 +56,7 @@ func TestPrimitives_ReadReachesTheControlHost(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(planDir, "conf.j2"), []byte("port = @{port}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ch := wire(t, planDir, []string{"file.read:" + filepath.Join(planDir, "conf.j2")})
+	ch := wire(t, planDir, []string{"file.read:" + filepath.Join(planDir, "conf.j2")}, map[string]string{"port": "8080"})
 
 	f := newComp()
 	f.set(`printf '%s' "$out"`, 0)
@@ -75,7 +84,7 @@ func TestPrimitives_UndeclaredIsRefused(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(planDir, "id_ed25519"), []byte("PRIVATE"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ch := wire(t, planDir, []string{"file.read:" + filepath.Join(planDir, "conf.j2")})
+	ch := wire(t, planDir, []string{"file.read:" + filepath.Join(planDir, "conf.j2")}, nil)
 
 	f := newComp()
 	resp := serveCompCh(t, f, ch, proto.Request{
@@ -125,7 +134,7 @@ func TestPrimitives_RenderContentFromTheTarget(t *testing.T) {
 	f := newComp()
 	f.set(`cat /etc/model.j2`, 0)
 	f.stdout(`cat /etc/model.j2`, "host = @{h}")
-	resp := serveCompCh(t, f, wire(t, t.TempDir(), nil), proto.Request{
+	resp := serveCompCh(t, f, wire(t, t.TempDir(), nil, map[string]string{"h": "web1"}), proto.Request{
 		Mode: "apply",
 		Defs: map[string]string{
 			"r": `def r(h: str) { apply { out = ~file.render(shell { cat /etc/model.j2 }) shell { echo "$out" } } }`,
@@ -147,7 +156,7 @@ func TestPrimitives_BytesCannotBeInterpolated(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(planDir, "logo.png"), []byte{0x89, 'P', 'N', 'G', 0}, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ch := wire(t, planDir, []string{"file.read:" + filepath.Join(planDir, "logo.png")})
+	ch := wire(t, planDir, []string{"file.read:" + filepath.Join(planDir, "logo.png")}, nil)
 
 	resp := serveCompCh(t, newComp(), ch, proto.Request{
 		Mode: "apply",
@@ -165,7 +174,7 @@ func TestPrimitives_BytesCannotBeInterpolated(t *testing.T) {
 
 // A primitive takes exactly one argument; anything else is a mistake worth naming.
 func TestPrimitives_ArityIsChecked(t *testing.T) {
-	resp := serveCompCh(t, newComp(), wire(t, t.TempDir(), nil), proto.Request{
+	resp := serveCompCh(t, newComp(), wire(t, t.TempDir(), nil, map[string]string{"h": "web1"}), proto.Request{
 		Mode:  "apply",
 		Defs:  map[string]string{"a": `def a() { apply { x = ~file.read() } }`},
 		Steps: []proto.Step{{Instruction: "a"}},

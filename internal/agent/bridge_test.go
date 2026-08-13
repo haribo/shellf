@@ -86,6 +86,10 @@ func TestBridge_EndsWhenTheAgentCloses(t *testing.T) {
 }
 
 func TestBridge_MissingSocketIsAnError(t *testing.T) {
+	old := dialWait
+	dialWait = 100 * time.Millisecond
+	defer func() { dialWait = old }()
+
 	err := Bridge(filepath.Join(t.TempDir(), "absent"), os.Stdin, io.Discard)
 	if err == nil {
 		t.Fatal("dialing an absent socket must error")
