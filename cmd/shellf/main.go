@@ -103,7 +103,7 @@ var version = "dev"
 
 func versionLine() string { return "shellf " + version }
 
-// runCmd: shellf run <plan.shellf> --inventory <hosts.shellf> [--check] [flags].
+// runCmd: shellf run <plan.shellf> --inventory <hosts.shellf> [--dry-run] [flags].
 func runCmd(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	invPath := fs.String("inventory", "", "inventory file (required)")
