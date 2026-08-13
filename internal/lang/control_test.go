@@ -179,7 +179,7 @@ def c(p: str) { apply { if %dir.list(%"tree") { shell { echo hi } } } }
 		byName[d.Name] = d
 	}
 
-	got := ControlResources(byName)
+	got := ControlResources(byName, nil)
 	want := []string{"dir.list:tree", "file.read:conf.j2", "file.read:other.txt"}
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
@@ -199,7 +199,118 @@ func TestControl_ComputedPathIsNotDeclared(t *testing.T) {
 		t.Fatal(err)
 	}
 	byName := map[string]Def{"a": defs[0]}
-	if got := ControlResources(byName); len(got) != 0 {
+	if got := ControlResources(byName, nil); len(got) != 0 {
 		t.Fatalf("a computed path must not enter the allow-list: %v", got)
+	}
+}
+
+// The case that matters in practice: the path is written at the call site, and the def
+// reading it only ever sees a parameter. Scanning defs alone would miss it, and the
+// request would be refused at runtime for a file the plan legitimately declared.
+func TestControl_PlanArgumentIsDeclared(t *testing.T) {
+	sig := func(name string) ([]string, int, bool) {
+		if name == "deliver" {
+			return []string{"src", "dst"}, 2, true
+		}
+		return nil, 0, false
+	}
+	plan, err := ParsePlanWithVars(`on web { deliver(%"conf.j2", "/etc/app.conf") }`,
+		map[string]string{}, nil, sig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := plan[0].Steps[0]
+	if len(step.Control) != 1 || step.Control[0] != "src" {
+		t.Fatalf("the marked argument must be recorded: %+v", step.Control)
+	}
+	if step.Args["src"] != "conf.j2" {
+		t.Fatalf("the value must travel as an ordinary string: %q", step.Args["src"])
+	}
+
+	got := ControlResources(nil, plan[0].Steps)
+	if len(got) != 2 || got[0] != "dir.list:conf.j2" || got[1] != "file.read:conf.j2" {
+		t.Fatalf("a marked plan argument must enter the allow-list: %v", got)
+	}
+}
+
+// An unmarked argument is an ordinary string: a plan must say which paths are its own.
+func TestControl_UnmarkedPlanArgumentIsNotDeclared(t *testing.T) {
+	sig := func(string) ([]string, int, bool) { return []string{"src", "dst"}, 2, true }
+	plan, err := ParsePlanWithVars(`on web { deliver("conf.j2", "/etc/app.conf") }`,
+		map[string]string{}, nil, sig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ControlResources(nil, plan[0].Steps); len(got) != 0 {
+		t.Fatalf("an unmarked argument must not be served: %v", got)
+	}
+}
+
+// The scan must reach every position a step can nest in, or a plan that declares a file
+// inside a block or a branch is refused at runtime for a resource it did declare.
+func TestControl_ScanReachesNestedSteps(t *testing.T) {
+	sig := func(string) ([]string, int, bool) { return []string{"src", "dst"}, 2, true }
+	plan, err := ParsePlanWithVars(`
+on web {
+  as root { deliver(%"in-block.j2", "/a") }
+  parallel { deliver(%"in-parallel.j2", "/b") }
+  if dir.exists("/opt") { deliver(%"in-then.j2", "/c") } else { deliver(%"in-else.j2", "/d") }
+}`, map[string]string{}, nil, func(n string) ([]string, int, bool) {
+		if n == "dir.exists" {
+			return []string{"path"}, 1, true
+		}
+		return sig(n)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := ControlResources(nil, plan[0].Steps)
+	for _, want := range []string{
+		"file.read:in-block.j2", "file.read:in-parallel.j2",
+		"file.read:in-then.j2", "file.read:in-else.j2",
+	} {
+		found := false
+		for _, g := range got {
+			if g == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s missing from %v", want, got)
+		}
+	}
+}
+
+// %file.render accepts content from a shell — the case that motivated splitting read
+// from render, and that neither Go transformation could do.
+func TestControl_RenderRejectsAPath(t *testing.T) {
+	fetch := func(string) ([]byte, error) { return []byte("x"), nil }
+	_, err := evalWithFetch(t, `def t() { apply { x = %file.render(%"conf.j2") } }`, "t", nil, fetch)
+	if err == nil {
+		t.Fatal("render takes content, not a control-host path: passing one must fail")
+	}
+}
+
+// A primitive name that survives the parser but not the evaluator would be a silent
+// hole; assert the evaluator has its own guard.
+func TestControl_UnknownPrimitiveAtEval(t *testing.T) {
+	defs, err := ParseDefs(`def t(p: str) { apply { x = %file.read(p) } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := defs[0]
+	// Rewrite the call to a name the parser would have refused.
+	ph := d.Phases[0]
+	let := ph.Stmts[0].(LetStmt)
+	call := let.Value.(Call)
+	call.Name = "file.wipe"
+	let.Value = call
+	ph.Stmts[0] = let
+	d.Phases[0] = ph
+
+	_, err = EvalDefWith(d, map[string]string{"p": "x"}, nil, noopExec{}, engine.Apply, nil, nil,
+		func(string) ([]byte, error) { return nil, nil })
+	if err == nil {
+		t.Fatal("the evaluator must refuse a primitive it does not know")
 	}
 }

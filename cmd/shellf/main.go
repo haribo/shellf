@@ -26,7 +26,11 @@ import (
 func main() {
 	// Agent mode: hidden, invoked on each target after being pushed over SSH.
 	if len(os.Args) > 1 && os.Args[1] == "__agent" {
-		if err := agent.Serve(os.Stdin, os.Stdout, engine.ShellExecutor{}); err != nil {
+		sockDir := "" // optional: a workdir to open the control channel in
+		if len(os.Args) > 2 {
+			sockDir = os.Args[2]
+		}
+		if err := agent.ServeOn(os.Stdin, os.Stdout, engine.ShellExecutor{}, sockDir); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -158,7 +162,11 @@ func runCmd(args []string) {
 	// from the defs before anything is sent: the channel serves this set and refuses
 	// the rest by name, which is what keeps an imported def from reading ~/.ssh.
 	planDir := filepath.Dir(fs.Arg(0))
-	declared := lang.ControlResources(parseDefsFor(defsSrc))
+	var allSteps []proto.Step
+	for _, b := range plan {
+		allSteps = append(allSteps, b.Steps...)
+	}
+	declared := lang.ControlResources(parseDefsFor(defsSrc), allSteps)
 	var channel func(io.Reader, io.WriteCloser) error
 	if len(declared) > 0 {
 		allow := orchestrator.NewAllowed(planDir, declared)
@@ -174,7 +182,7 @@ func runCmd(args []string) {
 	dial := func(alias string) transport.Transport {
 		h, _ := inv.Resolve(alias)
 		if h.Local { // reached on the control host, no SSH (ADR-0027)
-			return transport.Local{}
+			return transport.Local{Channel: channel}
 		}
 		return transport.SSH{
 			User: h.User, Host: h.Address, Port: h.Port, Key: h.Key,

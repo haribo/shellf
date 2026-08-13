@@ -219,6 +219,21 @@ Most instructions are `def`s written in shellf and embedded in the binary; only
 - **Firewall** — `ufw.enable()` · `ufw.default(incoming, outgoing)` · `ufw.open(port, proto)`
 - **Docker** — `docker.install()` · `docker.network(name)` · `docker.compose-up(dir, build)` (`build` `"true"` rebuilds local images; always re-applies — `up -d` is idempotent) · `docker.compose-restart(dir, service)` (handler — omit `service.ensure` for the whole stack; gate it on `.changed`, e.g. after a mounted config is edited)
 
+**Control-host primitives** (ADR-0034) — `%` marks what happens on your machine rather
+than the target: `%file.read(path)` reads a file there, `%file.render(content)`
+substitutes its `@{var}`, `%dir.list(path)` lists a directory, and `%"conf.j2"` marks a
+path as living there. Only those three names may carry a `%`; anything else is a parse
+error, and the control host serves only the paths the plan marked.
+
+```
+def deliver(src: str, dst: str) {
+  apply { file.write(dst, %file.render(%file.read(src))) }
+}
+```
+```
+on web { deliver(%"app.conf.j2", "/etc/app.conf") }
+```
+
 Write your own — see [Writing shellf](#writing-shellf).
 
 ## Raw shell

@@ -1,6 +1,10 @@
 package lang
 
-import "sort"
+import (
+	"sort"
+
+	"shellf/internal/proto"
+)
 
 // ControlResources lists what a set of defs will ask the control host for (ADR-0034 §5).
 //
@@ -8,8 +12,9 @@ import "sort"
 // control host derives the set before sending, and refuses anything outside it. A `%`
 // path built from a value the target produces is therefore not resolvable here — and is
 // refused when the plan is read rather than mid-deploy.
-func ControlResources(defs map[string]Def) []string {
+func ControlResources(defs map[string]Def, steps []proto.Step) []string {
 	seen := map[string]bool{}
+	scanSteps(steps, seen)
 	for _, d := range defs {
 		for _, ph := range d.Phases {
 			scanStmts(ph.Stmts, seen)
@@ -21,6 +26,33 @@ func ControlResources(defs map[string]Def) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// scanSteps collects the `%"path"` arguments a plan wrote. This is the case that
+// matters in practice: `file.template(%"conf.j2", dst)` puts the path at the call site,
+// while the def reading it only sees a parameter — so scanning defs alone would miss it
+// and the request would be refused at runtime for a file the plan legitimately needs.
+//
+// Both read primitives are allowed for such a path: the plan says "this is mine to
+// serve", and which primitive reads it is the def's business.
+func scanSteps(steps []proto.Step, seen map[string]bool) {
+	for _, s := range steps {
+		for _, arg := range s.Control {
+			if p, ok := s.Args[arg]; ok {
+				seen[resourceKey("file.read", p)] = true
+				seen[resourceKey("dir.list", p)] = true
+			}
+		}
+		scanSteps(s.Block, seen)
+		scanSteps(s.Parallel, seen)
+		if s.If != nil {
+			if s.If.Cond != nil {
+				scanSteps([]proto.Step{*s.If.Cond}, seen)
+			}
+			scanSteps(s.If.Then, seen)
+			scanSteps(s.If.Else, seen)
+		}
+	}
 }
 
 func scanStmts(stmts []Stmt, seen map[string]bool) {

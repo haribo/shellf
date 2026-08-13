@@ -769,11 +769,14 @@ func (p *parser) call(name string) proto.Step {
 		p.fail("unknown instruction %q", name)
 	}
 	p.expect(tLParen, "(")
-	type argv struct{ val, ref string }
+	type argv struct {
+		val, ref string
+		control  bool
+	}
 	var vals []argv
 	for p.tok.kind != tRParen {
-		v, r := p.callArg()
-		vals = append(vals, argv{v, r})
+		v, r, ctl := p.callArg()
+		vals = append(vals, argv{v, r, ctl})
 		if p.tok.kind == tComma {
 			p.adv()
 		} else {
@@ -797,6 +800,7 @@ func (p *parser) call(name string) proto.Step {
 	// defaulted) are filled by the def at eval (ADR-0013).
 	args := map[string]string{}
 	var refs map[string]string
+	var control []string
 	for i := 0; i < len(vals); i++ {
 		n := argNames[i]
 		if vals[i].ref != "" {
@@ -806,9 +810,12 @@ func (p *parser) call(name string) proto.Step {
 			refs[n] = vals[i].ref
 		} else {
 			args[n] = vals[i].val
+			if vals[i].control {
+				control = append(control, n)
+			}
 		}
 	}
-	return proto.Step{Instruction: name, Args: args, Refs: refs, Caught: caught, With: p.parseWith()}
+	return proto.Step{Instruction: name, Args: args, Refs: refs, Control: control, Caught: caught, With: p.parseWith()}
 }
 
 // arg resolves a binding's value (plan top-level binding or --vars file entry)
@@ -847,27 +854,38 @@ func (p *parser) arg() string {
 // returned as a ref name (empty value), NOT resolved: bare-identifier arguments
 // are resolved per host at orchestration time (ADR-0003 §5). Strings are still
 // interpolated at parse time (interpolation is global-only).
-func (p *parser) callArg() (value, ref string) {
+func (p *parser) callArg() (value, ref string, control bool) {
 	switch {
+	case p.tok.kind == tPercent:
+		// `%"conf.j2"` — a path on the control host (ADR-0034 §1). The value travels as
+		// an ordinary string; the marker is recorded on the step, so the set of files
+		// the plan needs can be derived before anything is sent (ADR-0031 §3).
+		p.adv()
+		if p.tok.kind != tString && p.tok.kind != tRawString {
+			p.fail("%% must be followed by a path string in an argument, got %q", p.tok.val)
+		}
+		v := p.interpolate(p.tok.val)
+		p.adv()
+		return v, "", true
 	case p.tok.kind == tString:
 		v := p.interpolate(p.tok.val)
 		p.adv()
-		return v, ""
+		return v, "", false
 	case p.tok.kind == tRawString:
 		v := p.tok.val
 		p.adv()
-		return v, ""
+		return v, "", false
 	case p.tok.kind == tIdent && (p.tok.val == "true" || p.tok.val == "false"):
 		v := p.tok.val
 		p.adv()
-		return v, ""
+		return v, "", false
 	case p.tok.kind == tIdent:
 		name := p.tok.val
 		p.adv()
-		return "", name
+		return "", name, false
 	default:
 		p.fail("expected a string, bool, or variable argument, got %q", p.tok.val)
-		return "", "" // unreachable
+		return "", "", false // unreachable
 	}
 }
 

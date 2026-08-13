@@ -23,13 +23,27 @@ import (
 
 // Serve reads one Request, runs its steps on this host, writes one Response.
 func Serve(in io.Reader, out io.Writer, ex engine.Executor) error {
+	return ServeOn(in, out, ex, "")
+}
+
+// ServeOn is Serve with a control channel: `sockDir` is a workdir to listen in, empty
+// when the run needs none. The one-shot agent gets the same channel as the resident one,
+// so a plan behaves identically whether its target is remote or the control host itself
+// (ADR-0027) — including having its `%` requests checked against the allow-list.
+func ServeOn(in io.Reader, out io.Writer, ex engine.Executor, sockDir string) error {
 	var req proto.Request
 	if err := json.NewDecoder(in).Decode(&req); err != nil {
 		return write(out, proto.Response{Error: fmt.Sprintf("decode: %v", err)})
 	}
-
-	// One-shot mode (local transport): no detached agent, so no channel.
-	return write(out, runRequest(req, ex, nil))
+	var ch *Channel
+	if sockDir != "" {
+		c, err := Listen(sockDir)
+		if err == nil {
+			ch = c
+			defer func() { _ = ch.Close() }()
+		}
+	}
+	return write(out, runRequest(req, ex, ch))
 }
 
 // runRequest pre-flights the interpreters, then runs the steps. Shared by Serve

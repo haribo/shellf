@@ -19,6 +19,17 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Control-host primitives (ADR-0034): `%file.read`, `%file.render` and `%dir.list` read
+  from the machine running shellf, and `%"path"` marks a path as living there. One rule
+  — `%` means my machine — for a call and for a path alike. A def can therefore reach a
+  template or a tree on the operator's disk, which is what `file.template` and
+  `dir.copy` did in Go, unreadably. `%` before anything but those three primitives is a
+  parse error: a def can run shell, and shell prefixed by `%` would run where every SSH
+  key lives. The control host serves only what the plan declared and refuses the rest by
+  name, so an imported package cannot read `~/.ssh` (#317).
+- `bytes`, an opaque value type for content read from the control host. It can be handed
+  to an instruction and nothing else: interpolating it or putting it in a shell variable
+  is refused rather than silently mangling binary into text (#317).
 - `file.write` and `file.template` take an optional checker run on the staged file
   before it is installed: `file.template("sudoers.j2", "/etc/sudoers.d/x", "visudo -cf
   \"$staged\"")`. A failing checker leaves the destination untouched and returns
