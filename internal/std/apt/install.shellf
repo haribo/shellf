@@ -1,5 +1,5 @@
 def install(pkg: str) as root {
-    pre-check {
+    check {
         if pkg == "" { return err.pkgMustNotBeNull }
     }
     observe { return state(installed: shell { dpkg -s "$pkg" >/dev/null 2>&1 }.exit == 0) }

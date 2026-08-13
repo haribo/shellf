@@ -5,7 +5,7 @@ import "testing"
 func TestParseDef_Install(t *testing.T) {
 	src := `
 def install(pkg: str) {
-    pre-check {
+    check {
         if pkg == "" { return err.pkgMustNotBeNull }
     }
     observe {
@@ -39,16 +39,16 @@ def install(pkg: str) {
 		t.Fatalf("return: %+v", d.Return)
 	}
 
-	// pre-check: `if pkg == "" { return err.pkgMustNotBeNull }`
+	// check: `if pkg == "" { return err.pkgMustNotBeNull }`
 	iff, ok := d.Phases[0].Stmts[0].(IfStmt)
 	if !ok {
-		t.Fatalf("pre-check stmt: %T", d.Phases[0].Stmts[0])
+		t.Fatalf("check stmt: %T", d.Phases[0].Stmts[0])
 	}
 	if b, ok := iff.Cond.(Binary); !ok || b.Op != "==" {
-		t.Fatalf("pre-check cond: %+v", iff.Cond)
+		t.Fatalf("check cond: %+v", iff.Cond)
 	}
 	if r, ok := iff.Body[0].(ReturnStmt); !ok || r.Outcome.Category != "err" || r.Outcome.Tag != "pkgMustNotBeNull" {
-		t.Fatalf("pre-check return: %+v", iff.Body)
+		t.Fatalf("check return: %+v", iff.Body)
 	}
 
 	// observe: `return state(installed: shell {…}.ok)` — a StateReturnStmt whose

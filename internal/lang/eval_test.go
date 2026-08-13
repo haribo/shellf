@@ -9,7 +9,7 @@ import (
 // The dogfood target: apt-install expressed as a shellf def.
 const aptDef = `
 def apt-install(pkg: str) {
-    pre-check {
+    check {
         if pkg == "" { return err.pkgMustNotBeNull }
     }
     observe {
@@ -86,13 +86,13 @@ func runApt(t *testing.T, f *evalFake, pkg string, mode engine.Mode) engine.Resu
 	return res
 }
 
-func TestEvalDef_PreCheckEmpty(t *testing.T) {
+func TestEvalDef_CheckEmpty(t *testing.T) {
 	f := &evalFake{}
 	if got := runApt(t, f, "", engine.Apply).String(); got != "err.pkgMustNotBeNull" {
 		t.Fatalf("got %s, want err.pkgMustNotBeNull", got)
 	}
 	if len(f.calls) != 0 {
-		t.Fatal("pre-check must not touch the executor")
+		t.Fatal("check must not touch the executor")
 	}
 }
 

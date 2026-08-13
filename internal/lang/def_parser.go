@@ -9,7 +9,14 @@ import (
 // (adv/expect/fail/catch) from parser.go.
 
 var phaseNames = map[string]bool{
-	"pre-check": true, "check": true, "observe": true, "preview": true, "apply": true, "post": true,
+	"check": true, "observe": true, "preview": true, "apply": true,
+}
+
+// removedPhases turns a name that used to exist into an actionable error rather than
+// "unknown" (ADR-0035). They are not accepted — the plan still fails.
+var removedPhases = map[string]string{
+	"check": "folded into `check` (ADR-0035); rename the phase",
+	"post":      "removed (ADR-0035); it was never used and had no settled meaning",
 }
 var categories = map[string]bool{"ok": true, "err": true, "would": true}
 
@@ -53,6 +60,8 @@ func (p *parser) def() Def {
 		switch {
 		case p.tok.kind == tIdent && phaseNames[p.tok.val]:
 			d.Phases = append(d.Phases, p.phase())
+		case p.tok.kind == tIdent && removedPhases[p.tok.val] != "":
+			p.fail("phase %q: %s", p.tok.val, removedPhases[p.tok.val])
 		case p.tok.kind == tIdent && p.tok.val == "return":
 			p.fail("`return` must be inside a phase, not at def top level (ADR-0007)")
 		default:

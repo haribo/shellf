@@ -4,7 +4,7 @@
 #
 #   shellf run --inventory examples/inventory.shellf \
 #     --secret-file db_password=./db_password \
-#     --check examples/blog/plan.shellf
+#     --dry-run examples/blog/plan.shellf
 #
 #   shellf run    --inventory examples/inventory.shellf --secret-file db_password=./db_password examples/blog/plan.shellf
 #   shellf status --inventory examples/inventory.shellf examples/blog/plan.shellf
@@ -40,7 +40,7 @@ on app {
     # output, ADR-0018). Config files keep their own `${...}` untouched.
     file.template("compose.env.tmpl", "/opt/blog/.env")
 
-    # Bring the stack up. `compose-up` is action-shaped; `--check` still previews
+    # Bring the stack up. `compose-up` is action-shaped; `--dry-run` still previews
     # what it would recreate (docker compose --dry-run, ADR-0029).
     docker.compose-up("/opt/blog")
 }

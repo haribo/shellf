@@ -90,7 +90,7 @@ func main() {
 	}
 
 	fmt.Fprint(os.Stderr, "usage:\n"+
-		"  shellf run --inventory <hosts.shellf> [--vars <f>] [--set k=v] [--secret-file n=path] [--check] [--insecure] <plan.shellf>\n"+
+		"  shellf run --inventory <hosts.shellf> [--vars <f>] [--set k=v] [--secret-file n=path] [--dry-run] [--insecure] <plan.shellf>\n"+
 		"  shellf status --inventory <hosts.shellf> [--insecure] <plan.shellf>\n"+
 		"  shellf clean --inventory <hosts.shellf> [--insecure] [target...]\n"+
 		"  shellf version\n")
@@ -103,7 +103,7 @@ var version = "dev"
 
 func versionLine() string { return "shellf " + version }
 
-// runCmd: shellf run <plan.shellf> --inventory <hosts.shellf> [--check] [flags].
+// runCmd: shellf run <plan.shellf> --inventory <hosts.shellf> [--dry-run] [flags].
 func runCmd(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	invPath := fs.String("inventory", "", "inventory file (required)")
@@ -112,14 +112,24 @@ func runCmd(args []string) {
 	fs.Var(&sets, "set", "override a variable, k=v (repeatable); wins over --vars and plan bindings")
 	fs.Var(&secretFiles, "secret-file", "secret from a file, name=path (repeatable); redacted in output")
 	fs.Var(&secretEnvs, "secret-env", "secret from an env var, name=VAR (repeatable); redacted in output")
-	check := fs.Bool("check", false, "dry-run: decide without mutating")
+	dryRun := fs.Bool("dry-run", false, "decide and preview without mutating")
+	// `--check` was the old name (ADR-0035). Accepting it silently would keep two
+	// spellings alive; this only exists to say what to type instead.
+	oldCheck := fs.Bool("check", false, "")
 	insecure := fs.Bool("insecure", false, "skip host-key verification (dev only)")
 	knownHosts := fs.String("known-hosts", "", "known_hosts path (default ~/.ssh/known_hosts)")
 	agentTTL := fs.Duration("agent-ttl", 0, "resident agent inactivity TTL before it self-erases (0 = 2h)")
 	_ = fs.Parse(args) // flag.ExitOnError already exits on a parse error
 
+	// Before anything is read: a wrong flag must be the error the operator sees, not a
+	// missing file that happens to be reported first.
+	if msg := removedFlag(*oldCheck); msg != "" {
+		fmt.Fprintln(os.Stderr, msg)
+		os.Exit(2)
+	}
+
 	if fs.NArg() < 1 || *invPath == "" {
-		fmt.Fprintln(os.Stderr, "usage: shellf run --inventory <hosts.shellf> [--vars <f>] [--set k=v] [--secret-file n=path] [--check] [--insecure] <plan.shellf>")
+		fmt.Fprintln(os.Stderr, "usage: shellf run --inventory <hosts.shellf> [--vars <f>] [--set k=v] [--secret-file n=path] [--dry-run] [--insecure] <plan.shellf>")
 		os.Exit(2)
 	}
 
@@ -148,8 +158,8 @@ func runCmd(args []string) {
 	}
 
 	mode := "apply"
-	if *check {
-		mode = "check"
+	if *dryRun {
+		mode = "check" // the engine mode keeps its internal name
 	}
 
 	self, err := os.Executable()
@@ -208,6 +218,16 @@ func parseDefsFor(srcByName map[string]string) map[string]lang.Def {
 		out[name] = defs[0]
 	}
 	return out
+}
+
+// removedFlag reports what to type instead of a flag ADR-0035 removed, or "" when none
+// was passed. The old name is not accepted — this only replaces "unknown flag" with
+// something actionable, the same way a renamed instruction does.
+func removedFlag(oldCheck bool) string {
+	if oldCheck {
+		return "unknown flag --check — renamed to --dry-run (ADR-0035)"
+	}
+	return ""
 }
 
 // loadPlanPackage loads the plan file together with its package — every other
@@ -815,7 +835,7 @@ func statusStep(b *strings.Builder, s proto.StepResult, indent string) {
 		}
 	case s.Tag == "action":
 		fmt.Fprintf(b, "%s%-28s action (no observable state)\n", indent, s.Label)
-	default: // control-flow wrappers, questions, pre-check errors — one line, no recursion
+	default: // control-flow wrappers, questions, check errors — one line, no recursion
 		label := s.Category
 		if s.Tag != "" {
 			label += "." + s.Tag

@@ -8,6 +8,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **BREAKING** — phase and mode vocabulary (ADR-0035). `pre-check` is folded into
+  `check`, which now also runs under `status` — a def refusing its arguments refuses
+  them there too. `post` is removed: nothing declared it and its meaning was never
+  settled. The `--check` flag becomes `--dry-run`, because `check` the phase and
+  `--check` the mode named different things: the mode ran four phases, while the phase
+  also ran during a real apply. Both removed phases and the removed flag are refused
+  naming their replacement. `docs/language.md` gains the mode/phase table whose absence
+  let the confusion last (#326).
 - Content validation is no longer a parameter of `file.write` / `file.template`. It
   belongs in the `check` phase of an instruction that knows the format — a `sudo.write`
   writing its own temporary and running `visudo` there — which then calls `file.write`

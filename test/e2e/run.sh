@@ -3,7 +3,7 @@
 #
 # It stands up a throwaway Debian container running sshd, then drives the actual
 # `shellf run` binary against it and asserts the three properties that matter:
-#   1. --check is inert   (nothing is created on the target)
+#   1. --dry-run is inert   (nothing is created on the target)
 #   2. apply provisions   (the marker tree appears)
 #   3. re-apply is idempotent (a second real run reports zero changes)
 #
@@ -73,7 +73,7 @@ printf 'SEKRET-abc123' > "$work/secret"
 run() { "$work/shellf" run --inventory "$work/inventory.shellf" --insecure --secret-file apisecret="$work/secret" "$@" "$here/plan.shellf"; }
 
 say "1. check mode is inert (previews 'would', touches nothing)"
-out="$(run --check 2>&1)"; printf '%s\n' "$out"
+out="$(run --dry-run 2>&1)"; printf '%s\n' "$out"
 printf '%s' "$out" | grep -q 'would' || fail "check mode should preview a 'would' outcome"
 docker exec "$cname" test -e /tmp/shellf-e2e && fail "check mode created state on the target"
 

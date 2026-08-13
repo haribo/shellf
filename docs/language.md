@@ -25,6 +25,20 @@ Result = ok.<tag>(payload?) | err.<tag>(payload?) | would.<tag>(payload?)
 
 An instruction **reads** the `ShellResult` and **translates** it into a `Result` (via `when`/tags). A `Result` may *carry* a `ShellResult` in its payload; it is not one. Flattening `Result` to exit/stdout/stderr = branching on exit codes = plain bash — the exact regression shellf exists to avoid.
 
+## Phases and modes
+
+A `def` declares phases; a run picks a mode. Which phases a mode runs (ADR-0035):
+
+| Mode | `check` | `observe` | `preview` | `apply` |
+|---|---|---|---|---|
+| `shellf run` | yes | yes | no | yes |
+| `shellf run --dry-run` | yes | yes | yes | **no** |
+| `shellf status` | yes | yes | no | no |
+
+`check` decides before acting — its outcome wins and halts. `observe` reports current
+state; equal to the desired one means the apply is skipped. `preview` describes what the
+apply would do and runs only in `--dry-run`. `apply` acts.
+
 ## `shell` — run shell
 
 A `shell { … }` block sends its body to `/bin/sh -c` (POSIX, not bash) and returns a `ShellResult`.
@@ -112,7 +126,7 @@ if dir.exists("/opt/app") {     // condition = an instruction; branch on its Res
 - The condition runs **on the target** — the agent interprets the flow.
 - A failing condition takes `else` (or is skipped): the `if` **captures** the result, so it does **not** halt (halting rule).
 - **Negation**: `if !<cond> { … }` flips the branch. This replaces the old `unless` guard (**removed from plans**): `shell { cmd } unless { g }` becomes `if !shell { g } { shell { cmd } }`, and `if !dir.exists("/opt") { dir.ensure("/opt") }` acts only when absent.
-- **Preview** (`--check`): a `would` condition (an effect not applied) makes the branch **`undetermined`** — honest, never guessed. An `ok`/`err` condition is deterministic. See [ADR-0004](adr/0004-control-flow-preview.md).
+- **Preview** (`--dry-run`): a `would` condition (an effect not applied) makes the branch **`undetermined`** — honest, never guessed. An `ok`/`err` condition is deterministic. See [ADR-0004](adr/0004-control-flow-preview.md).
 
 Put the effect **inside** the `if` (not a separate action followed by a `test`) so the preview stays honest.
 
@@ -130,7 +144,7 @@ if x != ok { … }             // `!=` negates
 - **Outcome test** (ADR-0008): `x == ok` / `x == err` match the category; `x == ok.created` / `x == err.dbLocked` also match the tag (tag omitted = any tag of that category). `!=` negates; bare `if x` = `if x == ok`.
 - `.changed` = it actually acted (apply ran, not a converged skip). It is **orthogonal** to the outcome category, so it stays a field, not a pattern.
 - The old `.ok` / `.err` field tests are **removed** — use `== ok` / `== err`.
-- In `--check`, a captured `would` result makes the branch **`undetermined`** — same never-lie rule.
+- In `--dry-run`, a captured `would` result makes the branch **`undetermined`** — same never-lie rule.
 - A capture is block-scoped; capturing an `if`/`parallel` is rejected.
 
 ### Handling errors — `?`
@@ -163,7 +177,7 @@ See [ADR-0009](adr/0009-error-handling.md).
 `dir.exists` / `file.exists` are **questions**: read-only defs with **no `apply` phase**, so they resolve in pass 1 and are **deterministic in check** (never `undetermined`), unlike an effectful instruction.
 
 ```
-if dir.exists("/opt/app") {   // present → then, absent → else — deterministic even in --check
+if dir.exists("/opt/app") {   // present → then, absent → else — deterministic even in --dry-run
   apt-install("nginx")
 }
 ```
@@ -183,7 +197,7 @@ on host {
 ```
 
 - **Parse-time unrolling**: the loop expands to one copy of the body per item
-  before anything runs — `--check` and `status` show each iteration. There is no
+  before anything runs — `--dry-run` and `status` show each iteration. There is no
   runtime loop and no list value.
 - `${var}` works anywhere a string does, including inside one (`/opt/${svc}/run`).
   A **bare** `var` would be a per-host ref, not the loop item — always use `${var}`.

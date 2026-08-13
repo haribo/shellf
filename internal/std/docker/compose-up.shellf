@@ -4,7 +4,7 @@
 # running" guard would wrongly skip a compose/image change while the stack is up.
 # `build` = "true" rebuilds local images first (images built on the target).
 def compose-up(dir: str, build: str = "false") as root {
-    # `--check` preview (ADR-0029): the per-service create/recreate/start plan, from
+    # `--dry-run` preview (ADR-0029): the per-service create/recreate/start plan, from
     # `docker compose up --dry-run` (read-only, Compose >= 2.29). Best-effort — an
     # older Compose or an unreachable daemon simply yields no preview. Note: --dry-run
     # does not build, so with build = "true" this shows orchestration, not the rebuild.
