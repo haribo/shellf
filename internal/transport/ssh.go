@@ -1,6 +1,8 @@
 package transport
 
 import (
+	"io"
+	"sync"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
@@ -34,6 +36,12 @@ type SSH struct {
 	KnownHosts  string        // known_hosts path; empty = ~/.ssh/known_hosts
 	Insecure    bool          // bypass host-key verification (dev only)
 
+	// Channel serves the running job's requests for control-host resources
+	// (ADR-0031). Nil — the common case — means the plan asks for nothing, and no
+	// bridge is opened at all: a plan that needs nothing keeps today's behaviour
+	// exactly, including surviving a dropped session while detached.
+	Channel func(io.Reader, io.WriteCloser) error
+
 	dialFn func() (conn, error) // test seam: overrides the real SSH dial
 }
 
@@ -42,6 +50,10 @@ type SSH struct {
 type conn interface {
 	run(cmd string, stdin []byte) (stdout []byte, err error) // like session.Run; nil err = exit 0
 	start(cmd string) error                                  // like session.Start (detached agent)
+	// duplex runs cmd with pipes on both ends, for the control channel bridge
+	// (ADR-0031). The returned closer ends the session, which is what kills the
+	// bridge on the target.
+	duplex(cmd string) (io.Reader, io.WriteCloser, io.Closer, error)
 	close() error
 }
 
@@ -63,6 +75,31 @@ func (cc clientConn) run(cmd string, stdin []byte) ([]byte, error) {
 		return stdout.Bytes(), fmt.Errorf("%v: %s", err, stderr.String())
 	}
 	return stdout.Bytes(), nil
+}
+
+// duplex opens a session with both pipes wired, for the bridge. The session — not the
+// SSH client — is what closing ends, so the bridge dies with it and leaves no third
+// process on the target (ADR-0005's "no trace").
+func (cc clientConn) duplex(cmd string) (io.Reader, io.WriteCloser, io.Closer, error) {
+	sess, err := cc.c.NewSession()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	stdout, err := sess.StdoutPipe()
+	if err != nil {
+		_ = sess.Close()
+		return nil, nil, nil, err
+	}
+	stdin, err := sess.StdinPipe()
+	if err != nil {
+		_ = sess.Close()
+		return nil, nil, nil, err
+	}
+	if err := sess.Start(cmd); err != nil {
+		_ = sess.Close()
+		return nil, nil, nil, err
+	}
+	return stdout, stdin, sess, nil
 }
 
 // start runs cmd detached: Start (not Run) then close after a brief pause, so
@@ -254,9 +291,63 @@ func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
 	}
 	_ = cn.close()
 
+	// Bridge the control channel for the duration of the job, when the plan needs it.
+	// A separate session: it must be able to die (a dropped bridge is recoverable)
+	// without taking the poll with it.
+	if s.Channel != nil {
+		stop := s.bridge(path, wd)
+		defer stop()
+	}
+
 	// Poll for the result, re-dialing on a dropped session, until the deadline.
 	// The detached agent keeps running across drops, so a long job survives.
 	return s.poll(wd, jobid, deadline)
+}
+
+// bridge opens a session running `shellf __bridge` and serves the job's requests on it
+// until stop() is called. Best-effort by design: if the session cannot be opened, the
+// job simply gets a failure on its first request, naming the resource — which is a far
+// better diagnostic than refusing to start a plan that may never ask anything.
+func (s SSH) bridge(binPath, wd string) (stop func()) {
+	var (
+		mu       sync.Mutex
+		sessions []io.Closer
+	)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		cn, err := s.dialConn()
+		if err != nil {
+			return
+		}
+		defer func() { _ = cn.close() }()
+		out, in, sess, err := cn.duplex(posix(bridgeCmd(binPath, wd)))
+		if err != nil {
+			return
+		}
+		mu.Lock()
+		sessions = append(sessions, sess)
+		mu.Unlock()
+		_ = s.Channel(out, in)
+	}()
+
+	// stop closes the session, which kills the bridge on the target and unblocks the
+	// serving goroutine. Closing is what ends it: waiting alone would hang, since
+	// serving only returns when the channel closes.
+	return func() {
+		mu.Lock()
+		for _, c := range sessions {
+			_ = c.Close()
+		}
+		mu.Unlock()
+		<-done
+	}
+}
+
+// bridgeCmd runs the bridge from the pushed agent binary (in /tmp, cached by hash)
+// against the socket in the job workdir (on tmpfs).
+func bridgeCmd(binPath, wd string) string {
+	return fmt.Sprintf("%s __bridge %s/sock", binPath, wd)
 }
 
 // Clean kills any resident agent on the target and removes every shellf file

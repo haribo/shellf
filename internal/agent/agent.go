@@ -28,12 +28,13 @@ func Serve(in io.Reader, out io.Writer, ex engine.Executor) error {
 		return write(out, proto.Response{Error: fmt.Sprintf("decode: %v", err)})
 	}
 
-	return write(out, runRequest(req, ex))
+	// One-shot mode (local transport): no detached agent, so no channel.
+	return write(out, runRequest(req, ex, nil))
 }
 
 // runRequest pre-flights the interpreters, then runs the steps. Shared by Serve
 // (one-shot) and the resident agent's processJob, so both enforce the pre-flight.
-func runRequest(req proto.Request, ex engine.Executor) proto.Response {
+func runRequest(req proto.Request, ex engine.Executor, ch *Channel) proto.Response {
 	// Package user defs, shipped as source and re-parsed here (ADR-0014). The
 	// controller already validated them, so a parse failure is a protocol error.
 	defs, err := userDefs(req.Defs)

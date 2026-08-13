@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"io"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
@@ -17,6 +18,11 @@ import (
 // It records every run/start command in order; responder decides each run's
 // reply so a test can script "not cached", "agent dead", "job done", a drop, etc.
 type fakeConn struct {
+	duplexes  []string
+	duplexErr error
+	bridgeIn  io.Reader
+	bridgeOut io.WriteCloser
+
 	runs      []string
 	starts    []string
 	closed    int
@@ -42,6 +48,23 @@ func unwrapPosix(cmd string) string {
 }
 
 func (f *fakeConn) start(cmd string) error { f.starts = append(f.starts, cmd); return nil }
+
+// duplex records the bridge command and wires it to an in-memory peer, so a test can
+// drive the channel without SSH. Nil peer = the target refuses the session.
+func (f *fakeConn) duplex(cmd string) (io.Reader, io.WriteCloser, io.Closer, error) {
+	f.duplexes = append(f.duplexes, cmd)
+	if f.duplexErr != nil {
+		return nil, nil, nil, f.duplexErr
+	}
+	toBridge, fromCtl := io.Pipe()  // control writes → bridge reads
+	fromBridge, toCtl := io.Pipe()  // bridge writes → control reads
+	f.bridgeIn, f.bridgeOut = toBridge, toCtl
+	return fromBridge, fromCtl, closerFunc(func() error { _ = toCtl.Close(); return nil }), nil
+}
+
+type closerFunc func() error
+
+func (c closerFunc) Close() error { return c() }
 func (f *fakeConn) close() error           { f.closed++; return nil }
 
 func (f *fakeConn) ran(sub string) bool {
