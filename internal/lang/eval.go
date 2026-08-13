@@ -120,6 +120,11 @@ func EvalDefFull(def Def, args, with map[string]string, control []string, ex eng
 		return r, nil
 	}
 
+	// Only the effectful pass can make this def "changed". Shells run in `check` or
+	// `observe` are reads — counting them would mark every def with a decision phase as
+	// having acted, firing every `if x.changed { … }` on a converged run (#328).
+	ev.acted = false
+
 	// Pass 2: effectful phases. A trailing `return` in apply is the nominal
 	// outcome (evalPhase reaches it); running to the end with no return yields
 	// an implicit tag-less `ok` (ADR-0007).
