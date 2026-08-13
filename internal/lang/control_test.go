@@ -137,11 +137,27 @@ func TestControl_ReadAsksTheControlHost(t *testing.T) {
 }
 
 func TestControl_RenderSubstitutesTheDefScope(t *testing.T) {
-	fetch := func(string, []byte, map[string]string) ([]byte, error) { return []byte("port = @{port}"), nil }
+	// The control host is what substitutes (ADR-0036 §5), over the scope the ask
+	// carries; this stands in for it, so the assertion is on the substitution itself
+	// rather than on the def merely finishing.
+	var rendered string
+	fetch := func(resource string, payload []byte, vars map[string]string) ([]byte, error) {
+		if resource != "file.render:" {
+			return []byte("port = @{port}"), nil // the template, read from the control host
+		}
+		rendered = strings.ReplaceAll(string(payload), "@{port}", vars["port"])
+		return []byte(rendered), nil
+	}
+	// `p` is marked as a control-host path, as a plan writing `%"c.j2"` would: unmarked,
+	// `~file.read` reads the target and the render receives nothing to substitute.
 	src := `def t(p: str, port: str) { apply { x = ~file.render(~file.read(p)) return ok.done } }`
-	res, err := evalWithFetch(t, src, "t", map[string]string{"p": "c.j2", "port": "8080"}, fetch)
+	res, err := evalWithFetchControl(t, src, "t", map[string]string{"p": "c.j2", "port": "8080"},
+		[]string{"p"}, fetch)
 	if err != nil {
 		t.Fatalf("render must resolve against the def's own scope: %v", err)
+	}
+	if rendered != "port = 8080" {
+		t.Fatalf("the def's own scope must reach the render: got %q", rendered)
 	}
 	if res.String() != "ok.done" {
 		t.Fatalf("got %s", res.String())
