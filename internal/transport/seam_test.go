@@ -1,10 +1,11 @@
 package transport
 
 import (
-	"io"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,8 +57,8 @@ func (f *fakeConn) duplex(cmd string) (io.Reader, io.WriteCloser, io.Closer, err
 	if f.duplexErr != nil {
 		return nil, nil, nil, f.duplexErr
 	}
-	toBridge, fromCtl := io.Pipe()  // control writes → bridge reads
-	fromBridge, toCtl := io.Pipe()  // bridge writes → control reads
+	toBridge, fromCtl := io.Pipe() // control writes → bridge reads
+	fromBridge, toCtl := io.Pipe() // bridge writes → control reads
 	f.bridgeIn, f.bridgeOut = toBridge, toCtl
 	return fromBridge, fromCtl, closerFunc(func() error { _ = toCtl.Close(); return nil }), nil
 }
@@ -65,7 +66,7 @@ func (f *fakeConn) duplex(cmd string) (io.Reader, io.WriteCloser, io.Closer, err
 type closerFunc func() error
 
 func (c closerFunc) Close() error { return c() }
-func (f *fakeConn) close() error           { f.closed++; return nil }
+func (f *fakeConn) close() error  { f.closed++; return nil }
 
 func (f *fakeConn) ran(sub string) bool {
 	for _, c := range f.runs {
@@ -307,5 +308,65 @@ func TestRun_AllCommandsPosixWrapped(t *testing.T) {
 		if !strings.HasPrefix(cmd, "sh -c '") {
 			t.Fatalf("transport command not POSIX-wrapped (#241): %q", cmd)
 		}
+	}
+}
+
+// The bridge session, driven through the fake conn. It covers the command actually
+// sent — which was wrong in the first draft: it ran the agent from the workdir, where
+// the binary is not (it lives in /tmp, cached by hash).
+func TestSSH_BridgeCommandAndServing(t *testing.T) {
+	fc := &fakeConn{}
+	served := make(chan struct{})
+	s := SSH{
+		dialFn:  func() (conn, error) { return fc, nil },
+		Channel: func(r io.Reader, w io.WriteCloser) error { close(served); return nil },
+	}
+
+	stop := s.bridge("/tmp/shellf-agent-abc", "/dev/shm/shellf-xyz")
+	select {
+	case <-served:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the bridge must hand its pipes to the channel server")
+	}
+	stop()
+
+	if len(fc.duplexes) != 1 {
+		t.Fatalf("exactly one bridge session expected: %v", fc.duplexes)
+	}
+	cmd := fc.duplexes[0]
+	if !strings.Contains(cmd, "/tmp/shellf-agent-abc __bridge") {
+		t.Fatalf("the bridge must run the pushed binary, not a path in the workdir: %q", cmd)
+	}
+	if !strings.Contains(cmd, "/dev/shm/shellf-xyz/sock") {
+		t.Fatalf("the bridge must target the socket in the job workdir: %q", cmd)
+	}
+}
+
+// A plan that needs nothing opens no bridge at all: today's behaviour is untouched,
+// including a detached job surviving a dropped session.
+func TestSSH_NoChannelNoBridge(t *testing.T) {
+	fc := &fakeConn{}
+	s := SSH{dialFn: func() (conn, error) { return fc, nil }}
+	if s.Channel != nil {
+		t.Fatal("Channel must default to nil")
+	}
+	if len(fc.duplexes) != 0 {
+		t.Fatalf("no bridge session may be opened: %v", fc.duplexes)
+	}
+}
+
+// An unreachable target must not wedge the run: the job gets a failure on its first
+// request instead, naming the resource.
+func TestSSH_BridgeDialFailureIsNotFatal(t *testing.T) {
+	s := SSH{
+		dialFn:  func() (conn, error) { return nil, errors.New("dial refused") },
+		Channel: func(io.Reader, io.WriteCloser) error { t.Fatal("must not serve"); return nil },
+	}
+	done := make(chan struct{})
+	go func() { s.bridge("/bin/agent", "/wd")(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a failed bridge dial must return, not hang the job")
 	}
 }

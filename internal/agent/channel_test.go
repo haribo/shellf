@@ -139,3 +139,59 @@ func TestChannel_RefusalSurfaces(t *testing.T) {
 		t.Fatalf("a refusal must surface: %v", err)
 	}
 }
+
+// A socket left by a previous agent must not block the new one: bind() refuses an
+// existing path, and an agent that cannot listen would fail every request for a reason
+// the operator cannot see.
+func TestChannel_ReplacesAStaleSocket(t *testing.T) {
+	wd := shortDir(t)
+	first, err := Listen(wd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = first.Close() // the socket file stays behind
+
+	second, err := Listen(wd)
+	if err != nil {
+		t.Fatalf("a stale socket must be replaced, not fatal: %v", err)
+	}
+	defer func() { _ = second.Close() }()
+
+	fi, err := os.Stat(filepath.Join(wd, SockName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Fatalf("the socket must not be reachable by other users: %o", fi.Mode().Perm())
+	}
+}
+
+// A peer speaking another wire version is refused at the handshake, and the failure
+// names the resource so the operator knows which request died.
+func TestChannel_AskFailsOnVersionSkew(t *testing.T) {
+	wd := shortDir(t)
+	ch, err := Listen(wd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ch.Close() }()
+
+	c, err := net.Dial("unix", filepath.Join(wd, SockName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	go func() {
+		k := proto.NewConn(c)
+		_, _ = k.Recv()
+		_ = k.Send(proto.Msg{Kind: proto.KindHello, Version: proto.ChannelVersion + 99})
+	}()
+
+	_, err = ch.Ask("conf.j2")
+	if err == nil {
+		t.Fatal("a version skew must fail the ask")
+	}
+	if !strings.Contains(err.Error(), "conf.j2") {
+		t.Fatalf("the failure must name the resource: %v", err)
+	}
+}

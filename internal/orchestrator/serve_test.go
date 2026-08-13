@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"shellf/internal/proto"
 )
@@ -62,13 +63,13 @@ func TestServe_RefusesAnythingNotDeclared(t *testing.T) {
 	allow := NewAllowed(dir, []string{"conf.j2"})
 
 	for _, resource := range []string{
-		"id_ed25519",           // a sibling file, never declared
-		"../../../etc/passwd",  // climbing out
-		"/etc/passwd",          // absolute
-		"~/.ssh/id_ed25519",    // the case the ADR names
-		"./conf.j2",            // another spelling of a declared file
+		"id_ed25519",            // a sibling file, never declared
+		"../../../etc/passwd",   // climbing out
+		"/etc/passwd",           // absolute
+		"~/.ssh/id_ed25519",     // the case the ADR names
+		"./conf.j2",             // another spelling of a declared file
 		"conf.j2/../id_ed25519", // a declared prefix, then elsewhere
-		"",                     // empty
+		"",                      // empty
 	} {
 		t.Run(resource, func(t *testing.T) {
 			m := ask(t, allow, resource)
@@ -111,5 +112,33 @@ func TestServe_ResourceNameIsNeverExecuted(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("a resource name must never reach a shell on the control host")
+	}
+}
+
+// Serve returns when the peer goes: a job is over, and its serving goroutine must not
+// leak for the lifetime of the run.
+func TestServe_ReturnsWhenThePeerGoes(t *testing.T) {
+	agent, control, done := chanPair()
+	errc := make(chan error, 1)
+	go func() { errc <- Serve(control, NewAllowed(t.TempDir(), nil)) }()
+	_ = agent.Send(proto.Msg{Kind: proto.KindHello, Version: proto.ChannelVersion}) // ignored kind
+	done()
+	select {
+	case <-errc:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve must return once the peer is gone")
+	}
+}
+
+// An absolute path declared by the plan is served as-is, not joined to the plan dir.
+func TestAllowed_AbsoluteDeclaration(t *testing.T) {
+	dir := t.TempDir()
+	abs := filepath.Join(dir, "elsewhere.conf")
+	if err := os.WriteFile(abs, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := ask(t, NewAllowed("/some/other/plan/dir", []string{abs}), abs)
+	if m.Error != "" {
+		t.Fatalf("an absolute declaration must resolve: %s", m.Error)
 	}
 }

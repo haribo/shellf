@@ -2,6 +2,9 @@ package proto
 
 import (
 	"io"
+	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -79,4 +82,85 @@ func TestChannel_MalformedLineIsAnError(t *testing.T) {
 	if _, err := c.Recv(); err == nil {
 		t.Fatal("a malformed line must be an error, not a zero message")
 	}
+}
+
+func TestChannel_HandshakeSucceedsOnSameVersion(t *testing.T) {
+	a, b, done := pipePair()
+	defer done()
+	go func() {
+		if _, err := b.Recv(); err != nil {
+			return
+		}
+		_ = b.Send(Msg{Kind: KindHello, Version: ChannelVersion})
+	}()
+	if err := a.Handshake(); err != nil {
+		t.Fatalf("matching versions must handshake: %v", err)
+	}
+}
+
+// A peer that answers something other than a hello is refused: a stream that is not
+// this protocol must fail at the greeting, not halfway through a job.
+func TestChannel_HandshakeRejectsNonHello(t *testing.T) {
+	a, b, done := pipePair()
+	defer done()
+	go func() {
+		if _, err := b.Recv(); err != nil {
+			return
+		}
+		_ = b.Send(Msg{Kind: KindAnswer, ID: "1"})
+	}()
+	if err := a.Handshake(); err == nil {
+		t.Fatal("a non-hello greeting must be refused")
+	}
+}
+
+// NewConn/Close over a real duplex stream, the shape the agent uses.
+func TestChannel_ConnOverReadWriteCloser(t *testing.T) {
+	l, err := net.Listen("unix", filepath.Join(shortTmp(t), "s"))
+	if err != nil {
+		t.Skip("no unix socket available")
+	}
+	defer func() { _ = l.Close() }()
+	go func() {
+		c, err := l.Accept()
+		if err != nil {
+			return
+		}
+		k := NewConn(c)
+		m, err := k.Recv()
+		if err != nil {
+			return
+		}
+		_ = k.Send(Msg{Kind: KindAnswer, ID: m.ID, Data: "eA=="})
+		_ = k.Close()
+	}()
+
+	c, err := net.Dial("unix", l.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	k := NewConn(c)
+	if err := k.Send(Msg{Kind: KindAsk, ID: "9", Resource: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	m, err := k.Recv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Data != "eA==" {
+		t.Fatalf("payload: %+v", m)
+	}
+	if err := k.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+}
+
+func shortTmp(t *testing.T) string {
+	t.Helper()
+	d, err := os.MkdirTemp("/dev/shm", "sf")
+	if err != nil {
+		return t.TempDir()
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(d) })
+	return d
 }
