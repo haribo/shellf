@@ -3,7 +3,12 @@ package agent
 import (
 	"io"
 	"net"
+	"time"
 )
+
+// dialWait bounds how long Bridge retries reaching the agent's socket. A var so a test
+// need not sit through it.
+var dialWait = 5 * time.Second
 
 // Bridge connects the control host to a detached agent (ADR-0031).
 //
@@ -19,8 +24,23 @@ import (
 // fails — and it can, because a socket reports the peer's departure where a named pipe
 // would leave it blocked forever.
 func Bridge(sockPath string, in io.Reader, out io.Writer) error {
-	c, err := net.Dial("unix", sockPath)
-	if err != nil {
+	// The control host launches this as soon as it has started the agent, so the socket
+	// may not exist yet: the agent creates it while this session is being opened. Retry
+	// briefly rather than dying — a failed bridge means every `~file.read` in the job
+	// fails, for a race measured in milliseconds.
+	var c net.Conn
+	var err error
+	deadline := time.Now().Add(dialWait)
+	for {
+		if c, err = net.Dial("unix", sockPath); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if c == nil {
 		return err
 	}
 	defer func() { _ = c.Close() }()
