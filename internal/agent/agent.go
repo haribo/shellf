@@ -329,7 +329,7 @@ func fetcher(ch *Channel) lang.ControlFetcher {
 	if ch == nil {
 		return nil
 	}
-	return ch.Ask
+	return ch.AskWith
 }
 
 func resolver(defs map[string]lang.Def) lang.DefResolver {

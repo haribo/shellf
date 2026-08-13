@@ -15,6 +15,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `~file.render` now runs on the control host, over the target's own variable set, so a
+  template substitutes per host as before (ADR-0024). `file.template` is therefore an
+  ordinary def over `~file.read` + `~file.render` + `~file.write`, and the Go
+  transformation that rewrote it is gone — one of the two remaining special cases in the
+  engine (#334).
 - `sudo.write(name, content)` and `sshd.config(name, content)` deliver a validated
   drop-in: `visudo -cf` and `sshd -t -f` run in the `check` phase, on the def's own
   temporary, so a refused content never reaches the write — and since `check` runs in

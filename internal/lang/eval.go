@@ -193,7 +193,7 @@ type DefResolver func(name string) (Def, bool)
 // ControlFetcher answers a `%` primitive by asking the control host (ADR-0031). The
 // agent supplies it; nil means no channel, and any `%` then fails naming the resource
 // rather than silently returning nothing.
-type ControlFetcher func(resource string) ([]byte, error)
+type ControlFetcher func(resource string, payload []byte) ([]byte, error)
 
 func (ev *evaluator) fail(format string, a ...any) {
 	panic(evalErr{fmt.Errorf(format, a...)})
@@ -572,7 +572,7 @@ func (ev *evaluator) evalControlCall(c Call) value {
 			if ev.fetch == nil {
 				ev.fail("~%s: no control host channel available for this run", c.Name)
 			}
-			b, err := ev.fetch(resourceKey(c.Name, string(t)))
+			b, err := ev.fetch(resourceKey(c.Name, string(t)), nil)
 			if err != nil {
 				ev.fail("%v", err)
 			}
@@ -587,8 +587,10 @@ func (ev *evaluator) evalControlCall(c Call) value {
 		return nil
 
 	case "file.render":
-		// Render takes content, not a path — which is what lets a template whose source
-		// lives on the target be rendered too: `~file.render(shell { cat … })`.
+		// Rendering happens on the control host: the host's variables live there and
+		// never travel (ADR-0024, ADR-0018). The agent sends content and receives the
+		// substituted result — which is what lets a template whose source is on the
+		// *target* be rendered too: `~file.render(shell { cat … })`.
 		var content string
 		switch t := arg.(type) {
 		case Bytes:
@@ -600,17 +602,15 @@ func (ev *evaluator) evalControlCall(c Call) value {
 		default:
 			ev.fail("~file.render expects content")
 		}
-		out, err := Template(content, func(n string) (string, bool) {
-			v, ok := ev.vars[n]
-			if !ok {
-				return "", false
-			}
-			return stringify(v), true
-		})
+		if ev.fetch == nil {
+			ev.fail("~file.render: no control host channel available for this run")
+		}
+		out, err := ev.fetch("file.render:", []byte(content))
 		if err != nil {
 			ev.fail("%v", err)
 		}
-		return out
+		return string(out)
+
 	}
 	ev.fail("~%s is not a primitive", c.Name)
 	return nil

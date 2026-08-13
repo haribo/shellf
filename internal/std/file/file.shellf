@@ -123,3 +123,16 @@ def copy(src: str, dst: str) {
         return ok.copied
     }
 }
+
+# Render a control-host template and deliver it (ADR-0036). An ordinary def since #334:
+# `~file.render` runs on the control host, where the host's variables live, so per-host
+# rendering (ADR-0024) works exactly as the Go transformation did.
+#
+# `src` must be marked `%"…"` at the call site — an unmarked path is read on the target,
+# which is a different (and valid) thing: rendering a template that already lives there.
+def template(src: str, dst: str) {
+    apply {
+        ~file.write(dst, ~file.render(~file.read(src)))
+        return ok.written
+    }
+}

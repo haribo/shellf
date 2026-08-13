@@ -177,10 +177,20 @@ func runCmd(args []string) {
 		allSteps = append(allSteps, b.Steps...)
 	}
 	declared := lang.ControlResources(parseDefsFor(defsSrc), allSteps)
-	var channel func(io.Reader, io.WriteCloser) error
-	if len(declared) > 0 {
+	needsChannel := len(declared) > 0 || usesRender(parseDefsFor(defsSrc))
+	// One channel per host: rendering substitutes over *that host's* environment
+	// (ADR-0024), and the variables never leave the control host (ADR-0018).
+	channelFor := func(alias string) func(io.Reader, io.WriteCloser) error {
+		if !needsChannel {
+			return nil
+		}
+		host, _ := inv.Resolve(alias)
+		env := mergeVars(baseVars, host.Vars, setVars)
 		allow := orchestrator.NewAllowed(planDir, declared)
-		channel = func(r io.Reader, w io.WriteCloser) error {
+		allow.Render = func(content string) (string, error) {
+			return lang.Template(content, func(n string) (string, bool) { v, ok := env[n]; return v, ok })
+		}
+		return func(r io.Reader, w io.WriteCloser) error {
 			c := proto.NewConnRW(r, w)
 			if err := c.Handshake(); err != nil {
 				return err
@@ -192,17 +202,40 @@ func runCmd(args []string) {
 	dial := func(alias string) transport.Transport {
 		h, _ := inv.Resolve(alias)
 		if h.Local { // reached on the control host, no SSH (ADR-0027)
-			return transport.Local{Channel: channel}
+			return transport.Local{Channel: channelFor(alias)}
 		}
 		return transport.SSH{
 			User: h.User, Host: h.Address, Port: h.Port, Key: h.Key,
 			KnownHosts: *knownHosts, Insecure: *insecure, AgentTTL: *agentTTL,
-			Channel: channel, // nil when the plan asks nothing: no bridge is opened
+			Channel: channelFor(alias), // nil when the plan asks nothing: no bridge
 		}
 	}
 
 	render := templateRenderer(planDir)
 	printReports(orchestrator.Run(plan, inv, self, mode, dial, baseVars, setVars, defsSrc, render), secretValues)
+}
+
+// mergeVars layers the variable tables the way the orchestrator does: globals, then the
+// host's own, then --set (ADR-0022 precedence).
+func mergeVars(base, host, set map[string]string) map[string]string {
+	out := map[string]string{}
+	for _, m := range []map[string]string{base, host, set} {
+		for k, v := range m {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// usesRender reports whether any def calls ~file.render, which needs the channel even
+// when the plan declares no `%"…"` path of its own.
+func usesRender(defs map[string]lang.Def) bool {
+	for _, d := range defs {
+		if strings.Contains(d.Source, "~file.render") {
+			return true
+		}
+	}
+	return false
 }
 
 // parseDefsFor re-parses the shipped def sources so their `%` occurrences can be
@@ -591,7 +624,6 @@ func stdSignatures() lang.InstructionSig {
 		required int
 	}{
 		"file.copy":     {[]string{"src", "dst"}, 2},
-		"file.template": {[]string{"src", "dst"}, 2},
 		"dir.copy":      {[]string{"src", "dst"}, 2},
 	}
 	return func(name string) ([]string, int, bool) {

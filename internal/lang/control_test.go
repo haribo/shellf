@@ -122,7 +122,7 @@ func (noopExec) Using(string) engine.Executor                { return noopExec{}
 
 func TestControl_ReadAsksTheControlHost(t *testing.T) {
 	var asked string
-	fetch := func(r string) ([]byte, error) { asked = r; return []byte("contents"), nil }
+	fetch := func(r string, _ []byte) ([]byte, error) { asked = r; return []byte("contents"), nil }
 
 	_, err := evalWithFetchControl(t, `def t(p: str) { apply { x = ~file.read(p) } }`, "t",
 		map[string]string{"p": "conf.j2"}, []string{"p"}, fetch)
@@ -137,7 +137,7 @@ func TestControl_ReadAsksTheControlHost(t *testing.T) {
 }
 
 func TestControl_RenderSubstitutesTheDefScope(t *testing.T) {
-	fetch := func(string) ([]byte, error) { return []byte("port = @{port}"), nil }
+	fetch := func(string, []byte) ([]byte, error) { return []byte("port = @{port}"), nil }
 	src := `def t(p: str, port: str) { apply { x = ~file.render(~file.read(p)) return ok.done } }`
 	res, err := evalWithFetch(t, src, "t", map[string]string{"p": "c.j2", "port": "8080"}, fetch)
 	if err != nil {
@@ -151,7 +151,7 @@ func TestControl_RenderSubstitutesTheDefScope(t *testing.T) {
 // A refusal from the control host surfaces as an evaluation failure naming it, never as
 // empty content — which would deliver a truncated file and report success.
 func TestControl_FetchErrorSurfaces(t *testing.T) {
-	fetch := func(string) ([]byte, error) { return nil, errors.New(`refused: "x" was not declared`) }
+	fetch := func(string, []byte) ([]byte, error) { return nil, errors.New(`refused: "x" was not declared`) }
 	_, err := evalWithFetchControl(t, `def t(p: str) { apply { x = ~file.read(p) } }`, "t",
 		map[string]string{"p": "x"}, []string{"p"}, fetch)
 	if err == nil || !strings.Contains(err.Error(), "refused") {
@@ -170,7 +170,7 @@ func TestControl_NoFetcherFails(t *testing.T) {
 // A control-host path literal is data until a primitive reads it.
 func TestControl_PathLiteralIsInterpolated(t *testing.T) {
 	var asked string
-	fetch := func(r string) ([]byte, error) { asked = r; return []byte("x"), nil }
+	fetch := func(r string, _ []byte) ([]byte, error) { asked = r; return []byte("x"), nil }
 	_, err := evalWithFetch(t, `def t(name: str) { apply { x = ~file.read(%"conf/${name}.j2") } }`, "t",
 		map[string]string{"name": "web"}, fetch)
 	if err != nil {
@@ -303,7 +303,7 @@ on web {
 // ~file.render accepts content from a shell — the case that motivated splitting read
 // from render, and that neither Go transformation could do.
 func TestControl_RenderRejectsAPath(t *testing.T) {
-	fetch := func(string) ([]byte, error) { return []byte("x"), nil }
+	fetch := func(string, []byte) ([]byte, error) { return []byte("x"), nil }
 	_, err := evalWithFetch(t, `def t() { apply { x = ~file.render(%"conf.j2") } }`, "t", nil, fetch)
 	if err == nil {
 		t.Fatal("render takes content, not a control-host path: passing one must fail")
@@ -328,7 +328,7 @@ func TestControl_UnknownPrimitiveAtEval(t *testing.T) {
 	d.Phases[0] = ph
 
 	_, err = EvalDefWith(d, map[string]string{"p": "x"}, nil, noopExec{}, engine.Apply, nil, nil,
-		func(string) ([]byte, error) { return nil, nil })
+		func(string, []byte) ([]byte, error) { return nil, nil })
 	if err == nil {
 		t.Fatal("the evaluator must refuse a primitive it does not know")
 	}
@@ -404,7 +404,7 @@ def b() { apply { a() } }
 // asserted.
 func TestControl_ReadSideDependsOnTheArgument(t *testing.T) {
 	asked := ""
-	fetch := func(r string) ([]byte, error) { asked = r; return []byte("from control"), nil }
+	fetch := func(r string, _ []byte) ([]byte, error) { asked = r; return []byte("from control"), nil }
 
 	// Marked: goes through the channel.
 	_, err := evalWithFetchControl(t, `def t(p: str) { apply { x = ~file.read(p) } }`, "t",
@@ -429,7 +429,7 @@ func TestControl_ReadSideDependsOnTheArgument(t *testing.T) {
 // reads the target — the opposite of what the plan asked.
 func TestControl_MarkerCrossesTheCallBoundary(t *testing.T) {
 	asked := ""
-	fetch := func(r string) ([]byte, error) { asked = r; return []byte("x"), nil }
+	fetch := func(r string, _ []byte) ([]byte, error) { asked = r; return []byte("x"), nil }
 
 	src := `
 def inner(p: str) { apply { x = ~file.read(p) return ok.read } }
@@ -450,7 +450,7 @@ def outer(p: str) { apply { inner(p) } }
 func TestControl_WriteRefusesTheControlHost(t *testing.T) {
 	_, err := evalWithFetchControl(t, `def t(p: str) { apply { ~file.write(p, "data") } }`, "t",
 		map[string]string{"p": "/tmp/x"}, []string{"p"},
-		func(string) ([]byte, error) { return nil, nil })
+		func(string, []byte) ([]byte, error) { return nil, nil })
 	if err == nil {
 		t.Fatal("writing on the control host must be refused")
 	}

@@ -188,32 +188,6 @@ func renderTemplates(steps []proto.Step, env map[string]string, render TemplateR
 	for i, s := range steps {
 		out[i] = s
 		switch {
-		case s.Instruction == "file.template":
-			if s.Refs["src"] != "" {
-				return nil, fmt.Errorf("file.template: src must be a literal control-host path, not a per-host ref")
-			}
-			dst := s.Args["dst"]
-			if ref := s.Refs["dst"]; ref != "" { // dst may be a per-host ref (ADR-0024)
-				v, ok := env[ref]
-				if !ok {
-					return nil, fmt.Errorf("undefined variable %q", ref)
-				}
-				dst = v
-			}
-			if render == nil {
-				return nil, fmt.Errorf("template %q: no renderer configured", s.Args["src"])
-			}
-			vars := env
-			if len(s.With) > 0 { // `with` wins for this call only (ADR-0022)
-				vars = mergeEnv(env, nil, s.With)
-			}
-			content, err := render(s.Args["src"], vars)
-			if err != nil {
-				return nil, err
-			}
-			// Keep the capture binding and `?` so `s = file.template(...)` then
-			// `if s.changed` still resolves (#246).
-			out[i] = proto.Step{Instruction: "file.write", Args: map[string]string{"path": dst, "content": content}, Bind: s.Bind, Caught: s.Caught}
 		case s.If != nil:
 			then, err := renderTemplates(s.If.Then, env, render)
 			if err != nil {

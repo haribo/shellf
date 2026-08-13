@@ -57,7 +57,11 @@ func (c *Channel) Close() error { return c.ln.Close() }
 // It returns an error when nobody is there: no bridge attached, or the session died
 // while waiting. That error names the resource, because "the connection dropped" sends
 // the operator looking at the target when the missing piece is on their own machine.
-func (c *Channel) Ask(resource string) ([]byte, error) {
+func (c *Channel) Ask(resource string) ([]byte, error) { return c.AskWith(resource, nil) }
+
+// AskWith is Ask with an input for the primitive — `file.render` sends the content to
+// substitute, where `file.read` sends nothing and names a path.
+func (c *Channel) AskWith(resource string, payload []byte) ([]byte, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -75,7 +79,11 @@ func (c *Channel) Ask(resource string) ([]byte, error) {
 
 	c.next++
 	id := fmt.Sprintf("%d", c.next)
-	if err := c.conn.Send(proto.Msg{Kind: proto.KindAsk, ID: id, Resource: resource}); err != nil {
+	msg := proto.Msg{Kind: proto.KindAsk, ID: id, Resource: resource}
+	if payload != nil {
+		msg.Data = base64.StdEncoding.EncodeToString(payload)
+	}
+	if err := c.conn.Send(msg); err != nil {
 		c.drop()
 		return nil, fmt.Errorf("%s: control host went away while asking: %v", resource, err)
 	}

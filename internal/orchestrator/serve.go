@@ -22,6 +22,15 @@ import (
 // paths so a request cannot escape by way of `..` or a symlink-shaped string.
 type Allowed struct {
 	paths map[string]string // as written in the plan → absolute path on disk
+
+	// Render substitutes `@{var}` over this host's environment (ADR-0024). It lives
+	// here because rendering needs the operator's variables, which never leave the
+	// control host — the agent sends content and receives the result.
+	//
+	// The content may come from the target (`~file.render(shell { cat … })`), so what a
+	// plan hands to rendering is the plan author's business: the substituted values are
+	// this host's, secrets included.
+	Render func(content string) (string, error)
 }
 
 // NewAllowed builds the set from the resources a plan declared. A declaration is
@@ -66,7 +75,7 @@ func Serve(ch *proto.Conn, allow *Allowed) error {
 		if m.Kind != proto.KindAsk {
 			continue // hello, or something a newer peer knows and we do not
 		}
-		data, aerr := readResource(allow, m.Resource)
+		data, aerr := answer(allow, m)
 		ans := proto.Msg{Kind: proto.KindAnswer, ID: m.ID}
 		if aerr != nil {
 			ans.Error = aerr.Error()
@@ -77,6 +86,26 @@ func Serve(ch *proto.Conn, allow *Allowed) error {
 			return err
 		}
 	}
+}
+
+// answer dispatches an ask: `file.render` is a computation over the message's payload,
+// everything else names a file to read.
+func answer(allow *Allowed, m proto.Msg) ([]byte, error) {
+	if strings.HasPrefix(m.Resource, "file.render:") {
+		if allow.Render == nil {
+			return nil, fmt.Errorf("no renderer configured on the control host")
+		}
+		content, err := base64.StdEncoding.DecodeString(m.Data)
+		if err != nil {
+			return nil, fmt.Errorf("file.render: unreadable content")
+		}
+		out, err := allow.Render(string(content))
+		if err != nil {
+			return nil, fmt.Errorf("file.render: %v", err)
+		}
+		return []byte(out), nil
+	}
+	return readResource(allow, m.Resource)
 }
 
 func readResource(allow *Allowed, resource string) ([]byte, error) {
