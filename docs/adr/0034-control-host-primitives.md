@@ -2,7 +2,12 @@
 
 ## Status
 
-Active. Builds on [ADR-0031](0031-control-channel-and-detachment.md) (a job may pull
+Superseded by [ADR-0036](0036-primitive-and-location-markers.md) — which keeps the
+decision (a closed set of primitives reaching control-host data) and splits the marker:
+`~` for a primitive, `%` for a control-host path. The single marker could not express a
+primitive that writes on the target.
+
+Built on [ADR-0031](0031-control-channel-and-detachment.md) (a job may pull
 data from the control host) and [ADR-0030](0030-def-composition.md) (a def may call
 another instruction). Uses the naming of [ADR-0032](0032-stdlib-naming.md).
 
