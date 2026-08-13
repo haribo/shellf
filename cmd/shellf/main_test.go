@@ -690,7 +690,7 @@ func TestRenameTable_TargetsResolve(t *testing.T) {
 // than the refusal the request will get.
 func TestParseDefsFor(t *testing.T) {
 	got := parseDefsFor(map[string]string{
-		"a":      `def a(p: str) { apply { x = %file.read(%"conf.j2") } }`,
+		"a":      `def a(p: str) { apply { x = ~file.read(%"conf.j2") } }`,
 		"broken": `def b( {`,
 	})
 	if _, ok := got["a"]; !ok {

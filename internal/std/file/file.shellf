@@ -109,3 +109,17 @@ def exists(path: str) {
         return err.absent
     }
 }
+
+# Deliver a file from the control host to the target (ADR-0036). `src` must be marked
+# `%"…"` at the call site — an unmarked path would be read on the target, which is a
+# copy, not a delivery. Binary-safe: the content travels as bytes, never through a shell
+# variable, which would stop at the first null byte.
+def copy(src: str, dst: str) {
+    observe {
+        return state(synced: shell { test -f "$dst" }.exit == 0)
+    }
+    apply {
+        ~file.write(dst, ~file.read(src))
+        return ok.copied
+    }
+}
