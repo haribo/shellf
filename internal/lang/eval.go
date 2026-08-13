@@ -10,7 +10,7 @@ import (
 )
 
 // EvalDef runs a parsed def as an instruction, reproducing the engine semantics:
-// pre-check/check/guard first (any outcome returns), then `would` in Check mode,
+// check/check/guard first (any outcome returns), then `would` in Check mode,
 // then apply/post, then the default return. Shell variables are the def's
 // params (and string/bool lets), injected via the environment.
 //
@@ -58,11 +58,14 @@ func EvalDefWith(def Def, args, with map[string]string, ex engine.Executor, mode
 	}
 	desired := ev.desiredState(def) // the effective arguments, keyed by name
 
-	// Status: report observed vs desired without acting (ADR-0013). A pre-check
+	// Status: report observed vs desired without acting (ADR-0013). A check
 	// error still surfaces; otherwise observe drives the field report.
 	if mode == engine.Status {
+		// `check` runs here too (ADR-0035): a def refusing its arguments must refuse
+		// them in `status` as well, or `status` reports state for a call that could
+		// never run.
 		for _, ph := range def.Phases {
-			if ph.Name == "pre-check" {
+			if ph.Name == "check" {
 				if o := ev.evalPhase(ph); o != nil {
 					return ev.toResult(*o), nil
 				}
@@ -71,12 +74,12 @@ func EvalDefWith(def Def, args, with map[string]string, ex engine.Executor, mode
 		return ev.statusResult(def, desired), nil
 	}
 
-	// Pass 1: read-only decision phases. A `pre-check`/`check` outcome wins (err →
+	// Pass 1: read-only decision phases. A `check` outcome wins (err →
 	// halt, or a question's ok/err). An `observe` phase reports current state;
 	// convergence (state == desired) is the derived skip (ADR-0013).
 	for _, ph := range def.Phases {
 		switch ph.Name {
-		case "pre-check", "check":
+		case "check":
 			if o := ev.evalPhase(ph); o != nil {
 				return ev.toResult(*o), nil
 			}
@@ -105,7 +108,7 @@ func EvalDefWith(def Def, args, with map[string]string, ex engine.Executor, mode
 	// outcome (evalPhase reaches it); running to the end with no return yields
 	// an implicit tag-less `ok` (ADR-0007).
 	for _, ph := range def.Phases {
-		if ph.Name == "apply" || ph.Name == "post" {
+		if ph.Name == "apply" {
 			if o := ev.evalPhase(ph); o != nil {
 				return ev.changedIfActed(ev.toResult(*o)), nil
 			}

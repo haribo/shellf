@@ -13,7 +13,7 @@ Every plan here is parsed by CI (`TestExamplesParse`), so these stay runnable.
 A package install, a service, files, `as root`, and `?` error handling. Start here.
 
 ```
-shellf run    --inventory examples/inventory.shellf --check examples/webserver/plan.shellf
+shellf run    --inventory examples/inventory.shellf --dry-run examples/webserver/plan.shellf
 shellf run    --inventory examples/inventory.shellf        examples/webserver/plan.shellf
 shellf status --inventory examples/inventory.shellf        examples/webserver/plan.shellf
 ```
@@ -27,7 +27,7 @@ import** (`../shared`, called `common.banner`), a **secret** (`db_password` via
 
 ```
 shellf run --inventory examples/inventory.shellf \
-  --secret-file db_password=./db_password --check examples/blog/plan.shellf
+  --secret-file db_password=./db_password --dry-run examples/blog/plan.shellf
 ```
 
 Each feature appears in exactly one example, with a comment saying what it shows.

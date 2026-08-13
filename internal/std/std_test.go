@@ -214,7 +214,7 @@ func TestComposeRestart_ActionShaped(t *testing.T) {
 		&fakeExec{apply: drift, applyMatch: "compose restart"}, engine.Apply).String(); got != "err.runtime" {
 		t.Fatalf("compose-restart apply-fail: got %s, want err.runtime", got)
 	}
-	// `--check` previews via the read-only `--dry-run` and never runs the real
+	// `--dry-run` previews via the read-only `--dry-run` and never runs the real
 	// restart: every shell it issues carries the flag.
 	f := &fakeExec{observe: converged, apply: converged, applyMatch: "compose restart"}
 	if got := eval(t, "docker.compose-restart", map[string]string{"dir": "/opt/app", "service.ensure": "grafana"},

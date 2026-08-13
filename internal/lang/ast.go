@@ -1,7 +1,7 @@
 package lang
 
 // AST for `def` declarations. Instruction bodies are phase-structured
-// (pre-check / check / guard / apply / post), plus a final default outcome.
+// (check / observe / preview / apply), plus a final default outcome.
 
 type Def struct {
 	Name     string
@@ -29,7 +29,7 @@ type Param struct {
 }
 
 type Phase struct {
-	Name  string // pre-check | check | guard | observe | apply | post
+	Name  string // check | observe | preview | apply (ADR-0035)
 	Stmts []Stmt
 }
 

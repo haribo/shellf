@@ -705,3 +705,36 @@ func TestParseDefsFor(t *testing.T) {
 		t.Fatalf("the def's control-host resource must be extracted: %v", declared)
 	}
 }
+
+// ADR-0035 renames the flag. The old spelling must fail naming the new one rather than
+// be accepted, or two names live forever — the same rule as the renamed instructions.
+func TestDryRunFlag_OldNameIsRefused(t *testing.T) {
+	bin := buildShellf(t)
+	out, err := exec.Command(bin, "run", "--inventory", "x", "--check", "p.shellf").CombinedOutput()
+	if err == nil {
+		t.Fatal("--check must fail")
+	}
+	if !strings.Contains(string(out), "--dry-run") {
+		t.Fatalf("the error must name the replacement: %s", out)
+	}
+}
+
+// buildShellf compiles the CLI once for flag-level tests.
+func buildShellf(t *testing.T) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "shellf")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Skipf("cannot build: %v: %s", err, out)
+	}
+	return bin
+}
+
+func TestRemovedFlag(t *testing.T) {
+	if got := removedFlag(false); got != "" {
+		t.Fatalf("no removed flag passed: %q", got)
+	}
+	got := removedFlag(true)
+	if !strings.Contains(got, "--dry-run") || !strings.Contains(got, "--check") {
+		t.Fatalf("must name both the old and the new spelling: %q", got)
+	}
+}

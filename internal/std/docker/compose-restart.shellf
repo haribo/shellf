@@ -5,7 +5,7 @@
 # compose/image change and the container keeps serving the stale config.
 # `service` = "" restarts every service of the stack; a name restarts just that one.
 def compose-restart(dir: str, service: str = "") as root {
-    # `--check` preview (ADR-0029): `docker compose --dry-run restart` lists the
+    # `--dry-run` preview (ADR-0029): `docker compose --dry-run restart` lists the
     # containers it would bounce without touching them. Best-effort — an older
     # Compose or an unreachable daemon simply yields no preview.
     preview {

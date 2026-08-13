@@ -314,3 +314,68 @@ func TestControl_UnknownPrimitiveAtEval(t *testing.T) {
 		t.Fatal("the evaluator must refuse a primitive it does not know")
 	}
 }
+
+// The phase table is the contract; a def declaring a removed phase must fail at parse
+// with what to do, not with "unknown".
+func TestPhases_RemovedNamesRefused(t *testing.T) {
+	for name, want := range map[string]string{
+		"pre-check": "check",
+		"post":      "removed",
+	} {
+		_, err := ParseDefs(`def t() { ` + name + ` { return ok.x } }`)
+		if err == nil {
+			t.Fatalf("%s must be refused", name)
+		}
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	// And the surviving four still parse.
+	for _, name := range []string{"check", "observe", "preview", "apply"} {
+		if _, err := ParseDefs(`def t() { ` + name + ` { return ok.x } }`); err != nil {
+			t.Fatalf("%s must still parse: %v", name, err)
+		}
+	}
+}
+
+// Composition (ADR-0030) tested in its own package: a def calling another, the callee's
+// scope, and the cycle guard.
+func TestCompose_InLang(t *testing.T) {
+	src := `
+def leaf(p: str) { apply { shell { touch "$p" } return ok.done } }
+def caller(x: str) { apply { leaf(x) } }
+def a() { apply { b() } }
+def b() { apply { a() } }
+`
+	defs, err := ParseDefs(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]Def{}
+	for _, d := range defs {
+		byName[d.Name] = d
+	}
+	resolve := func(n string) (Def, bool) { d, ok := byName[n]; return d, ok }
+
+	res, err := EvalDefWith(byName["caller"], map[string]string{"x": "/tmp/x"}, nil,
+		noopExec{}, engine.Apply, resolve, []string{"caller"}, nil)
+	if err != nil {
+		t.Fatalf("a def must be able to call another: %v", err)
+	}
+	if res.Category != engine.OK {
+		t.Fatalf("got %s", res.String())
+	}
+
+	// A cycle names its chain rather than blowing the stack.
+	_, err = EvalDefWith(byName["a"], nil, nil, noopExec{}, engine.Apply, resolve, []string{"a"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "cycle") {
+		t.Fatalf("a cycle must be refused with its chain: %v", err)
+	}
+
+	// With no resolver, a call is refused rather than silently skipped.
+	_, err = EvalDefWith(byName["caller"], map[string]string{"x": "/tmp/x"}, nil,
+		noopExec{}, engine.Apply, nil, nil, nil)
+	if err == nil {
+		t.Fatal("no resolver must refuse the call")
+	}
+}

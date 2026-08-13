@@ -64,7 +64,7 @@ on web {
 Preview first — this touches nothing, and reports what would change:
 
 ```
-shellf run --inventory hosts.shellf --check plan.shellf
+shellf run --inventory hosts.shellf --dry-run plan.shellf
 ```
 
 Then apply:
@@ -132,13 +132,13 @@ shellf run plan.shellf --secret-file rclone_pass=./secret --secret-env db=DB_PW
 ```
 
 A secret is a variable like any other (`${rclone_pass}`), but shellf **redacts
-its value** (`***`) from every report, `--check`, and `status`. Honest limit: the
+its value** (`***`) from every report, `--dry-run`, and `status`. Honest limit: the
 secret still reaches the target (in the request file, `0600`, and the process
 env) — root there can read it; at-rest secrecy is not yet solved.
 
 **Control flow.** `if` takes an instruction (or a captured result); the branch is
 taken on its outcome. `dir.exists` is a read-only *question*, so it stays honest
-in `--check`:
+in `--dry-run`:
 
 ```
 if dir.exists("/opt/app") { service.ensure("app", "true", "true") }
@@ -202,7 +202,7 @@ A field with no same-named argument (like `installed`) must simply hold;
 fields that match a parameter (`service.ensure` → `running`, `git.clone` → `url`) are
 compared to it. See [ADR-0013](docs/adr/0013-observe-state-contract.md).
 
-**Preview, then apply.** `--check` runs only the read-only phases, never mutates,
+**Preview, then apply.** `--dry-run` runs only the read-only phases, never mutates,
 and prints `would.<tag>` for what would change. A second real run is idempotent
 (everything reads `ok.already`). `shellf status` reports the same observed state
 as `current → desired`, without acting.
@@ -215,7 +215,7 @@ Most instructions are `def`s written in shellf and embedded in the binary; only
 
 - **Packages & services** — `apt.install(pkg)` · `apt.update()` · `service.ensure(name, running, enabled)` (running/enabled are `"true"`/`"false"`; a `.timer` unit works as the name) · `service.restart(name)` · `service.reload(name)` · `systemd.daemon-reload()` · `user.group(user, group)` · `user.ensure(name, shell)`
 - **Files & directories** — `file.copy(src, dst)` (target-side copy) · `file.template(src, dst)` (render a control-host file's `@{var}` and deliver it) · `dir.copy(src, dst)` (deliver a control-host tree verbatim, binary-safe) · `file.write(path, content)` · `file.mode(path, mode)` · `file.replace(path, key, value)` (a `key=value` line) · `file.line(path, line)` · `file.delete(path)` · `file.download(url, dst, sha256)` · `dir.ensure(path)` · `dir.owner(path, owner)` · `archive.extract(src, dst)` · `archive.extract-member(src, dst, member)` (one file out of a tarball) · `git.clone(url, dst)` · `git.sync(url, dst, ref)` (update to a pinned ref)
-- **Questions** (read-only, deterministic in `--check`) — `dir.exists(path)` · `file.exists(path)` · `http.check(url, status)` · `http.wait-for(url, timeout)` (retries until ready)
+- **Questions** (read-only, deterministic in `--dry-run`) — `dir.exists(path)` · `file.exists(path)` · `http.check(url, status)` · `http.wait-for(url, timeout)` (retries until ready)
 - **Firewall** — `ufw.enable()` · `ufw.default(incoming, outgoing)` · `ufw.open(port, proto)`
 - **Docker** — `docker.install()` · `docker.network(name)` · `docker.compose-up(dir, build)` (`build` `"true"` rebuilds local images; always re-applies — `up -d` is idempotent) · `docker.compose-restart(dir, service)` (handler — omit `service.ensure` for the whole stack; gate it on `.changed`, e.g. after a mounted config is edited)
 
@@ -258,7 +258,7 @@ on server {
 
 - A bare `shell` always runs (raw, like bash; not previewable).
 - To make it idempotent and previewable, gate it: `if !shell { <test> } { shell { <cmd> } }`
-  — the test is read-only, so `--check` runs only the test, never the command.
+  — the test is read-only, so `--dry-run` runs only the test, never the command.
 - Escalate with `shell as root { … }` (see [Writing shellf](#writing-shellf)).
 - A block ends at its balanced `}`. A lone unbalanced `}` in a string ends it
   early — use a heredoc or the one-line form.
@@ -272,7 +272,7 @@ shellf run --inventory <hosts.shellf> [flags] <plan.shellf>
 | Flag | Meaning |
 |---|---|
 | `--inventory <file>` | inventory file (required) |
-| `--check` | dry-run: decide and preview, never mutate |
+| `--dry-run` | dry-run: decide and preview, never mutate |
 | `--known-hosts <file>` | host-key file (default `~/.ssh/known_hosts`) |
 | `--insecure` | skip host-key verification (dev only) |
 
@@ -287,7 +287,7 @@ which hosts run what, in what order. The **execution** plane is the agent: the
 binary is pushed over SSH (cached by hash, skipped on re-runs), evaluates the
 plan **on the target**, and stays resident between jobs — then self-erases after
 an idle TTL, leaving nothing after a reboot. Guards are read-only, which is what
-makes `--check` honest across a whole fleet.
+makes `--dry-run` honest across a whole fleet.
 
 Shell values are passed to the target via the environment, never concatenated
 into commands — so a value like `nginx; rm -rf /` cannot inject a command.
