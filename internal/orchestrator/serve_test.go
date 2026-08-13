@@ -39,7 +39,7 @@ func TestServe_AnswersADeclaredResource(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "conf.j2"), []byte("hello"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	m := ask(t, NewAllowed(dir, []string{"conf.j2"}), "conf.j2")
+	m := ask(t, NewAllowed(dir, []string{"file.read:conf.j2"}), "file.read:conf.j2")
 	if m.Error != "" {
 		t.Fatalf("a declared resource must be served: %s", m.Error)
 	}
@@ -60,7 +60,7 @@ func TestServe_RefusesAnythingNotDeclared(t *testing.T) {
 	if err := os.WriteFile(secret, []byte("PRIVATE KEY"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	allow := NewAllowed(dir, []string{"conf.j2"})
+	allow := NewAllowed(dir, []string{"file.read:conf.j2"})
 
 	for _, resource := range []string{
 		"id_ed25519",            // a sibling file, never declared
@@ -72,7 +72,7 @@ func TestServe_RefusesAnythingNotDeclared(t *testing.T) {
 		"",                      // empty
 	} {
 		t.Run(resource, func(t *testing.T) {
-			m := ask(t, allow, resource)
+			m := ask(t, allow, "file.read:"+resource)
 			if m.Error == "" {
 				t.Fatalf("must be refused, got %d bytes of payload", len(m.Data))
 			}
@@ -90,7 +90,7 @@ func TestServe_RefusesAnythingNotDeclared(t *testing.T) {
 // operator must be able to tell "you did not declare this" from "you declared it but it
 // is not there".
 func TestServe_DeclaredButMissingIsNotARefusal(t *testing.T) {
-	m := ask(t, NewAllowed(t.TempDir(), []string{"absent.j2"}), "absent.j2")
+	m := ask(t, NewAllowed(t.TempDir(), []string{"file.read:absent.j2"}), "file.read:absent.j2")
 	if m.Error == "" {
 		t.Fatal("a missing file must error")
 	}
@@ -106,7 +106,7 @@ func TestServe_DeclaredButMissingIsNotARefusal(t *testing.T) {
 func TestServe_ResourceNameIsNeverExecuted(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "pwned")
-	m := ask(t, NewAllowed(dir, []string{"conf.j2"}), "$(touch "+marker+")")
+	m := ask(t, NewAllowed(dir, []string{"file.read:conf.j2"}), "file.read:$(touch "+marker+")")
 	if m.Error == "" {
 		t.Fatal("must be refused")
 	}
@@ -137,7 +137,7 @@ func TestAllowed_AbsoluteDeclaration(t *testing.T) {
 	if err := os.WriteFile(abs, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	m := ask(t, NewAllowed("/some/other/plan/dir", []string{abs}), abs)
+	m := ask(t, NewAllowed("/some/other/plan/dir", []string{"file.read:" + abs}), "file.read:"+abs)
 	if m.Error != "" {
 		t.Fatalf("an absolute declaration must resolve: %s", m.Error)
 	}

@@ -24,16 +24,23 @@ type Allowed struct {
 	paths map[string]string // as written in the plan → absolute path on disk
 }
 
-// NewAllowed builds the set from the paths a plan declared, resolved against planDir.
+// NewAllowed builds the set from the resources a plan declared. A declaration is
+// `<primitive>:<path>` — `file.read:conf.j2` — so the primitive is part of the key: a
+// `dir.list` cannot be answered with a file's contents, and a path declared for reading
+// does not become listable. Relative paths resolve against planDir.
 func NewAllowed(planDir string, declared []string) *Allowed {
 	a := &Allowed{paths: map[string]string{}}
 	for _, d := range declared {
-		p := d
+		primitive, path, ok := strings.Cut(d, ":")
+		if !ok {
+			continue // not a resource key: nothing to allow
+		}
+		p := path
 		if !filepath.IsAbs(p) {
 			p = filepath.Join(planDir, p)
 		}
 		if abs, err := filepath.Abs(p); err == nil {
-			a.paths[d] = abs
+			a.paths[primitive+":"+path] = abs
 		}
 	}
 	return a
@@ -84,9 +91,9 @@ func readResource(allow *Allowed, resource string) ([]byte, error) {
 		// Do not leak the absolute path of the control host into a target-visible
 		// message; the plan-relative name is what the operator wrote and recognises.
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%s: no such file on the control host", resource)
+			return nil, fmt.Errorf("no such file on the control host")
 		}
-		return nil, fmt.Errorf("%s: %s", resource, strings.TrimPrefix(err.Error(), path+": "))
+		return nil, fmt.Errorf("%s", strings.TrimPrefix(err.Error(), path+": "))
 	}
 	return b, nil
 }

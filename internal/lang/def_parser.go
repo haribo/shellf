@@ -1,5 +1,10 @@
 package lang
 
+import (
+	"sort"
+	"strings"
+)
+
 // Parser for `def` declarations. Reuses the lexer and the shared parser helpers
 // (adv/expect/fail/catch) from parser.go.
 
@@ -221,6 +226,44 @@ func (p *parser) peekQualifiedCall() bool {
 	return p.tok.kind == tLParen
 }
 
+// controlExpr parses what follows a `%`: either a path literal (`%"conf.j2"`) or a
+// call to a control-host primitive (`%file.read(…)`). Anything else is refused here,
+// naming what was found — that refusal is the rule keeping shell off the operator's
+// machine, so it must not be a silent fallback to an ordinary call.
+func (p *parser) controlExpr() Expr {
+	p.adv() // consume '%'
+	if p.tok.kind == tString || p.tok.kind == tRawString {
+		v := p.tok.val
+		p.adv()
+		return ControlPath{Value: v}
+	}
+	if p.tok.kind != tIdent {
+		p.fail("%% must be followed by a control-host path or primitive, got %q", p.tok.val)
+	}
+	name := p.tok.val
+	p.adv()
+	if p.tok.kind == tDot {
+		p.adv()
+		name += "." + p.expect(tIdent, "primitive name after '.'").val
+	}
+	if !ControlPrimitives[name] {
+		p.fail("%%%s is not a control-host primitive (ADR-0034); only %s may carry %%", name, controlPrimitiveList())
+	}
+	if p.tok.kind != tLParen {
+		p.fail("%%%s must be called", name)
+	}
+	return Call{Name: name, Args: p.callArgs(), Control: true}
+}
+
+func controlPrimitiveList() string {
+	names := make([]string, 0, len(ControlPrimitives))
+	for n := range ControlPrimitives {
+		names = append(names, "%"+n)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
+
 func (p *parser) postfix() Expr {
 	e := p.primary()
 	for p.tok.kind == tDot {
@@ -230,8 +273,19 @@ func (p *parser) postfix() Expr {
 	return e
 }
 
+// ControlPrimitives is the closed set a `%` may prefix (ADR-0034 §2). It is closed on
+// purpose: if `%` could prefix a def, a def could run shell, and shell would run on the
+// machine holding every SSH key and every secret. shellf runs shell on targets.
+var ControlPrimitives = map[string]bool{
+	"file.read":   true,
+	"file.render": true,
+	"dir.list":    true,
+}
+
 func (p *parser) primary() Expr {
 	switch p.tok.kind {
+	case tPercent:
+		return p.controlExpr()
 	case tString, tRawString:
 		v := p.tok.val
 		p.adv()

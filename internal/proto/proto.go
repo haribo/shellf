@@ -100,6 +100,11 @@ type Step struct {
 	Interp      string            `json:"interp,omitempty"` // shell interpreter for a `shell(<interp>)` step (ADR-0012)
 	Env         map[string]string `json:"env,omitempty"`    // per-host env for a plan-level `shell` step (#106)
 	With        map[string]string `json:"with,omitempty"`   // per-call variable override (ADR-0022)
+	// Control lists the argument names written `%"path"`: paths on the control host
+	// (ADR-0034). The value travels as an ordinary string; this records which ones the
+	// control host must be prepared to serve, so the allow-list is known before the
+	// plan is sent (ADR-0031 §3).
+	Control []string `json:"control,omitempty"`
 	Block       []Step            `json:"block,omitempty"`  // an `as <user> { … }` sequential group (ADR-0011)
 	Parallel    []Step            `json:"parallel,omitempty"`
 	If          *IfBlock          `json:"if,omitempty"`

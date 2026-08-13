@@ -23,13 +23,27 @@ import (
 
 // Serve reads one Request, runs its steps on this host, writes one Response.
 func Serve(in io.Reader, out io.Writer, ex engine.Executor) error {
+	return ServeOn(in, out, ex, "")
+}
+
+// ServeOn is Serve with a control channel: `sockDir` is a workdir to listen in, empty
+// when the run needs none. The one-shot agent gets the same channel as the resident one,
+// so a plan behaves identically whether its target is remote or the control host itself
+// (ADR-0027) — including having its `%` requests checked against the allow-list.
+func ServeOn(in io.Reader, out io.Writer, ex engine.Executor, sockDir string) error {
 	var req proto.Request
 	if err := json.NewDecoder(in).Decode(&req); err != nil {
 		return write(out, proto.Response{Error: fmt.Sprintf("decode: %v", err)})
 	}
-
-	// One-shot mode (local transport): no detached agent, so no channel.
-	return write(out, runRequest(req, ex, nil))
+	var ch *Channel
+	if sockDir != "" {
+		c, err := Listen(sockDir)
+		if err == nil {
+			ch = c
+			defer func() { _ = ch.Close() }()
+		}
+	}
+	return write(out, runRequest(req, ex, ch))
 }
 
 // runRequest pre-flights the interpreters, then runs the steps. Shared by Serve
@@ -50,7 +64,7 @@ func runRequest(req proto.Request, ex engine.Executor, ch *Channel) proto.Respon
 			Shell: &engine.ShellResult{Stderr: "interpreter not found on target: " + strings.Join(missing, ", ")}}
 		return proto.Response{Results: []proto.StepResult{r}, Halted: true}
 	}
-	results, halted := runSteps(req.Steps, ex, mode(req.Mode), map[string]engine.Result{}, defs)
+	results, halted := runSteps(req.Steps, ex, mode(req.Mode), map[string]engine.Result{}, defs, ch)
 	return proto.Response{Results: results, Halted: halted}
 }
 
@@ -109,7 +123,7 @@ func collectInterpreters(steps []proto.Step, need map[string]bool) {
 // next step — an `if` on that var — can handle it; if nothing handles it, it
 // halts like any other error. scope holds the Results captured by `name =
 // <call>` steps in this block.
-func runSteps(steps []proto.Step, ex engine.Executor, m engine.Mode, scope map[string]engine.Result, defs map[string]lang.Def) (results []proto.StepResult, halted bool) {
+func runSteps(steps []proto.Step, ex engine.Executor, m engine.Mode, scope map[string]engine.Result, defs map[string]lang.Def, ch *Channel) (results []proto.StepResult, halted bool) {
 	pending := "" // a caught error (its var name) awaiting handling by the next step
 	for _, step := range steps {
 		if pending != "" {
@@ -119,7 +133,7 @@ func runSteps(steps []proto.Step, ex engine.Executor, m engine.Mode, scope map[s
 			}
 			pending = ""
 		}
-		sr := runStep(step, ex, m, scope, defs)
+		sr := runStep(step, ex, m, scope, defs, ch)
 		results = append(results, sr)
 		if step.Caught && step.Bind != "" && sr.Category == "err" {
 			pending = step.Bind // `?` defers the halt to the handling `if`
@@ -158,7 +172,7 @@ func handlesCaught(step proto.Step, name string, scope map[string]engine.Result)
 // instruction's Result being `ok`, or a captured result's outcome test). In
 // check, a would-condition (effect not applied) makes the branch undetermined —
 // the then-branch is previewed but never claimed to run.
-func runIf(ib *proto.IfBlock, ex engine.Executor, m engine.Mode, scope map[string]engine.Result, defs map[string]lang.Def) proto.StepResult {
+func runIf(ib *proto.IfBlock, ex engine.Executor, m engine.Mode, scope map[string]engine.Result, defs map[string]lang.Def, ch *Channel) proto.StepResult {
 	var condResult engine.Result
 	var condSub *proto.StepResult // the inline cond's own result, shown in Sub
 	label := "if(" + ib.CondLabel() + ")"
@@ -174,7 +188,7 @@ func runIf(ib *proto.IfBlock, ex engine.Executor, m engine.Mode, scope map[strin
 		condResult = r
 		truthFn = func(res engine.Result) bool { return refTruth(res, ref) }
 	} else {
-		res, err := runInstruction(*ib.Cond, ex, m, defs)
+		res, err := runInstruction(*ib.Cond, ex, m, defs, ch)
 		if err != nil {
 			return agentErr(label, err)
 		}
@@ -188,7 +202,7 @@ func runIf(ib *proto.IfBlock, ex engine.Executor, m engine.Mode, scope map[strin
 
 	// Never-lie: an unapplied action's result is undetermined in check.
 	if m == engine.Check && condResult.Category == engine.WOULD {
-		preview, _ := runSteps(ib.Then, ex, m, scope, defs)
+		preview, _ := runSteps(ib.Then, ex, m, scope, defs, ch)
 		return proto.StepResult{Label: label, Category: "undetermined", Sub: withCond(condSub, preview)}
 	}
 
@@ -204,7 +218,7 @@ func runIf(ib *proto.IfBlock, ex engine.Executor, m engine.Mode, scope map[strin
 	if truth {
 		branch = ib.Then
 	}
-	subs, halted := runSteps(branch, ex, m, scope, defs)
+	subs, halted := runSteps(branch, ex, m, scope, defs, ch)
 	cat := "ok"
 	if halted {
 		cat = "err"
@@ -231,12 +245,12 @@ func withCond(cond *proto.StepResult, subs []proto.StepResult) []proto.StepResul
 	return append([]proto.StepResult{*cond}, subs...)
 }
 
-func runStep(step proto.Step, ex engine.Executor, m engine.Mode, scope map[string]engine.Result, defs map[string]lang.Def) proto.StepResult {
+func runStep(step proto.Step, ex engine.Executor, m engine.Mode, scope map[string]engine.Result, defs map[string]lang.Def, ch *Channel) proto.StepResult {
 	if step.If != nil {
-		return runIf(step.If, ex, m, scope, defs)
+		return runIf(step.If, ex, m, scope, defs, ch)
 	}
 	if len(step.Block) > 0 { // `as <user> { … }` — run the group escalated (ADR-0011)
-		subs, halted := runSteps(step.Block, ex.As(step.Become), m, scope, defs)
+		subs, halted := runSteps(step.Block, ex.As(step.Become), m, scope, defs, ch)
 		cat := "ok"
 		if halted {
 			cat = "err"
@@ -250,7 +264,7 @@ func runStep(step proto.Step, ex engine.Executor, m engine.Mode, scope map[strin
 			wg.Add(1)
 			// Each branch gets a copy of the scope: reads see prior captures,
 			// writes stay local (no data race; captures inside parallel don't escape).
-			go func(i int, b proto.Step) { defer wg.Done(); subs[i] = runStep(b, ex, m, copyScope(scope), defs) }(i, b)
+			go func(i int, b proto.Step) { defer wg.Done(); subs[i] = runStep(b, ex, m, copyScope(scope), defs, ch) }(i, b)
 		}
 		wg.Wait()
 
@@ -263,7 +277,7 @@ func runStep(step proto.Step, ex engine.Executor, m engine.Mode, scope map[strin
 		return proto.StepResult{Label: "parallel", Category: cat, Sub: subs}
 	}
 
-	res, err := runInstruction(step, ex.As(step.Become).Using(step.Interp), m, defs) // step-level `as <user>` + `shell(<interp>)`
+	res, err := runInstruction(step, ex.As(step.Become).Using(step.Interp), m, defs, ch) // step-level `as <user>` + `shell(<interp>)`
 	if err != nil {
 		return agentErr(step.Label(), err)
 	}
@@ -283,17 +297,18 @@ func copyScope(s map[string]engine.Result) map[string]engine.Result {
 
 // runInstruction resolves an instruction to an embedded stdlib def (run by the
 // language) or a remaining Go builtin.
-func runInstruction(step proto.Step, ex engine.Executor, m engine.Mode, defs map[string]lang.Def) (engine.Result, error) {
+func runInstruction(step proto.Step, ex engine.Executor, m engine.Mode, defs map[string]lang.Def, ch *Channel) (engine.Result, error) {
 	// A def may call another one (ADR-0030); the resolver is the same lookup order
 	// used here, passed down so `lang` needs no import of `std`.
 	resolve := resolver(defs)
+	fetch := fetcher(ch)
 	// A package user def resolves first, so it can add new instructions and
 	// (with `override def`) replace a stdlib one (ADR-0014).
 	if def, ok := defs[step.Instruction]; ok {
-		return lang.EvalDefWith(def, step.Args, step.With, ex, m, resolve, []string{step.Instruction})
+		return lang.EvalDefWith(def, step.Args, step.With, ex, m, resolve, []string{step.Instruction}, fetch)
 	}
 	if def, ok := std.Lookup(step.Instruction); ok {
-		return lang.EvalDefWith(def, step.Args, step.With, ex, m, resolve, []string{step.Instruction})
+		return lang.EvalDefWith(def, step.Args, step.With, ex, m, resolve, []string{step.Instruction}, fetch)
 	}
 	inst, err := dispatch(step)
 	if err != nil {
@@ -306,6 +321,17 @@ func runInstruction(step proto.Step, ex engine.Executor, m engine.Mode, defs map
 // first (so an `override def` wins), then the stdlib. Primitives (shell, file.put,
 // file.copy) are engine instructions, not defs, and are deliberately not reachable
 // from a def body — exposing them is its own decision.
+// fetcher turns the channel into what the evaluator needs for a `%` primitive. A nil
+// channel yields a fetcher that fails naming the resource: "no control host attached"
+// points at the missing piece, where returning empty content would deliver a truncated
+// file and call it a success.
+func fetcher(ch *Channel) lang.ControlFetcher {
+	if ch == nil {
+		return nil
+	}
+	return ch.Ask
+}
+
 func resolver(defs map[string]lang.Def) lang.DefResolver {
 	return func(name string) (lang.Def, bool) {
 		if d, ok := defs[name]; ok {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"encoding/base64"
 	"errors"
 	"flag"
@@ -25,7 +26,11 @@ import (
 func main() {
 	// Agent mode: hidden, invoked on each target after being pushed over SSH.
 	if len(os.Args) > 1 && os.Args[1] == "__agent" {
-		if err := agent.Serve(os.Stdin, os.Stdout, engine.ShellExecutor{}); err != nil {
+		sockDir := "" // optional: a workdir to open the control channel in
+		if len(os.Args) > 2 {
+			sockDir = os.Args[2]
+		}
+		if err := agent.ServeOn(os.Stdin, os.Stdout, engine.ShellExecutor{}, sockDir); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -153,19 +158,56 @@ func runCmd(args []string) {
 		os.Exit(1)
 	}
 
+	// What the plan may ask the control host for (ADR-0034 §5 → ADR-0031 §3). Derived
+	// from the defs before anything is sent: the channel serves this set and refuses
+	// the rest by name, which is what keeps an imported def from reading ~/.ssh.
+	planDir := filepath.Dir(fs.Arg(0))
+	var allSteps []proto.Step
+	for _, b := range plan {
+		allSteps = append(allSteps, b.Steps...)
+	}
+	declared := lang.ControlResources(parseDefsFor(defsSrc), allSteps)
+	var channel func(io.Reader, io.WriteCloser) error
+	if len(declared) > 0 {
+		allow := orchestrator.NewAllowed(planDir, declared)
+		channel = func(r io.Reader, w io.WriteCloser) error {
+			c := proto.NewConnRW(r, w)
+			if err := c.Handshake(); err != nil {
+				return err
+			}
+			return orchestrator.Serve(c, allow)
+		}
+	}
+
 	dial := func(alias string) transport.Transport {
 		h, _ := inv.Resolve(alias)
 		if h.Local { // reached on the control host, no SSH (ADR-0027)
-			return transport.Local{}
+			return transport.Local{Channel: channel}
 		}
 		return transport.SSH{
 			User: h.User, Host: h.Address, Port: h.Port, Key: h.Key,
 			KnownHosts: *knownHosts, Insecure: *insecure, AgentTTL: *agentTTL,
+			Channel: channel, // nil when the plan asks nothing: no bridge is opened
 		}
 	}
 
-	render := templateRenderer(filepath.Dir(fs.Arg(0)))
+	render := templateRenderer(planDir)
 	printReports(orchestrator.Run(plan, inv, self, mode, dial, baseVars, setVars, defsSrc, render), secretValues)
+}
+
+// parseDefsFor re-parses the shipped def sources so their `%` occurrences can be
+// extracted. The sources are what travels to the agent (ADR-0014), so parsing them here
+// scans exactly what will run there.
+func parseDefsFor(srcByName map[string]string) map[string]lang.Def {
+	out := map[string]lang.Def{}
+	for name, src := range srcByName {
+		defs, err := lang.ParseDefs(src)
+		if err != nil || len(defs) != 1 {
+			continue // it already parsed once; a failure here cannot be actioned
+		}
+		out[name] = defs[0]
+	}
+	return out
 }
 
 // loadPlanPackage loads the plan file together with its package — every other

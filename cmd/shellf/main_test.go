@@ -683,3 +683,25 @@ func TestRenameTable_TargetsResolve(t *testing.T) {
 		}
 	}
 }
+
+// parseDefsFor re-parses the shipped def sources so their `%` occurrences can be
+// extracted for the allow-list. A source that no longer parses is skipped rather than
+// fatal: it parsed once already, and failing the run here would be a worse diagnostic
+// than the refusal the request will get.
+func TestParseDefsFor(t *testing.T) {
+	got := parseDefsFor(map[string]string{
+		"a":      `def a(p: str) { apply { x = %file.read(%"conf.j2") } }`,
+		"broken": `def b( {`,
+	})
+	if _, ok := got["a"]; !ok {
+		t.Fatalf("a valid def must be parsed: %v", got)
+	}
+	if _, ok := got["broken"]; ok {
+		t.Fatal("an unparsable source must be skipped, not returned")
+	}
+
+	declared := lang.ControlResources(got, nil)
+	if len(declared) != 1 || declared[0] != "file.read:conf.j2" {
+		t.Fatalf("the def's control-host resource must be extracted: %v", declared)
+	}
+}

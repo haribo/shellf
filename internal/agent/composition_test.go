@@ -17,6 +17,7 @@ import (
 type compExec struct {
 	mu    sync.Mutex
 	exits map[string]int
+	outs  map[string]string
 	seen  []struct {
 		script string
 		env    engine.Env
@@ -36,13 +37,21 @@ func (c *compExec) Shell(script string, env engine.Env) engine.ShellResult {
 		script string
 		env    engine.Env
 	}{script, cp})
-	return engine.ShellResult{Exit: c.exits[script]}
+	return engine.ShellResult{Exit: c.exits[script], Stdout: c.outs[script]}
 }
 
 func (c *compExec) As(string) engine.Executor    { return c }
 func (c *compExec) Using(string) engine.Executor { return c }
 
 func (c *compExec) set(script string, exit int) { c.exits[script] = exit }
+
+// stdout makes a script return content, for a def that reads a shell's output.
+func (c *compExec) stdout(script, out string) {
+	if c.outs == nil {
+		c.outs = map[string]string{}
+	}
+	c.outs[script] = out
+}
 
 func (c *compExec) called(script string) bool {
 	for _, s := range c.seen {
