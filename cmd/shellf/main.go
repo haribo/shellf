@@ -565,14 +565,13 @@ func loadInventory(invPath string) (inventory.Inventory, error) {
 // stdlib (signatures live with the defs, self-hosting) plus the Go builtins —
 // so adding a def needs no parser-side edit (#107).
 func stdSignatures() lang.InstructionSig {
-	// params, and how many are required. `file.template` takes an optional third:
-	// it is rewritten to `file.write`, which carries the checker (#299).
+	// params, and how many are required.
 	builtins := map[string]struct {
 		params   []string
 		required int
 	}{
 		"file.copy":     {[]string{"src", "dst"}, 2},
-		"file.template": {[]string{"src", "dst", "validate"}, 2},
+		"file.template": {[]string{"src", "dst"}, 2},
 		"dir.copy":      {[]string{"src", "dst"}, 2},
 	}
 	return func(name string) ([]string, int, bool) {

@@ -8,6 +8,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Content validation is no longer a parameter of `file.write` / `file.template`. It
+  belongs in the `check` phase of an instruction that knows the format — a `sudo.write`
+  writing its own temporary and running `visudo` there — which then calls `file.write`
+  in its `apply` (ADR-0030). `check` runs before any `apply` and its outcome wins, so a
+  refused content is never written; and since `check` also runs in check mode, a bad
+  config is caught before any real run. `file.write` stays within its own scope:
+  whether the bytes are valid sudoers is not its business (#323).
+
 - **BREAKING** — every stdlib instruction now belongs to a package: `file-write` is
   `file.write`, `wait-for` is `http.wait-for`, `template` is `file.template`, and so
   on for 25 names (ADR-0032). The dot separates the package, the dash separates words
@@ -30,15 +38,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `bytes`, an opaque value type for content read from the control host. It can be handed
   to an instruction and nothing else: interpolating it or putting it in a shell variable
   is refused rather than silently mangling binary into text (#317).
-- `file.write` and `file.template` take an optional checker run on the staged file
-  before it is installed: `file.template("sudoers.j2", "/etc/sudoers.d/x", "visudo -cf
-  \"$staged\"")`. A failing checker leaves the destination untouched and returns
-  `err.validation`, so the run halts before any handler gated on `.changed` can act on
-  a broken file. It exists because some files lock you out when invalid — a broken
-  sudoers breaks `sudo`, a broken sshd_config breaks the transport shellf itself uses —
-  and their checkers are useless once the file is in place. Validation during `--check`
-  is deliberately not included: it would let a plan run commands on a target in a mode
-  documented as inert, which needs its own decision (#299).
 - A def may call another instruction (ADR-0030), so the stdlib composes instead of
   every def being an island: a `def sudoers(...)` reuses `file.write` rather than
   reimplementing a file write in shell. The callee sees its own arguments only,

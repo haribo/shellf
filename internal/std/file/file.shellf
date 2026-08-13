@@ -51,18 +51,22 @@ def download(url: str, dst: str, sha256: str) {
 # mode and owner onto the staging file: a redirection preserved them, a bare rename
 # would silently reset them to the umask default. The trap removes the staging file if
 # anything fails; after a successful rename it is already gone.
-# `validate` is a shell command run on the staged file before it is installed; `$staged`
-# holds its path. It exists because some files lock you out when invalid — a broken
-# sudoers breaks `sudo`, a broken sshd_config breaks the transport shellf itself uses —
-# and their checkers (`visudo -cf "$staged"`, `sshd -t -f "$staged"`) are useless after the
-# fact. Validating from a def that calls this one cannot work: the file would already
-# be installed by the time the checker ran (#299).
+# Stage-then-rename, never a redirection at the destination (#298). `> "$path"`
+# truncates the file before writing it, so on the happy path — not just on a crash —
+# there is a window where a reader sees an empty or partial file. For an sshd_config
+# picked up by a concurrent reload, that window is a lockout.
 #
-# A failing checker leaves the destination untouched and returns `err.validation`
-# carrying its stderr, so the run halts before any handler gated on `.changed` can act
-# on a broken file. Exit 65 is the private signal between the two halves of this def
-# (EX_DATAERR); any other non-zero exit is an ordinary runtime failure.
-def write(path: str, content: str, validate: str = "") {
+# The staging file sits in the destination's own directory so the rename is within one
+# filesystem, hence atomic. `cp -p` first (when the destination exists) carries its
+# mode and owner onto the staging file: a redirection preserved them, a bare rename
+# would silently reset them to the umask default. The trap removes the staging file if
+# anything fails; after a successful rename it is already gone.
+#
+# Content validation is deliberately NOT here (#323): whether a file is valid sudoers or
+# a valid sshd_config is the business of an instruction that knows the format, in its
+# `check` phase — it writes its own temporary, and `check` runs before any `apply`, so a
+# refused content never reaches this def.
+def write(path: str, content: str) {
     observe {
         return state(synced: shell { test -f "$path" && printf '%s' "$content" | cmp -s - "$path" }.exit == 0)
     }
@@ -72,12 +76,8 @@ def write(path: str, content: str, validate: str = "") {
             trap 'rm -f "$staged"' EXIT
             if [ -f "$path" ]; then cp -p "$path" "$staged"; fi
             printf '%s' "$content" > "$staged"
-            if [ -n "$validate" ]; then
-                eval "$validate" || exit 65
-            fi
             mv -f "$staged" "$path"
         }
-        if r.exit == 65 { return err.validation(r) }
         if !r { return err.runtime(r) }
         return ok.written
     }
