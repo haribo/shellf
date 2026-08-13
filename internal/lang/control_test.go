@@ -458,3 +458,32 @@ func TestControl_WriteRefusesTheControlHost(t *testing.T) {
 		t.Fatalf("the refusal must say why: %v", err)
 	}
 }
+
+// A plan may need the channel without declaring a single `%"…"` path: `~file.render`
+// can be handed content read from the target. Detecting that from the parsed defs is
+// what decides whether a channel is opened at all — a text search on Def.Source does
+// not work, since ParseDefs leaves it empty.
+func TestControl_UsesPrimitiveWalksTheTree(t *testing.T) {
+	cases := map[string]struct {
+		src  string
+		want bool
+	}{
+		"direct":        {`def t(c: str) { apply { x = ~file.render(c) } }`, true},
+		"nested in arg": {`def t(p: str) { apply { x = ~file.render(~file.read(p)) } }`, true},
+		"inside an if":  {`def t(c: str) { apply { if c { x = ~file.render(c) } } }`, true},
+		"in observe":    {`def t(c: str) { observe { return state(v: ~file.render(c)) } }`, true},
+		"another one":   {`def t(p: str) { apply { x = ~file.read(p) } }`, false},
+		"none":          {`def t(p: str) { apply { shell { echo "$p" } } }`, false},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			defs, err := ParseDefs(c.src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := UsesPrimitive(map[string]Def{"t": defs[0]}, "file.render"); got != c.want {
+				t.Fatalf("got %v, want %v", got, c.want)
+			}
+		})
+	}
+}

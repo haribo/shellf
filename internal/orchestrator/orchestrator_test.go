@@ -39,7 +39,7 @@ func TestRun_DeadHostDroppedFromLaterBlock(t *testing.T) {
 		{Target: "all", Steps: []proto.Step{{Instruction: "apt.install", Args: map[string]string{"pkg": "nginx"}}}},
 		{Target: "all", Steps: []proto.Step{{Instruction: "apt.install", Args: map[string]string{"pkg": "redis"}}}},
 	}
-	reports := Run(plan, inv, "/bin/agent", "apply", dial, nil, nil, nil, nil)
+	reports := Run(plan, inv, "/bin/agent", "apply", dial, nil, nil, nil)
 
 	if len(reports) != 2 {
 		t.Fatalf("want 2 block reports, got %d", len(reports))
@@ -63,7 +63,7 @@ func TestRun_ResolveErrorTyped(t *testing.T) {
 	plan := Plan{{Target: "all", Steps: []proto.Step{
 		{Instruction: "dir.owner", Refs: map[string]string{"owner": "missing"}},
 	}}}
-	reports := Run(plan, inv, "/bin/agent", "apply", dial, nil, nil, nil, nil)
+	reports := Run(plan, inv, "/bin/agent", "apply", dial, nil, nil, nil)
 
 	var re *ResolveError
 	if !errors.As(reports[0].Hosts[0].Err, &re) {
@@ -115,7 +115,7 @@ func TestRun_ResolvesVarsPerHost(t *testing.T) {
 	plan := Plan{{Target: "web", Steps: []proto.Step{
 		{Instruction: "dir.owner", Args: map[string]string{"path": "/opt"}, Refs: map[string]string{"owner": "owner"}},
 	}}}
-	Run(plan, inv, "/bin/agent", "apply", dial, map[string]string{}, nil, nil, nil)
+	Run(plan, inv, "/bin/agent", "apply", dial, map[string]string{}, nil, nil)
 
 	if !strings.Contains(string(reqs["web1"]), `"owner":"alice"`) {
 		t.Fatalf("web1 request should resolve owner=alice: %s", reqs["web1"])

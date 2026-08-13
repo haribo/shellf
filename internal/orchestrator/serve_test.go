@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"encoding/base64"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -140,5 +141,69 @@ func TestAllowed_AbsoluteDeclaration(t *testing.T) {
 	m := ask(t, NewAllowed("/some/other/plan/dir", []string{"file.read:" + abs}), "file.read:"+abs)
 	if m.Error != "" {
 		t.Fatalf("an absolute declaration must resolve: %s", m.Error)
+	}
+}
+
+// #334: rendering runs here, on the control host, because the host's variables live
+// here and never travel. The agent sends content and gets the substituted result.
+func TestServe_Render(t *testing.T) {
+	allow := NewAllowed(t.TempDir(), nil)
+	allow.Render = func(content string) (string, error) {
+		return strings.ReplaceAll(content, "@{who}", "web1"), nil
+	}
+
+	agent, control, done := chanPair()
+	defer done()
+	go func() { _ = Serve(control, allow) }()
+
+	payload := base64.StdEncoding.EncodeToString([]byte("host = @{who}"))
+	if err := agent.Send(proto.Msg{Kind: proto.KindAsk, ID: "1", Resource: "file.render:", Data: payload}); err != nil {
+		t.Fatal(err)
+	}
+	m, err := agent.Recv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Error != "" {
+		t.Fatalf("render must answer: %s", m.Error)
+	}
+	got, _ := base64.StdEncoding.DecodeString(m.Data)
+	if string(got) != "host = web1" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+// A run whose plan never renders has no renderer; asking anyway must say so rather than
+// answer empty content, which would deliver a blank file and report success.
+func TestServe_RenderWithoutRendererFails(t *testing.T) {
+	agent, control, done := chanPair()
+	defer done()
+	go func() { _ = Serve(control, NewAllowed(t.TempDir(), nil)) }()
+
+	_ = agent.Send(proto.Msg{Kind: proto.KindAsk, ID: "1", Resource: "file.render:", Data: ""})
+	m, err := agent.Recv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Error == "" {
+		t.Fatal("a render with no renderer must fail, not answer empty")
+	}
+}
+
+// A renderer that fails — an undefined variable — surfaces as an error, so the job
+// halts instead of writing a file with a hole in it.
+func TestServe_RenderErrorSurfaces(t *testing.T) {
+	allow := NewAllowed(t.TempDir(), nil)
+	allow.Render = func(string) (string, error) { return "", errors.New(`undefined variable "nope"`) }
+
+	agent, control, done := chanPair()
+	defer done()
+	go func() { _ = Serve(control, allow) }()
+
+	_ = agent.Send(proto.Msg{Kind: proto.KindAsk, ID: "1", Resource: "file.render:",
+		Data: base64.StdEncoding.EncodeToString([]byte("v = @{nope}"))})
+	m, _ := agent.Recv()
+	if m.Error == "" || !strings.Contains(m.Error, "nope") {
+		t.Fatalf("the failure must name the variable: %q", m.Error)
 	}
 }

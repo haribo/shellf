@@ -211,8 +211,7 @@ func runCmd(args []string) {
 		}
 	}
 
-	render := templateRenderer(planDir)
-	printReports(orchestrator.Run(plan, inv, self, mode, dial, baseVars, setVars, defsSrc, render), secretValues)
+	printReports(orchestrator.Run(plan, inv, self, mode, dial, baseVars, setVars, defsSrc), secretValues)
 }
 
 // mergeVars layers the variable tables the way the orchestrator does: globals, then the
@@ -230,12 +229,9 @@ func mergeVars(base, host, set map[string]string) map[string]string {
 // usesRender reports whether any def calls ~file.render, which needs the channel even
 // when the plan declares no `%"…"` path of its own.
 func usesRender(defs map[string]lang.Def) bool {
-	for _, d := range defs {
-		if strings.Contains(d.Source, "~file.render") {
-			return true
-		}
-	}
-	return false
+	// Walks the parsed defs, not their source text: ParseDefs does not populate Source,
+	// so a text search silently reported "no render" and left the run without a channel.
+	return lang.UsesPrimitive(defs, "file.render")
 }
 
 // parseDefsFor re-parses the shipped def sources so their `%` occurrences can be
@@ -459,13 +455,6 @@ func expandTree(srcRoot, dstRoot string) ([]proto.Step, error) {
 
 // templateRenderer builds the per-host renderer the orchestrator injects
 // (ADR-0024): it reads a template `src` relative to the plan dir and interpolates
-// `@{var}` over the host's vars. `src` stays a control-host path.
-func templateRenderer(planDir string) orchestrator.TemplateRenderer {
-	return func(src string, vars map[string]string) (string, error) {
-		return renderTemplate(srcPath(planDir, src), vars)
-	}
-}
-
 func renderTemplate(path string, vars map[string]string) (string, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -829,8 +818,7 @@ func statusCmd(args []string) {
 			KnownHosts: *knownHosts, Insecure: *insecure,
 		}
 	}
-	render := templateRenderer(filepath.Dir(fs.Arg(0)))
-	fmt.Print(redact(statusReport(orchestrator.Run(plan, inv, self, "status", dial, base, secrets, defsSrc, render)), secretValues))
+	fmt.Print(redact(statusReport(orchestrator.Run(plan, inv, self, "status", dial, base, secrets, defsSrc)), secretValues))
 }
 
 // statusReport renders the per-host state report: one line per resource, with a
