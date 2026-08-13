@@ -1,6 +1,9 @@
 package lang
 
 import (
+	"errors"
+
+	"shellf/internal/engine"
 	"strings"
 	"testing"
 )
@@ -73,5 +76,88 @@ func TestControl_PercentInsideAStringIsNotAMarker(t *testing.T) {
 	// It parsed as a plain string: no ControlPath node anywhere.
 	if strings.Contains(defs[0].Source, "ControlPath") {
 		t.Fatal("a percent inside a string must stay data")
+	}
+}
+
+// evalDef with a control-host fetcher, so the primitives can be exercised without the
+// whole channel behind them.
+func evalWithFetch(t *testing.T, src, entry string, args map[string]string, fetch ControlFetcher) (engine.Result, error) {
+	t.Helper()
+	defs, err := ParseDefs(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]Def{}
+	for _, d := range defs {
+		byName[d.Name] = d
+	}
+	resolve := func(n string) (Def, bool) { d, ok := byName[n]; return d, ok }
+	return EvalDefWith(byName[entry], args, nil, noopExec{}, engine.Apply, resolve, []string{entry}, fetch)
+}
+
+type noopExec struct{}
+
+func (noopExec) Shell(string, engine.Env) engine.ShellResult { return engine.ShellResult{} }
+func (noopExec) As(string) engine.Executor                   { return noopExec{} }
+func (noopExec) Using(string) engine.Executor                { return noopExec{} }
+
+func TestControl_ReadAsksTheControlHost(t *testing.T) {
+	var asked string
+	fetch := func(r string) ([]byte, error) { asked = r; return []byte("contents"), nil }
+
+	_, err := evalWithFetch(t, `def t(p: str) { apply { x = %file.read(p) } }`, "t",
+		map[string]string{"p": "conf.j2"}, fetch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The primitive is part of the key, so listing a directory cannot be answered with
+	// a file's contents.
+	if asked != "file.read:conf.j2" {
+		t.Fatalf("the resource key must carry the primitive: %q", asked)
+	}
+}
+
+func TestControl_RenderSubstitutesTheDefScope(t *testing.T) {
+	fetch := func(string) ([]byte, error) { return []byte("port = @{port}"), nil }
+	src := `def t(p: str, port: str) { apply { x = %file.render(%file.read(p)) return ok.done } }`
+	res, err := evalWithFetch(t, src, "t", map[string]string{"p": "c.j2", "port": "8080"}, fetch)
+	if err != nil {
+		t.Fatalf("render must resolve against the def's own scope: %v", err)
+	}
+	if res.String() != "ok.done" {
+		t.Fatalf("got %s", res.String())
+	}
+}
+
+// A refusal from the control host surfaces as an evaluation failure naming it, never as
+// empty content — which would deliver a truncated file and report success.
+func TestControl_FetchErrorSurfaces(t *testing.T) {
+	fetch := func(string) ([]byte, error) { return nil, errors.New(`refused: "x" was not declared`) }
+	_, err := evalWithFetch(t, `def t(p: str) { apply { x = %file.read(p) } }`, "t",
+		map[string]string{"p": "x"}, fetch)
+	if err == nil || !strings.Contains(err.Error(), "refused") {
+		t.Fatalf("a refusal must surface: %v", err)
+	}
+}
+
+func TestControl_NoFetcherFails(t *testing.T) {
+	_, err := evalWithFetch(t, `def t(p: str) { apply { x = %file.read(p) } }`, "t",
+		map[string]string{"p": "x"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "file.read") {
+		t.Fatalf("no channel must fail naming the primitive: %v", err)
+	}
+}
+
+// A control-host path literal is data until a primitive reads it.
+func TestControl_PathLiteralIsInterpolated(t *testing.T) {
+	var asked string
+	fetch := func(r string) ([]byte, error) { asked = r; return []byte("x"), nil }
+	_, err := evalWithFetch(t, `def t(name: str) { apply { x = %file.read(%"conf/${name}.j2") } }`, "t",
+		map[string]string{"name": "web"}, fetch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asked != "file.read:conf/web.j2" {
+		t.Fatalf("a control path must interpolate like any string: %q", asked)
 	}
 }
