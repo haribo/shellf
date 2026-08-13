@@ -17,14 +17,14 @@ import (
 // The returned error is an evaluation failure (unbound var, unsupported
 // construct) — distinct from an `err.*` Result, which is a normal outcome.
 func EvalDef(def Def, args, with map[string]string, ex engine.Executor, mode engine.Mode) (engine.Result, error) {
-	return EvalDefWith(def, args, with, ex, mode, nil, nil)
+	return EvalDefWith(def, args, with, ex, mode, nil, nil, nil)
 }
 
 // EvalDefWith is EvalDef with instruction calls enabled (ADR-0030): `resolve` looks a
 // callee up, `stack` is the chain that led here so a cycle names its path. A nil
 // resolver rejects any call, which is what a def evaluated in isolation (a unit test)
 // wants.
-func EvalDefWith(def Def, args, with map[string]string, ex engine.Executor, mode engine.Mode, resolve DefResolver, stack []string) (res engine.Result, err error) {
+func EvalDefWith(def Def, args, with map[string]string, ex engine.Executor, mode engine.Mode, resolve DefResolver, stack []string, fetch ControlFetcher) (res engine.Result, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			if ee, ok := r.(evalErr); ok {
@@ -39,7 +39,7 @@ func EvalDefWith(def Def, args, with map[string]string, ex engine.Executor, mode
 	// block's become (applied last). `As("")` is a no-op (ADR-0011).
 	ev := &evaluator{
 		ex: ex.As(def.Become).Using(def.Interp), vars: map[string]value{},
-		resolve: resolve, mode: mode, stack: stack,
+		resolve: resolve, mode: mode, stack: stack, fetch: fetch,
 	}
 	for k, v := range args {
 		ev.vars[k] = v
@@ -136,7 +136,13 @@ func retTag(def Def) string {
 
 // --- evaluator ---
 
-type value interface{} // string | int | bool | engine.ShellResult | engine.Result
+// Bytes is content read from the control host (ADR-0034 §4). Opaque on purpose: it can
+// be handed to an instruction and nothing else. Interpolating it, comparing it, or
+// printing it would treat binary as text, which is how a delivered image gets corrupted
+// silently.
+type Bytes []byte
+
+type value interface{} // string | int | bool | Bytes | engine.ShellResult | engine.Result
 
 type evalErr struct{ err error }
 
@@ -150,6 +156,7 @@ type evaluator struct {
 	// evaluated in the caller's mode, which is what keeps `--check` inert. stack
 	// is the call chain, for a readable cycle error.
 	resolve DefResolver
+	fetch   ControlFetcher
 	mode    engine.Mode
 	stack   []string
 	acted   bool // a shell ran, or a callee reported changed (ADR-0030 §3)
@@ -158,6 +165,11 @@ type evaluator struct {
 // DefResolver resolves an instruction name to its def. The agent supplies it (user
 // defs first, then the stdlib), so `lang` needs no import of `std`.
 type DefResolver func(name string) (Def, bool)
+
+// ControlFetcher answers a `%` primitive by asking the control host (ADR-0031). The
+// agent supplies it; nil means no channel, and any `%` then fails naming the resource
+// rather than silently returning nothing.
+type ControlFetcher func(resource string) ([]byte, error)
 
 func (ev *evaluator) fail(format string, a ...any) {
 	panic(evalErr{fmt.Errorf(format, a...)})
@@ -273,7 +285,9 @@ func truthyStr(s string) bool {
 	return s != "" && s != "false" && s != "0"
 }
 
-// stringify renders a scalar value for the diff / the shell environment.
+// stringify renders a scalar value for the diff / the shell environment. Bytes are not
+// scalars and never reach here: callers reject them first, so binary content cannot be
+// silently mangled into a string.
 func stringify(v value) string {
 	switch t := v.(type) {
 	case string:
@@ -341,21 +355,8 @@ func (ev *evaluator) evalStmt(s Stmt) *Outcome {
 func (ev *evaluator) evalExpr(e Expr) value {
 	switch x := e.(type) {
 	case StrLit:
-		// `${name}` resolves against this def's scope — its params, its lets. A plan
-		// interpolates at parse time against globals; inside a def the values are only
-		// known at evaluation, so it happens here. Same sigil, same meaning, so an
-		// author does not have to know which side of the fence they are on (#296).
-		out, err := Interpolate(x.Value, func(n string) (string, bool) {
-			v, ok := ev.vars[n]
-			if !ok {
-				return "", false
-			}
-			return stringify(v), true
-		})
-		if err != nil {
-			ev.fail("%v", err)
-		}
-		return out
+		return ev.interpolate(x.Value)
+
 	case BoolLit:
 		return x.Value
 	case IntLit:
@@ -392,7 +393,14 @@ func (ev *evaluator) evalExpr(e Expr) value {
 		res := ev.ex.Using(x.Interp).Shell(x.Cmd, ev.shellEnv())
 		ev.last = res
 		return res
+	case ControlPath:
+		// A control-host path is data until a primitive reads it: `%"conf.j2"` names a
+		// file on the operator's machine, and only `%file.read` turns it into content.
+		return controlPath(ev.interpolate(x.Value))
 	case Call:
+		if x.Control {
+			return ev.evalControlCall(x)
+		}
 		return ev.evalCall(x)
 	}
 	ev.fail("unevaluable expression %T", e)
@@ -431,7 +439,7 @@ func (ev *evaluator) evalCall(c Call) value {
 	for i, a := range c.Args {
 		args[def.Params[i].Name] = stringify(ev.evalExpr(a))
 	}
-	res, err := EvalDefWith(def, args, nil, ev.ex, ev.mode, ev.resolve, append(ev.stack, c.Name))
+	res, err := EvalDefWith(def, args, nil, ev.ex, ev.mode, ev.resolve, append(ev.stack, c.Name), ev.fetch)
 	if err != nil {
 		ev.fail("%s: %v", c.Name, err)
 	}
@@ -444,6 +452,98 @@ func (ev *evaluator) evalCall(c Call) value {
 	ev.last = res
 	return res
 }
+
+// interpolate resolves `${name}` against this def's scope — its params, its lets. A
+// plan interpolates at parse time against globals; inside a def the values are only
+// known at evaluation, so it happens here. Same sigil, same meaning, so an author does
+// not have to know which side of the fence they are on (#296).
+func (ev *evaluator) interpolate(raw string) string {
+	out, err := Interpolate(raw, func(n string) (string, bool) {
+		v, ok := ev.vars[n]
+		if !ok {
+			return "", false
+		}
+		if b, isBytes := v.(Bytes); isBytes {
+			_ = b
+			ev.fail("%s holds control-host bytes, which cannot be interpolated into a string (ADR-0034)", n)
+		}
+		return stringify(v), true
+	})
+	if err != nil {
+		ev.fail("%v", err)
+	}
+	return out
+}
+
+// controlPath is the value a `%"…"` yields: a path on the control host, distinct from
+// an ordinary string so a primitive can require one and an instruction cannot be handed
+// one by mistake.
+type controlPath string
+
+// evalControlCall runs a `%` primitive by asking the control host (ADR-0034 §3, using
+// the channel of ADR-0031). It reads; it never acts.
+func (ev *evaluator) evalControlCall(c Call) value {
+	if ev.fetch == nil {
+		ev.fail("%%%s: no control host channel available for this run", c.Name)
+	}
+	if len(c.Args) != 1 {
+		ev.fail("%%%s takes exactly one argument", c.Name)
+	}
+	arg := ev.evalExpr(c.Args[0])
+
+	switch c.Name {
+	case "file.read", "dir.list":
+		// These name something on the control host, so a plain string is a mistake
+		// worth catching: `%file.read("conf.j2")` reads a target path by accident,
+		// `%file.read(%"conf.j2")` says what it means.
+		var path string
+		switch t := arg.(type) {
+		case controlPath:
+			path = string(t)
+		case string:
+			path = t // a def parameter already carrying a control-host path
+		default:
+			ev.fail("%%%s expects a path", c.Name)
+		}
+		b, err := ev.fetch(resourceKey(c.Name, path))
+		if err != nil {
+			ev.fail("%v", err)
+		}
+		return Bytes(b)
+
+	case "file.render":
+		// Render takes content, not a path — which is what lets a template whose source
+		// lives on the target be rendered too: `%file.render(shell { cat … })`.
+		var content string
+		switch t := arg.(type) {
+		case Bytes:
+			content = string(t)
+		case string:
+			content = t
+		case engine.ShellResult:
+			content = t.Stdout
+		default:
+			ev.fail("%%file.render expects content")
+		}
+		out, err := Template(content, func(n string) (string, bool) {
+			v, ok := ev.vars[n]
+			if !ok {
+				return "", false
+			}
+			return stringify(v), true
+		})
+		if err != nil {
+			ev.fail("%v", err)
+		}
+		return out
+	}
+	ev.fail("%%%s is not a control-host primitive", c.Name)
+	return nil
+}
+
+// resourceKey is what the control host is asked for. The primitive is part of the key
+// so listing a directory cannot be answered with a file's contents.
+func resourceKey(primitive, path string) string { return primitive + ":" + path }
 
 func (ev *evaluator) evalField(f Field) value {
 	recv := ev.evalExpr(f.Recv)
@@ -468,6 +568,12 @@ func (ev *evaluator) evalField(f Field) value {
 func (ev *evaluator) shellEnv() engine.Env {
 	env := engine.Env{}
 	for k, v := range ev.vars {
+		if _, isBytes := v.(Bytes); isBytes {
+			// Refuse rather than skip: silently omitting it makes `$k` an empty string
+			// in the shell, so a plan delivering a binary would "succeed" and write
+			// nothing. Bytes go to an instruction that takes them (ADR-0034 §4).
+			ev.fail("%s holds control-host bytes; pass it to an instruction, it cannot be a shell variable", k)
+		}
 		switch t := v.(type) {
 		case string:
 			env[k] = t

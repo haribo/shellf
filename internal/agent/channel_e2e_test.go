@@ -28,7 +28,7 @@ func TestChannelEndToEnd(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(planDir, "id_ed25519"), []byte("PRIVATE"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	allow := orchestrator.NewAllowed(planDir, []string{"conf.j2"})
+	allow := orchestrator.NewAllowed(planDir, []string{"file.read:conf.j2"})
 
 	// Agent side: listen, as ServeResident does.
 	ch, err := Listen(wd)
@@ -51,7 +51,7 @@ func TestChannelEndToEnd(t *testing.T) {
 	}()
 
 	// A declared resource comes back.
-	got, err := ch.Ask("conf.j2")
+	got, err := ch.Ask("file.read:conf.j2")
 	if err != nil {
 		t.Fatalf("a declared resource must reach the job: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestChannelEndToEnd(t *testing.T) {
 	}
 
 	// An undeclared one does not — this is the whole point of the allow-list.
-	if _, err := ch.Ask("id_ed25519"); err == nil {
+	if _, err := ch.Ask("file.read:id_ed25519"); err == nil {
 		t.Fatal("an undeclared resource must be refused end to end")
 	}
 }
