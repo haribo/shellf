@@ -161,3 +161,45 @@ func TestControl_PathLiteralIsInterpolated(t *testing.T) {
 		t.Fatalf("a control path must interpolate like any string: %q", asked)
 	}
 }
+
+// ADR-0034 §5: `%` occurrences are syntactic, which is what lets the control host build
+// ADR-0031's allow-list before sending. If this misses one, the job is refused at
+// runtime for a resource it legitimately needs.
+func TestControl_ResourcesAreExtractable(t *testing.T) {
+	defs, err := ParseDefs(`
+def a(dst: str) { apply { x = %file.render(%file.read(%"conf.j2")) } }
+def b() { observe { return state(there: %file.read(%"other.txt")) } }
+def c(p: str) { apply { if %dir.list(%"tree") { shell { echo hi } } } }
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]Def{}
+	for _, d := range defs {
+		byName[d.Name] = d
+	}
+
+	got := ControlResources(byName)
+	want := []string{"dir.list:tree", "file.read:conf.j2", "file.read:other.txt"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+// A path the target computes cannot be known before the run, so it is not in the set —
+// and the request it makes is refused by name rather than silently served.
+func TestControl_ComputedPathIsNotDeclared(t *testing.T) {
+	defs, err := ParseDefs(`def a(p: str) { apply { x = %file.read(p) } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]Def{"a": defs[0]}
+	if got := ControlResources(byName); len(got) != 0 {
+		t.Fatalf("a computed path must not enter the allow-list: %v", got)
+	}
+}
