@@ -54,6 +54,7 @@ precisely than "question" — the word ADR-0013 already uses for `dir.exists` an
 Rejected: the collision that motivated it is with the *mode*, and renaming the mode
 settles it. Renaming the phase as well would be a break that fixes nothing, and `check`
 is understood everywhere.
+
 ### 4. The mode becomes `--dry-run`
 
 `--preview` was the obvious candidate and is rejected: it repeats the mistake, since a
