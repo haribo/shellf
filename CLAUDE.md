@@ -1,6 +1,6 @@
 # Claude Guidelines — shellf
 
-AI directives only (guardrails, collaboration, doc references). Product design lives in `DESIGN.md` / `docs/`.
+AI directives only (guardrails, collaboration, doc references). Product design lives in `docs/`.
 Rules must be concise. One rule per line when possible.
 
 ## General
@@ -25,7 +25,7 @@ Rules must be concise. One rule per line when possible.
 ## Project status
 
 - **Implemented, integration phase.** The interpreter (lexer/parser/evaluator), SSH transport, the detached **resident** agent (ADR-0005), and an embedded stdlib all exist and are exercised end-to-end. `shellf` = working name, verified available.
-- Thesis: "Raw shell, but idempotent, previewable, fast." The shell is a first-class citizen, not the shameful escape hatch. Full spec: `DESIGN.md`; resolved decisions in `docs/adr/`.
+- Thesis: "Raw shell, but idempotent, previewable, fast." The shell is a first-class citizen, not the shameful escape hatch. Architecture and open holes: `docs/design.md`; language spec: `docs/language.md`; resolved decisions in `docs/adr/`.
 
 ## Design ↔ code
 
@@ -50,15 +50,16 @@ Rules must be concise. One rule per line when possible.
 
 ## Docs — read in order
 
-1. `DESIGN.md` — full spec: resolved decisions, primitives, open holes, apt-install example.
-2. `docs/CONVERSATION.md` — design-discussion history (the WHY).
-3. `docs/language.md` — language spec (stable primitives only).
+1. `docs/design.md` — WHY shellf is built this way: thesis, architectural bets, open holes. Not the language.
+2. `docs/language.md` — HOW to write shellf: the language spec. Current by definition.
+3. `docs/CONVERSATION.md` — the design discussion that produced it all (the WHY, historical).
+- History of decisions lives in `docs/adr/`, not in the docs above — each ADR carries its own rejected alternatives.
 - Documentation strategy: `docs/adr/0001-documentation-strategy.md`.
 - ADR lifecycle: never delete an ADR; a reversal is a **new** ADR, and both sides carry the link — `Superseded by ADR-NNN` on the old, `Supersedes ADR-MMM` on the new. A one-sided link is how the chain rots
 - An ADR whose decision no longer applies, with no replacement, is marked `Deprecated` — never edited away or moved
 - In-place edits only for corrections of form and for clarifications that do not change the decision
 - ADR lifecycle details and the full status vocabulary: see ADR-0001 §4
-- All docs under `docs/` (except root `DESIGN.md`/`README.md`). Decisions with rejected alternatives → `docs/adr/`.
+- All docs under `docs/`; the root keeps only what tooling and readers expect there (`README.md`, `CHANGELOG.md`, `CLAUDE.md`). Decisions with rejected alternatives → `docs/adr/`.
 
 ## Git
 
