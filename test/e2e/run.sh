@@ -85,6 +85,13 @@ printf '%s' "$out" | grep -q 'present: false → true' || fail "status should sh
 # primitive — so status needs the channel too. Without it every template reports
 # err.agent while the greps above still pass, which is how this was missed.
 printf '%s' "$out" | grep -q 'err.agent' && fail "status could not reach the control host (a def's observe failed)"
+# #338: status reports, it does not act (ADR-0013). It used to: the engine handled check
+# mode and fell through to apply, so every remaining Go instruction ran for real — this
+# very step printed `file.put(...) ok.written` and `shell(echo … > …) ok.ran` on a fresh
+# host. The assertion is on the target, not on the report: a report cannot prove nothing
+# was written.
+docker exec "$cname" test -e /tmp/shellf-e2e && fail "status created state on the target"
+printf '%s' "$out" | grep -qE 'ok\.(written|ran|created)' && fail "status reported an action it should only have previewed"
 
 say "2. apply provisions the marker tree (created/written)"
 out="$(run 2>&1)"; printf '%s\n' "$out"
