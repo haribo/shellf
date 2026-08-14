@@ -51,9 +51,9 @@ A def with no `apply` is unaffected: a question declares only `check`
 ([ADR-0035](0035-phases-and-modes.md)), and `observe` returns a `state(…)` record, not a
 verdict.
 
-### 2. A def delegates by calling outside any phase
+### 2. A def delegates to exactly one other def, outside any phase
 
-A def body may hold a call at **body level**, outside every phase:
+A def body may hold **one** call at body level, outside every phase:
 
 ```
 def template(src: str, dst: str) {
@@ -70,8 +70,10 @@ otherwise, and `would.written` in a dry-run that would act.
 This is the shape `apply` cannot have. `apply` means "the effectful pass"; a delegation
 has no pass of its own to run.
 
-**Exactly one call.** A second body-level call is a parse error pointing at `apply`. Two
-calls are not a delegation — a def cannot *be* two defs — and they have no single verdict:
+One call, and no more: that constraint is the decision, not a caveat on it. It is what
+separates a delegation from a sequence of effects. A second body-level call is a parse
+error pointing at `apply`, because two calls are not a delegation — a def cannot *be* two
+defs — and they have no single verdict:
 
 ```
 def write(name: str, content: str) as root {
@@ -83,8 +85,17 @@ def write(name: str, content: str) as root {
 There is no defensible answer to what that def reports. A sequence of effects is what
 `apply` is for, and that is where it stays.
 
-A def may still declare its own `check` alongside its delegation — argument validation
-belongs to the wrapper, and `check` runs in every mode (ADR-0035), so it keeps working.
+**A delegating def declares `check`, and nothing else.** Argument validation belongs to
+the wrapper — `sudo.write` refuses a bad name whoever ends up writing the file — and
+`check` runs in every mode (ADR-0035), so it composes with a delegation without
+competing with it.
+
+`observe`, `preview` and `apply` alongside a delegation are parse errors. Each of them
+would answer a question the callee already answers: `observe` decides convergence,
+`preview` describes the action, `apply` performs it. **You delegate the decision or you
+make it — not both.** An `observe` duplicating the callee's is exactly the duplication
+this record exists to remove; leaving it legal would recreate the `file.template`
+situation the delegation form was written for.
 
 ### 3. A delegation's arguments are read-only
 
@@ -122,7 +133,9 @@ observed behaviour, and observed behaviour changes without anyone deciding to.
 ## Consequences
 
 - **Parser** (`internal/lang/def_parser.go`): refuse an `apply` whose last statement is
-  not a `return`; accept a body-level call and refuse `shell` inside its arguments.
+  not a `return`; accept one body-level call, and refuse — each with a message naming the
+  fix — a second one, a `shell` inside its arguments, and an `observe`, `preview` or
+  `apply` declared beside it.
 - **Evaluator** (`internal/lang/eval.go`): a body-level call evaluates the callee in the
   caller's mode and yields its `engine.Result`, in all three modes.
 - **Stdlib**: `file.template` sheds the `observe` it grew in #334 and becomes the
