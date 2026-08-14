@@ -8,6 +8,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **BREAKING** — a project is laid out by type (ADR-0038): `plans/` holds what a run
+  invokes, `defs/<package>/` the reusable instructions, `assets/` the content a plan
+  delivers, `inventories/` the hosts. The anchor moves from the invoked plan's directory
+  to the project root, so a def is addressed by name (`defs/toto/` → `toto.write`) and a
+  content path is relative to `assets/` — `%"toto/tutu/titi.txt"`, with no `../` from
+  wherever the plan happens to sit. A plan's siblings are no longer defs, and a control-
+  host path resolving outside `assets/` is refused. Running a plan from outside a project
+  fails naming the layout. `shellf.lock` moves to the project root, where it belongs: it
+  pins what the project depends on (#355).
 - **BREAKING** — an `apply` must end with a `return` naming what it did (ADR-0037 §1,
   reversing ADR-0007 §4). The implicit tag-less `ok` made a forgotten `return` and a
   deliberate "nothing to declare" report identically, so an omission read as a success.
