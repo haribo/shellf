@@ -94,8 +94,8 @@ func TestComposition(t *testing.T) {
 		resp := serveComp(t, f, proto.Request{
 			Mode: "apply",
 			Defs: map[string]string{
-				"leaf":   `def leaf(path: str) { apply { shell { touch "$path" } } }`,
-				"caller": `def caller(p: str) { apply { leaf(p) } }`,
+				"leaf":   `def leaf(path: str) { apply { shell { touch "$path" } return ok.done } }`,
+				"caller": `def caller(p: str) { apply { leaf(p) return ok.done } }`,
 			},
 			Steps: []proto.Step{{Instruction: "caller", Args: map[string]string{"p": "/tmp/x"}}},
 		})
@@ -115,8 +115,8 @@ func TestComposition(t *testing.T) {
 		serveComp(t, f, proto.Request{
 			Mode: "apply",
 			Defs: map[string]string{
-				"leaf":   `def leaf(mine: str) { apply { shell { echo "$mine" "$secret" } } }`,
-				"caller": `def caller(x: str) { apply { secret = "leaked" leaf(x) } }`,
+				"leaf":   `def leaf(mine: str) { apply { shell { echo "$mine" "$secret" } return ok.done } }`,
+				"caller": `def caller(x: str) { apply { secret = "leaked" leaf(x) return ok.done } }`,
 			},
 			Steps: []proto.Step{{Instruction: "caller", Args: map[string]string{"x": "ok"}}},
 		})
@@ -138,8 +138,8 @@ func TestComposition(t *testing.T) {
 		resp := serveComp(t, f, proto.Request{
 			Mode: "apply",
 			Defs: map[string]string{
-				"leaf":   `def leaf(path: str) { observe { return state(there: shell { test -f "$path" }.exit == 0) } apply { shell { touch "$path" } } }`,
-				"caller": `def caller(p: str) { apply { leaf(p) } }`,
+				"leaf":   `def leaf(path: str) { observe { return state(there: shell { test -f "$path" }.exit == 0) } apply { shell { touch "$path" } return ok.done } }`,
+				"caller": `def caller(p: str) { apply { leaf(p) return ok.done } }`,
 			},
 			Steps: []proto.Step{{Instruction: "caller", Args: map[string]string{"p": "/tmp/x"}}},
 		})
@@ -158,7 +158,7 @@ func TestComposition(t *testing.T) {
 			Mode: "apply",
 			Defs: map[string]string{
 				"leaf":   `def leaf(path: str) { apply { shell { touch "$path" } return ok.written } }`,
-				"caller": `def caller(p: str) { apply { leaf(p) } }`,
+				"caller": `def caller(p: str) { apply { leaf(p) return ok.done } }`,
 			},
 			Steps: []proto.Step{{Instruction: "caller", Args: map[string]string{"p": "/tmp/x"}}},
 		})
@@ -174,8 +174,8 @@ func TestComposition(t *testing.T) {
 		resp := serveComp(t, f, proto.Request{
 			Mode: "apply",
 			Defs: map[string]string{
-				"leaf":   `def leaf() { apply { r = shell { false } if !r { return err.runtime(r) } } }`,
-				"caller": `def caller() { apply { leaf() shell { touch "/tmp/after" } } }`,
+				"leaf":   `def leaf() { apply { r = shell { false } if !r { return err.runtime(r) } return ok.done } }`,
+				"caller": `def caller() { apply { leaf() shell { touch "/tmp/after" } return ok.done } }`,
 			},
 			Steps: []proto.Step{{Instruction: "caller"}},
 		})
@@ -194,8 +194,8 @@ func TestComposition(t *testing.T) {
 		serveComp(t, f, proto.Request{
 			Mode: "check",
 			Defs: map[string]string{
-				"leaf":   `def leaf(path: str) { apply { shell { touch "$path" } } }`,
-				"caller": `def caller(p: str) { apply { leaf(p) } }`,
+				"leaf":   `def leaf(path: str) { apply { shell { touch "$path" } return ok.done } }`,
+				"caller": `def caller(p: str) { apply { leaf(p) return ok.done } }`,
 			},
 			Steps: []proto.Step{{Instruction: "caller", Args: map[string]string{"p": "/tmp/x"}}},
 		})
@@ -210,8 +210,8 @@ func TestComposition(t *testing.T) {
 		resp := serveComp(t, f, proto.Request{
 			Mode: "apply",
 			Defs: map[string]string{
-				"a": `def a() { apply { b() } }`,
-				"b": `def b() { apply { a() } }`,
+				"a": `def a() { apply { b() return ok.done } }`,
+				"b": `def b() { apply { a() return ok.done } }`,
 			},
 			Steps: []proto.Step{{Instruction: "a"}},
 		})
@@ -235,7 +235,7 @@ func TestComposition(t *testing.T) {
 		resp := serveComp(t, f, proto.Request{
 			Mode: "apply",
 			Defs: map[string]string{
-				"caller": `def caller(p: str) { apply { file.write(p, "x") } }`,
+				"caller": `def caller(p: str) { apply { file.write(p, "x") return ok.done } }`,
 			},
 			Steps: []proto.Step{{Instruction: "caller", Args: map[string]string{"p": "/tmp/x"}}},
 		})
@@ -253,8 +253,8 @@ func TestComposition(t *testing.T) {
 		serveComp(t, f, proto.Request{
 			Mode: "apply",
 			Defs: map[string]string{
-				"leaf":   `def leaf(got: str) { apply { shell { echo "$got" } } }`,
-				"caller": `def caller(name: str) { apply { leaf("/etc/${name}.conf") } }`,
+				"leaf":   `def leaf(got: str) { apply { shell { echo "$got" } return ok.done } }`,
+				"caller": `def caller(name: str) { apply { leaf("/etc/${name}.conf") return ok.done } }`,
 			},
 			Steps: []proto.Step{{Instruction: "caller", Args: map[string]string{"name": "app"}}},
 		})

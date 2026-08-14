@@ -176,7 +176,7 @@ func TestReportText(t *testing.T) {
 func TestLoadPlanPackage(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "plan.shellf", `on web { mark("/x", "hi") }`)
-	writeFile(t, dir, "mark.shellf", `def mark(path: str, content: str) { apply { shell { echo hi } } }`)
+	writeFile(t, dir, "mark.shellf", `def mark(path: str, content: str) { apply { shell { echo hi } return ok.done } }`)
 	writeFile(t, dir, "inventory.shellf", `host web = { address: "1.1.1.1", user: "u" }`)
 	writeFile(t, dir, "notes.txt", "not a shellf file")
 
@@ -204,7 +204,7 @@ func TestLoadPlanPackage(t *testing.T) {
 func TestPackageLibs_ExcludesPlanAndInventory(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "plan.shellf", `on web { }`)
-	writeFile(t, dir, "lib.shellf", `def a() { apply { shell { echo hi } } }`)
+	writeFile(t, dir, "lib.shellf", `def a() { apply { shell { echo hi } return ok.done } }`)
 	writeFile(t, dir, "inventory.shellf", `host web = { address: "x", user: "u" }`)
 
 	libs, err := packageLibs(filepath.Join(dir, "plan.shellf"), filepath.Join(dir, "inventory.shellf"))
@@ -223,7 +223,7 @@ func TestReadImports(t *testing.T) {
 	if err := os.Mkdir(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(sub, "h.shellf"), []byte(`def helper() { apply { shell { echo hi } } }`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(sub, "h.shellf"), []byte(`def helper() { apply { shell { echo hi } return ok.done } }`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	planSrc, _ := os.ReadFile(filepath.Join(dir, "plan.shellf"))
@@ -311,7 +311,7 @@ func TestReadImports_RemoteModule(t *testing.T) {
 	repo := t.TempDir()
 	gitRun(t, repo, "init", "-q", "-b", "main")
 	if err := os.WriteFile(filepath.Join(repo, "web.shellf"),
-		[]byte(`def deploy(port: str) { apply { shell { echo "$port" } } }`), 0o600); err != nil {
+		[]byte(`def deploy(port: str) { apply { shell { echo "$port" } return ok.done } }`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	gitRun(t, repo, "add", ".")
@@ -690,7 +690,7 @@ func TestRenameTable_TargetsResolve(t *testing.T) {
 // than the refusal the request will get.
 func TestParseDefsFor(t *testing.T) {
 	got := parseDefsFor(map[string]string{
-		"a":      `def a(p: str) { apply { x = ~file.read(%"conf.j2") } }`,
+		"a":      `def a(p: str) { apply { x = ~file.read(%"conf.j2") return ok.done } }`,
 		"broken": `def b( {`,
 	})
 	if _, ok := got["a"]; !ok {
@@ -744,13 +744,13 @@ func TestRemovedFlag(t *testing.T) {
 // renderer at runtime.
 func TestUsesRender(t *testing.T) {
 	renders := parseDefsFor(map[string]string{
-		"t": `def t(c: str) { apply { x = ~file.render(c) } }`,
+		"t": `def t(c: str) { apply { x = ~file.render(c) return ok.done } }`,
 	})
 	if !usesRender(renders) {
 		t.Fatal("a def calling ~file.render must require the channel")
 	}
 	plain := parseDefsFor(map[string]string{
-		"t": `def t(p: str) { apply { shell { echo "$p" } } }`,
+		"t": `def t(p: str) { apply { shell { echo "$p" } return ok.done } }`,
 	})
 	if usesRender(plain) {
 		t.Fatal("a def that never renders must not force a channel open")

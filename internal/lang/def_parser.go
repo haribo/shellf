@@ -16,7 +16,7 @@ var phaseNames = map[string]bool{
 // "unknown" (ADR-0035). They are not accepted — the plan still fails.
 var removedPhases = map[string]string{
 	"check": "folded into `check` (ADR-0035); rename the phase",
-	"post":      "removed (ADR-0035); it was never used and had no settled meaning",
+	"post":  "removed (ADR-0035); it was never used and had no settled meaning",
 }
 var categories = map[string]bool{"ok": true, "err": true, "would": true}
 
@@ -64,13 +64,85 @@ func (p *parser) def() Def {
 			p.fail("phase %q: %s", p.tok.val, removedPhases[p.tok.val])
 		case p.tok.kind == tIdent && p.tok.val == "return":
 			p.fail("`return` must be inside a phase, not at def top level (ADR-0007)")
+		case p.tok.kind == tIdent && p.peekIsCall():
+			// A call outside every phase: a delegation (ADR-0037 §2). Gated on the
+			// lookahead so an unknown phase name still gets "expected a phase, got
+			// %q" — without it, `badphase { … }` reads as a call and fails two tokens
+			// later on the brace, which says nothing about what is wrong.
+			if d.Delegate != nil {
+				p.fail("a def delegates to exactly one other def; a second call belongs in `apply` (ADR-0037)")
+			}
+			e := p.expr()
+			c, ok := e.(Call)
+			if !ok {
+				p.fail("expected a phase or a call to delegate to, got %q", p.tok.val)
+			}
+			d.Delegate = &c
 		default:
 			p.fail("expected a phase, got %q", p.tok.val)
 		}
 	}
 	p.expect(tRBrace, "}")
+	if d.Delegate != nil {
+		p.checkDelegation(d)
+	} else {
+		p.checkApplyReturns(d)
+	}
 	d.Return = nominalReturn(d)
 	return d
+}
+
+// checkDelegation enforces what may sit beside a delegation (ADR-0037 §2 and §3).
+func (p *parser) checkDelegation(d Def) {
+	for _, ph := range d.Phases {
+		if ph.Name != "check" {
+			// You delegate the decision or you make it. An `observe` next to a
+			// delegation duplicates the callee's, which is the duplication the form
+			// exists to remove; `apply` and `preview` describe an action the callee
+			// already owns.
+			p.fail("a def that delegates may only declare `check`, not %q — delegate the decision or make it (ADR-0037)", ph.Name)
+		}
+	}
+	// The arguments are evaluated in every mode, `--dry-run` included, because the
+	// callee's `observe` needs their value to decide whether it is already in sync. A
+	// `shell` there would run for real during a dry-run.
+	for _, a := range d.Delegate.Args {
+		if hasShell(a) {
+			p.fail("a delegation's arguments may not run a shell: they are evaluated in `--dry-run` too (ADR-0037)")
+		}
+	}
+}
+
+// hasShell reports whether an expression runs a shell anywhere inside it.
+func hasShell(e Expr) bool {
+	switch t := e.(type) {
+	case ShellExpr:
+		return true
+	case Call:
+		for _, a := range t.Args {
+			if hasShell(a) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// checkApplyReturns enforces ADR-0037 §1: an `apply` names its verdict. The implicit
+// tag-less `ok` it replaces (ADR-0007 §4) made a forgotten `return` read as a success.
+func (p *parser) checkApplyReturns(d Def) {
+	for _, ph := range d.Phases {
+		if ph.Name != "apply" {
+			continue
+		}
+		n := len(ph.Stmts)
+		if n == 0 {
+			p.fail("`apply` is empty: end it with a `return ok.<tag>` (ADR-0037)")
+		}
+		if _, ok := ph.Stmts[n-1].(ReturnStmt); !ok {
+			p.fail("`apply` must end with a `return ok.<tag>` saying what it did (ADR-0037)")
+		}
+	}
 }
 
 // nominalReturn is the outcome a def yields when apply runs to completion: the
@@ -223,6 +295,24 @@ func (p *parser) unary() Expr {
 
 // peekQualifiedCall reports whether the current `.` starts a qualified instruction
 // name rather than a field access: it does when an identifier follows and then a `(`.
+// peekIsCall reports whether the ident under the cursor starts a call — `name(` or a
+// qualified `pkg.name(`. It exists so a def body can tell a delegation from a phase name
+// without consuming anything.
+func (p *parser) peekIsCall() bool {
+	save := *p.lex
+	tok := p.tok
+	defer func() { *p.lex, p.tok = save, tok }()
+	p.adv()
+	if p.tok.kind == tDot { // qualified: pkg.name(
+		p.adv()
+		if p.tok.kind != tIdent {
+			return false
+		}
+		p.adv()
+	}
+	return p.tok.kind == tLParen
+}
+
 func (p *parser) peekQualifiedCall() bool {
 	save := *p.lex
 	tok := p.tok
@@ -358,7 +448,7 @@ func (p *parser) primary() Expr {
 }
 
 func (p *parser) shellExpr() Expr {
-	interp := p.shellInterp() // optional `shell(<interp>)` (ADR-0012)
+	interp := p.shellInterp()         // optional `shell(<interp>)` (ADR-0012)
 	body, err := p.lex.rawShellBody() // lexer sits right after "shell" / its interp
 	if err != nil {
 		panic(parseErr{err})

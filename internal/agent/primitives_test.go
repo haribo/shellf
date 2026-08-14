@@ -63,7 +63,7 @@ func TestPrimitives_ReadReachesTheControlHost(t *testing.T) {
 	resp := serveCompCh(t, f, ch, proto.Request{
 		Mode: "apply",
 		Defs: map[string]string{
-			"deliver": `def deliver(src: str, port: str) { apply { out = ~file.render(~file.read(src)) shell { printf '%s' "$out" } } }`,
+			"deliver": `def deliver(src: str, port: str) { apply { out = ~file.render(~file.read(src)) shell { printf '%s' "$out" } return ok.done } }`,
 		},
 		Steps: []proto.Step{{Instruction: "deliver", Args: map[string]string{
 			"src": filepath.Join(planDir, "conf.j2"), "port": "8080",
@@ -90,7 +90,7 @@ func TestPrimitives_UndeclaredIsRefused(t *testing.T) {
 	resp := serveCompCh(t, f, ch, proto.Request{
 		Mode: "apply",
 		Defs: map[string]string{
-			"steal": `def steal(src: str) { apply { x = ~file.read(src) } }`,
+			"steal": `def steal(src: str) { apply { x = ~file.read(src) return ok.done } }`,
 		},
 		Steps: []proto.Step{{Instruction: "steal", Args: map[string]string{
 			"src": filepath.Join(planDir, "id_ed25519"),
@@ -114,7 +114,7 @@ func TestPrimitives_NoChannelFailsLoudly(t *testing.T) {
 	f := newComp()
 	resp := serveComp(t, f, proto.Request{
 		Mode:  "apply",
-		Defs:  map[string]string{"r": `def r(src: str) { apply { x = ~file.read(src) } }`},
+		Defs:  map[string]string{"r": `def r(src: str) { apply { x = ~file.read(src) return ok.done } }`},
 		Steps: []proto.Step{{Instruction: "r", Args: map[string]string{"src": "conf.j2"}, Control: []string{"src"}}},
 	})
 	if resp.Results[0].Category != "err" {
@@ -137,7 +137,7 @@ func TestPrimitives_RenderContentFromTheTarget(t *testing.T) {
 	resp := serveCompCh(t, f, wire(t, t.TempDir(), nil, map[string]string{"h": "web1"}), proto.Request{
 		Mode: "apply",
 		Defs: map[string]string{
-			"r": `def r(h: str) { apply { out = ~file.render(shell { cat /etc/model.j2 }) shell { echo "$out" } } }`,
+			"r": `def r(h: str) { apply { out = ~file.render(shell { cat /etc/model.j2 }) shell { echo "$out" } return ok.done } }`,
 		},
 		Steps: []proto.Step{{Instruction: "r", Args: map[string]string{"h": "web1"}}},
 	})
@@ -161,7 +161,7 @@ func TestPrimitives_BytesCannotBeInterpolated(t *testing.T) {
 	resp := serveCompCh(t, newComp(), ch, proto.Request{
 		Mode: "apply",
 		Defs: map[string]string{
-			"b": `def b(src: str) { apply { raw = ~file.read(src) shell { echo "${raw}" } } }`,
+			"b": `def b(src: str) { apply { raw = ~file.read(src) shell { echo "${raw}" } return ok.done } }`,
 		},
 		Steps: []proto.Step{{Instruction: "b", Args: map[string]string{
 			"src": filepath.Join(planDir, "logo.png"),
@@ -176,7 +176,7 @@ func TestPrimitives_BytesCannotBeInterpolated(t *testing.T) {
 func TestPrimitives_ArityIsChecked(t *testing.T) {
 	resp := serveCompCh(t, newComp(), wire(t, t.TempDir(), nil, map[string]string{"h": "web1"}), proto.Request{
 		Mode:  "apply",
-		Defs:  map[string]string{"a": `def a() { apply { x = ~file.read() } }`},
+		Defs:  map[string]string{"a": `def a() { apply { x = ~file.read() return ok.done } }`},
 		Steps: []proto.Step{{Instruction: "a"}},
 	})
 	if resp.Results[0].Category != "err" {

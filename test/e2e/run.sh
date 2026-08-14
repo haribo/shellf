@@ -134,6 +134,18 @@ if printf '%s' "$out" | grep -qE 'created|written'; then
   fail "re-apply mutated; expected a no-op"
 fi
 
+say "3b. --dry-run on a converged host announces nothing (#339)"
+# The reason the delegation form exists (ADR-0037 §2). `file.template` is now `file.write`
+# with rebound arguments, so the callee's `observe` runs in check mode and answers. Placed
+# in an `apply`, that call would be skipped in `--dry-run` and the preview would announce
+# a write that would not happen — which is exactly what step 1 asserts on a *fresh* host,
+# and what nothing asserted on a converged one.
+out="$(run --dry-run 2>&1)"; printf '%s\n' "$out"
+printf '%s' "$out" | grep -q 'file.template.*ok.already' || fail "a converged template must preview as already, not would"
+if printf '%s' "$out" | grep -qE 'file\.template.*would'; then
+  fail "a converged template must not preview a write"
+fi
+
 say "4. status reports the converged state (no drift arrows)"
 out="$("$work/shellf" status --inventory "$work/inventory.shellf" --insecure --secret-file apisecret="$work/secret" "$here/plan.shellf" 2>&1)"
 printf '%s\n' "$out"

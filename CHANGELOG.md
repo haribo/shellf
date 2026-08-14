@@ -8,6 +8,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **BREAKING** — an `apply` must end with a `return` naming what it did (ADR-0037 §1,
+  reversing ADR-0007 §4). The implicit tag-less `ok` made a forgotten `return` and a
+  deliberate "nothing to declare" report identically, so an omission read as a success.
+  No stdlib def relied on it — all 31 `apply` blocks already returned — and the error
+  names the fix.
 - **BREAKING** — `~` now marks a primitive and `%` marks a control-host path
   (ADR-0036); `%file.read(…)` becomes `~file.read(…)`. One marker could not express a
   primitive that writes on the target, which is what `~file.write` does. The old
@@ -15,6 +20,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A def can **delegate**: one call outside every phase, and the def *is* that def with
+  rebound arguments (ADR-0037 §2). The callee's own phases then run in every mode, which
+  an `apply` cannot do — `apply` is skipped in `--dry-run`, so a wrapper calling from
+  there lost the callee's `check` and `observe` and previewed a write on a host it would
+  not touch. `file.template` is the form's first user: three lines, and it sheds the
+  `observe` it had to grow in #334 to re-decide what `file.write` already knew. Exactly
+  one call, only `check` beside it, and no `shell` in its arguments — each a parse error
+  naming the rule (#339).
 - `~file.render` now runs on the control host, over the target's own variable set, so a
   template substitutes per host as before (ADR-0024). `file.template` is therefore an
   ordinary def over `~file.read` + `~file.render` + `~file.write`, and the Go

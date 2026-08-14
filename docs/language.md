@@ -39,6 +39,40 @@ A `def` declares phases; a run picks a mode. Which phases a mode runs (ADR-0035)
 state; equal to the desired one means the apply is skipped. `preview` describes what the
 apply would do and runs only in `--dry-run`. `apply` acts.
 
+An `apply` **must end with a `return`** naming what it did (ADR-0037 §1):
+
+```
+apply {
+    r = shell { apt-get install -y "$pkg" }
+    if !r { return err.runtime(r) }
+    return ok.installed          # required: the verdict is never implicit
+}
+```
+
+## Delegation — a def that *is* another def (ADR-0037 §2)
+
+A def may hold **one** call outside every phase. It then *is* that def with rebound
+arguments: the callee's own phases run, in every mode.
+
+```
+def template(src: str, dst: str) {
+    file.write(dst, ~file.render(~file.read(src)))
+}
+```
+
+Why not put the call in `apply`: the table above says `apply` does not run in
+`--dry-run`. A call placed there loses the callee's `check` and `observe`, so a wrapper
+previews a write on a host it would not touch. A delegation keeps them.
+
+Three rules, each a parse error when broken:
+
+- **Exactly one call.** Two calls are a sequence of effects, which is what `apply` is for
+  — and they have no single verdict.
+- **Only `check` beside it.** `observe`, `preview` and `apply` each answer a question the
+  callee already answers. You delegate the decision or you make it.
+- **No `shell` in the arguments.** They are evaluated in `--dry-run` too, because the
+  callee's `observe` needs their value; a shell there would run for real.
+
 ## `shell` — run shell
 
 A `shell { … }` block sends its body to `/bin/sh -c` (POSIX, not bash) and returns a `ShellResult`.

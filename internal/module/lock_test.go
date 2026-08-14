@@ -61,7 +61,7 @@ func taggedRepo(t *testing.T, body string) string {
 }
 
 func TestResolveLocked_RecordsThenVerifies(t *testing.T) {
-	repo := taggedRepo(t, `def deploy(port: str) { apply { shell { echo "$port" } } }`)
+	repo := taggedRepo(t, `def deploy(port: str) { apply { shell { echo "$port" } return ok.done } }`)
 	cache := t.TempDir()
 	spec := Spec{Path: "file://" + repo, Version: "v1.0.0"}
 	lock := Lock{}
@@ -82,7 +82,7 @@ func TestResolveLocked_RecordsThenVerifies(t *testing.T) {
 }
 
 func TestResolveLocked_ContentMismatch(t *testing.T) {
-	repo := taggedRepo(t, `def deploy(port: str) { apply { shell { echo "$port" } } }`)
+	repo := taggedRepo(t, `def deploy(port: str) { apply { shell { echo "$port" } return ok.done } }`)
 	cache := t.TempDir()
 	spec := Spec{Path: "file://" + repo, Version: "v1.0.0"}
 	lock := Lock{}
@@ -100,7 +100,7 @@ func TestResolveLocked_ContentMismatch(t *testing.T) {
 }
 
 func TestResolveLocked_MovedTag(t *testing.T) {
-	repo := taggedRepo(t, `def deploy(port: str) { apply { shell { echo "$port" } } }`)
+	repo := taggedRepo(t, `def deploy(port: str) { apply { shell { echo "$port" } return ok.done } }`)
 	spec := Spec{Path: "file://" + repo, Version: "v1.0.0"}
 	// Lock a wrong SHA that is NOT in the cache → refetch, and the real tag
 	// resolves to a different SHA → moved-tag rejection.
