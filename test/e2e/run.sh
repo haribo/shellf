@@ -70,7 +70,7 @@ EOF
 # A secret provided by file (never on the command line); the plan writes it and
 # shellf must redact it from every report.
 printf 'SEKRET-abc123' > "$work/secret"
-run() { "$work/shellf" run --inventory "$work/inventory.shellf" --insecure --secret-file apisecret="$work/secret" "$@" "$here/plan.shellf"; }
+run() { "$work/shellf" run --inventory "$work/inventory.shellf" --insecure --secret-file apisecret="$work/secret" "$@" "$here/plans/plan.shellf"; }
 
 say "1. check mode is inert (previews 'would', touches nothing)"
 out="$(run --dry-run 2>&1)"; printf '%s\n' "$out"
@@ -78,7 +78,7 @@ printf '%s' "$out" | grep -q 'would' || fail "check mode should preview a 'would
 docker exec "$cname" test -e /tmp/shellf-e2e && fail "check mode created state on the target"
 
 say "1b. status on a fresh host shows drift (current → desired)"
-out="$("$work/shellf" status --inventory "$work/inventory.shellf" --insecure --secret-file apisecret="$work/secret" "$here/plan.shellf" 2>&1)"
+out="$("$work/shellf" status --inventory "$work/inventory.shellf" --insecure --secret-file apisecret="$work/secret" "$here/plans/plan.shellf" 2>&1)"
 printf '%s\n' "$out"
 printf '%s' "$out" | grep -q 'present: false → true' || fail "status should show present drift on a fresh host"
 # #334: `status` runs each def's observe, and an observe may call a control-host
@@ -120,7 +120,7 @@ docker exec "$cname" grep -q 'role=edge' /tmp/shellf-e2e/motd || fail "the per-h
 docker exec "$cname" test -d /tmp/shellf-e2e/one && docker exec "$cname" test -d /tmp/shellf-e2e/two || fail "the for loop did not run both iterations"
 # dir-copy delivered the control-host tree, text + binary, byte-for-byte (ADR-0028)
 docker exec "$cname" grep -q 'delivered by dir-copy' /tmp/shellf-e2e/delivered/hello.txt || fail "dir-copy did not deliver the text file"
-want_bin="$(sha256sum "$here/tree/assets/logo.bin" | cut -d' ' -f1)"
+want_bin="$(sha256sum "$here/assets/tree/assets/logo.bin" | cut -d' ' -f1)"
 got_bin="$(docker exec "$cname" sha256sum /tmp/shellf-e2e/delivered/assets/logo.bin | cut -d' ' -f1)"
 [ "$want_bin" = "$got_bin" ] || fail "dir-copy corrupted the binary file ($want_bin != $got_bin)"
 # `with { }` overrode a variable for one template call and one shell call (ADR-0022)
@@ -147,7 +147,7 @@ if printf '%s' "$out" | grep -qE 'file\.template.*would'; then
 fi
 
 say "4. status reports the converged state (no drift arrows)"
-out="$("$work/shellf" status --inventory "$work/inventory.shellf" --insecure --secret-file apisecret="$work/secret" "$here/plan.shellf" 2>&1)"
+out="$("$work/shellf" status --inventory "$work/inventory.shellf" --insecure --secret-file apisecret="$work/secret" "$here/plans/plan.shellf" 2>&1)"
 printf '%s\n' "$out"
 printf '%s' "$out" | grep -q 'present: true' || fail "status should report present: true"
 printf '%s' "$out" | grep -q 'err.agent' && fail "status could not reach the control host (a def's observe failed)"
@@ -166,8 +166,8 @@ say "5. the allow-list holds over a real bridge (#329)"
 #
 # Generated under $work, not kept in test/e2e/: a package directory may hold only defs
 # beside its plan, so a second plan file there breaks loading for the first one.
-mkdir -p "$work/refused"
-cat > "$work/refused/sneak.shellf" <<'EOF'
+mkdir -p "$work/refused/plans" "$work/refused/defs/s"
+cat > "$work/refused/defs/s/sneak.shellf" <<'EOF'
 def sneak(n: str, dst: str) {
     apply {
         ~file.write(dst, ~file.read(%"${n}.tmpl"))
@@ -175,14 +175,14 @@ def sneak(n: str, dst: str) {
     }
 }
 EOF
-cat > "$work/refused/plan.shellf" <<'EOF'
+cat > "$work/refused/plans/plan.shellf" <<'EOF'
 on target {
-    sneak("motd", "/tmp/shellf-e2e/sneaked")
+    s.sneak("motd", "/tmp/shellf-e2e/sneaked")
 }
 EOF
 # The run exits non-zero by design (a refusal is an error), so the exit code is captured
 # rather than allowed to kill the harness.
-out="$("$work/shellf" run --inventory "$work/inventory.shellf" --insecure --secret-file apisecret="$work/secret" "$work/refused/plan.shellf" 2>&1)" || true
+out="$("$work/shellf" run --inventory "$work/inventory.shellf" --insecure --secret-file apisecret="$work/secret" "$work/refused/plans/plan.shellf" 2>&1)" || true
 printf '%s\n' "$out"
 printf '%s' "$out" | grep -q 'was not declared by the plan' || fail "an undeclared resource must be refused over the bridge"
 # The message names the resource: a refusal the operator cannot read is a support ticket.
@@ -197,15 +197,15 @@ say "6. a dropped bridge is relaunched mid-run (#347, #329 case 3)"
 #
 # The plan sleeps first, so the bridge can be killed on the target *before* the step that
 # needs the control host. A run that survives that is the whole claim.
-mkdir -p "$work/drop"
-printf 'late render, after the bridge died\n' > "$work/drop/late.tmpl"
-cat > "$work/drop/plan.shellf" <<'EOF'
+mkdir -p "$work/drop/plans" "$work/drop/assets"
+printf 'late render, after the bridge died\n' > "$work/drop/assets/late.tmpl"
+cat > "$work/drop/plans/plan.shellf" <<'EOF'
 on target {
     shell { sleep 6 }
     file.template(%"late.tmpl", "/tmp/shellf-e2e/late")
 }
 EOF
-"$work/shellf" run --inventory "$work/inventory.shellf" --insecure --secret-file apisecret="$work/secret" "$work/drop/plan.shellf" > "$work/drop.out" 2>&1 &
+"$work/shellf" run --inventory "$work/inventory.shellf" --insecure --secret-file apisecret="$work/secret" "$work/drop/plans/plan.shellf" > "$work/drop.out" 2>&1 &
 runpid=$!
 # Wait for the bridge to exist, then kill it — during the sleep, before the template.
 for _ in $(seq 1 40); do
