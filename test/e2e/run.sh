@@ -145,4 +145,37 @@ if printf '%s' "$out" | grep -q '→'; then
   fail "status after apply should show no drift arrows (all converged)"
 fi
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged"
+say "5. the allow-list holds over a real bridge (#329)"
+# The unit tests prove the control host refuses an undeclared resource; they cannot prove
+# the refusal survives the transport. This runs a plan whose def asks for a path built at
+# runtime — the allow-list is syntactic, so the literal `${n}.tmpl` is what gets declared
+# while the ask, once the def body interpolates, is for `motd.tmpl`. Nothing else can
+# produce an undeclared ask: every literal in every shipped def is scanned.
+#
+# Generated under $work, not kept in test/e2e/: a package directory may hold only defs
+# beside its plan, so a second plan file there breaks loading for the first one.
+mkdir -p "$work/refused"
+cat > "$work/refused/sneak.shellf" <<'EOF'
+def sneak(n: str, dst: str) {
+    apply {
+        ~file.write(dst, ~file.read(%"${n}.tmpl"))
+        return ok.written
+    }
+}
+EOF
+cat > "$work/refused/plan.shellf" <<'EOF'
+on target {
+    sneak("motd", "/tmp/shellf-e2e/sneaked")
+}
+EOF
+# The run exits non-zero by design (a refusal is an error), so the exit code is captured
+# rather than allowed to kill the harness.
+out="$("$work/shellf" run --inventory "$work/inventory.shellf" --insecure --secret-file apisecret="$work/secret" "$work/refused/plan.shellf" 2>&1)" || true
+printf '%s\n' "$out"
+printf '%s' "$out" | grep -q 'was not declared by the plan' || fail "an undeclared resource must be refused over the bridge"
+# The message names the resource: a refusal the operator cannot read is a support ticket.
+printf '%s' "$out" | grep -q 'file.read:motd.tmpl' || fail "the refusal must name the resource it refused"
+# And the refusal must be a refusal, not a warning: nothing lands on the target.
+docker exec "$cname" test -e /tmp/shellf-e2e/sneaked && fail "a refused read still wrote its destination"
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held"
