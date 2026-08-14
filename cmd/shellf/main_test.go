@@ -770,3 +770,54 @@ func TestMergeVars(t *testing.T) {
 		}
 	}
 }
+
+// #311: a call cycle is refused when the defs are loaded, not when they run (ADR-0030
+// §6). The distinction is the whole issue: the evaluator's guard fires on the target,
+// after earlier steps of the plan have already acted, leaving a partially applied host.
+//
+// loadPlanPackage runs before anything is dialled, so a failure here *is* the "no host
+// was contacted" assertion — there is no transport in this call path to stub out.
+func TestLoadPlanPackage_RefusesACycleBeforeAnyTransport(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "plan.shellf", `on web { a("/x") }`)
+	writeFile(t, dir, "a.shellf", `def a(p: str) { apply { b(p) return ok.done } }`)
+	writeFile(t, dir, "b.shellf", `def b(p: str) { apply { a(p) return ok.done } }`)
+	writeFile(t, dir, "inventory.shellf", `host web = { address: "1.1.1.1", user: "u" }`)
+
+	_, _, err := loadPlanPackage(
+		filepath.Join(dir, "plan.shellf"), filepath.Join(dir, "inventory.shellf"),
+		map[string]string{}, map[string]string{})
+	if err == nil {
+		t.Fatal("a cyclic package must not load")
+	}
+	if !strings.Contains(err.Error(), "call cycle: a -> b -> a") {
+		t.Fatalf("the error must name the chain, got %v", err)
+	}
+}
+
+// A cycle that only exists because a user def overrides a stdlib one and calls back into
+// the caller. This is why the check takes the run's own resolver rather than the package
+// map: seen from the user package alone, `file.write` is just a name that is not there.
+func TestLoadPlanPackage_RefusesACycleThroughAnOverride(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "plan.shellf", `on web { deliver("/x", "hi") }`)
+	writeFile(t, dir, "deliver.shellf", `def deliver(path: str, content: str) { apply { file.write(path, content) return ok.done } }`)
+	writeFile(t, dir, "inventory.shellf", `host web = { address: "1.1.1.1", user: "u" }`)
+	// A sub-package directory: its defs are qualified `<dir>.<def>` (ADR-0033), so this
+	// one is `file.write` and overrides the stdlib def of that name.
+	if err := os.MkdirAll(filepath.Join(dir, "file"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "file"), "write.shellf",
+		`override def write(path: str, content: str) { apply { deliver(path, content) return ok.done } }`)
+
+	_, _, err := loadPlanPackage(
+		filepath.Join(dir, "plan.shellf"), filepath.Join(dir, "inventory.shellf"),
+		map[string]string{}, map[string]string{})
+	if err == nil {
+		t.Fatal("a cycle through an override must not load")
+	}
+	if !strings.Contains(err.Error(), "call cycle") {
+		t.Fatalf("got %v", err)
+	}
+}
