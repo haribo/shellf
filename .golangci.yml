@@ -25,3 +25,10 @@ linters:
           disabled: true
         - name: unused-parameter
           disabled: true
+
+# gofmt is a gate, not a preference: it has one canonical answer, so a diff that carries
+# realignment noise is pure cost to a reader. It was missing here, and the tree drifted in
+# five files across two PRs that passed every check (#351).
+formatters:
+  enable:
+    - gofmt
