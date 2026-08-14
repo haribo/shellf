@@ -97,4 +97,3 @@ func TestFileWrite_LeavesNoTempBehind(t *testing.T) {
 		t.Fatalf("staging residue left in the directory: %v", names)
 	}
 }
-
