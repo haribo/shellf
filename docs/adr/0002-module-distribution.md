@@ -13,7 +13,7 @@ which are neither idempotent nor previewable. Reusable, guarded instructions
 
 The open question is **how instructions are distributed** without falling into
 the ecosystem trap that killed the anti-Ansible tools: their cold-start was a
-central registry no one populated. shellf's thesis (`DESIGN.md` §07) is the
+central registry no one populated. shellf's thesis (`docs/design.md` §02) is the
 opposite — be excellent with raw shell, so no ecosystem is *required*.
 
 ## Decisions

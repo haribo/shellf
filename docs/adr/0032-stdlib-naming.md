@@ -15,7 +15,7 @@ The stdlib carries two naming shapes with no written rule:
 `internal/std/std.go` documents the *mechanism* — root `*.shellf` files form the
 unqualified `std` package, each subdirectory becomes a package prefixed `<pkg>.` — but
 never says whether a name like `file-write` ought to be `file.write`. Searching the 31
-records, `docs/language.md`, `DESIGN.md` and `docs/CONVERSATION.md` returns nothing:
+records, `docs/language.md`, `docs/design.md` and `docs/CONVERSATION.md` returns nothing:
 the convention was decided in discussion and never written down.
 
 It became blocking when naming the control-host primitives: `%file.read` sitting next
