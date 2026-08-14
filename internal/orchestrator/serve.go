@@ -37,9 +37,20 @@ type Allowed struct {
 // NewAllowed builds the set from the resources a plan declared. A declaration is
 // `<primitive>:<path>` — `file.read:conf.j2` — so the primitive is part of the key: a
 // `dir.list` cannot be answered with a file's contents, and a path declared for reading
-// does not become listable. Relative paths resolve against planDir.
-func NewAllowed(planDir string, declared []string) *Allowed {
+// does not become listable.
+//
+// Every path resolves under assetsDir (ADR-0038 §3), and one that lands outside it is
+// dropped rather than resolved: the answer to "where does this file come from" is a
+// single directory, not a search, and a plan cannot reach the rest of the operator's
+// disk. The test is containment after resolution, so an absolute path pointing inside
+// assets/ is fine and a `../` climbing out of it is not — what matters is where the path
+// ends up, not how it was written.
+func NewAllowed(assetsDir string, declared []string) *Allowed {
 	a := &Allowed{paths: map[string]string{}}
+	rootAbs, err := filepath.Abs(assetsDir)
+	if err != nil {
+		return a
+	}
 	for _, d := range declared {
 		primitive, path, ok := strings.Cut(d, ":")
 		if !ok {
@@ -47,13 +58,24 @@ func NewAllowed(planDir string, declared []string) *Allowed {
 		}
 		p := path
 		if !filepath.IsAbs(p) {
-			p = filepath.Join(planDir, p)
+			p = filepath.Join(rootAbs, p)
 		}
-		if abs, err := filepath.Abs(p); err == nil {
-			a.paths[primitive+":"+path] = abs
+		abs, err := filepath.Abs(p)
+		if err != nil || !underRoot(rootAbs, abs) {
+			continue // `../` out of assets/: not declared, so the ask is refused by name
 		}
+		a.paths[primitive+":"+path] = abs
 	}
 	return a
+}
+
+// underRoot reports whether abs is root itself or inside it. Compared on cleaned absolute
+// paths, so `assets/../assets-secret` does not pass for being a prefix of `assets`.
+func underRoot(root, abs string) bool {
+	if abs == root {
+		return true
+	}
+	return strings.HasPrefix(abs, root+string(filepath.Separator))
 }
 
 // resolve returns the absolute path for a requested resource, or false when the plan

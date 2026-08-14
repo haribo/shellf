@@ -174,24 +174,24 @@ func TestReportText(t *testing.T) {
 }
 
 func TestLoadPlanPackage(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "plan.shellf", `on web { mark("/x", "hi") }`)
-	writeFile(t, dir, "mark.shellf", `def mark(path: str, content: str) { apply { shell { echo hi } return ok.done } }`)
-	writeFile(t, dir, "inventory.shellf", `host web = { address: "1.1.1.1", user: "u" }`)
-	writeFile(t, dir, "notes.txt", "not a shellf file")
+	dir := project(t, t.TempDir())
+	writeFile(t, filepath.Join(dir, "plans"), "plan.shellf", `on web { m.mark("/x", "hi") }`)
+	writeDef(t, dir, "m", "mark.shellf", `def mark(path: str, content: str) { apply { shell { echo hi } return ok.done } }`)
+	writeFile(t, filepath.Join(dir, "inventories"), "inventory.shellf", `host web = { address: "1.1.1.1", user: "u" }`)
+	writeFile(t, filepath.Join(dir, "defs"), "notes.txt", "not a shellf file")
 
 	plan, defsSrc, err := loadPlanPackage(
-		filepath.Join(dir, "plan.shellf"), filepath.Join(dir, "inventory.shellf"),
+		filepath.Join(dir, "plans", "plan.shellf"), filepath.Join(dir, "inventories", "inventory.shellf"),
 		map[string]string{}, map[string]string{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// The plan resolves `mark` against the sibling def.
-	if plan[0].Steps[0].Instruction != "mark" || plan[0].Steps[0].Args["path"] != "/x" {
+	if plan[0].Steps[0].Instruction != "m.mark" || plan[0].Steps[0].Args["path"] != "/x" {
 		t.Fatalf("sibling def not resolved: %+v", plan[0].Steps[0])
 	}
 	// The def ships keyed by name; the inventory does not leak into it.
-	if !strings.Contains(defsSrc["mark"], "def mark") {
+	if !strings.Contains(defsSrc["m.mark"], "def mark") {
 		t.Fatalf("def source not collected: %v", defsSrc)
 	}
 	for _, src := range defsSrc {
@@ -202,32 +202,33 @@ func TestLoadPlanPackage(t *testing.T) {
 }
 
 func TestPackageLibs_ExcludesPlanAndInventory(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "plan.shellf", `on web { }`)
-	writeFile(t, dir, "lib.shellf", `def a() { apply { shell { echo hi } return ok.done } }`)
-	writeFile(t, dir, "inventory.shellf", `host web = { address: "x", user: "u" }`)
+	dir := project(t, t.TempDir())
+	writeFile(t, filepath.Join(dir, "plans"), "plan.shellf", `on web { }`)
+	writeDef(t, dir, "p", "lib.shellf", `def a() { apply { shell { echo hi } return ok.done } }`)
+	writeFile(t, filepath.Join(dir, "inventories"), "inventory.shellf", `host web = { address: "x", user: "u" }`)
 
-	libs, err := packageLibs(filepath.Join(dir, "plan.shellf"), filepath.Join(dir, "inventory.shellf"))
+	libs, err := packageLibs(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := libs["lib.shellf"]; !ok || len(libs) != 1 {
+	if _, ok := libs["p/lib.shellf"]; !ok || len(libs) != 1 {
 		t.Fatalf("expected only lib.shellf, got %v", keys(libs))
 	}
 }
 
 func TestReadImports(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "plan.shellf", "import lib \"sub\"\non web { lib.helper() }")
-	sub := filepath.Join(dir, "sub")
+	dir := project(t, t.TempDir())
+	plans := filepath.Join(dir, "plans")
+	writeFile(t, plans, "plan.shellf", "import lib \"sub\"\non web { lib.helper() }")
+	sub := filepath.Join(plans, "sub")
 	if err := os.Mkdir(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(sub, "h.shellf"), []byte(`def helper() { apply { shell { echo hi } return ok.done } }`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	planSrc, _ := os.ReadFile(filepath.Join(dir, "plan.shellf"))
-	imports, err := readImports(filepath.Join(dir, "plan.shellf"), string(planSrc))
+	planSrc, _ := os.ReadFile(filepath.Join(plans, "plan.shellf"))
+	imports, err := readImports(filepath.Join(plans, "plan.shellf"), string(planSrc))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,12 +237,13 @@ func TestReadImports(t *testing.T) {
 	}
 	// An import of a missing directory errors.
 	bad := "import ghost \"nope\"\non web { }"
-	if _, err := readImports(filepath.Join(dir, "plan.shellf"), bad); err == nil {
+	if _, err := readImports(filepath.Join(plans, "plan.shellf"), bad); err == nil {
 		t.Fatal("importing a missing directory must error")
 	}
 	// The full path resolves through loadPlanPackage too.
-	writeFile(t, dir, "inv.shellf", `host web = { address: "x", user: "u" }`)
-	_, defs, err := loadPlanPackage(filepath.Join(dir, "plan.shellf"), filepath.Join(dir, "inv.shellf"), map[string]string{}, map[string]string{})
+	writeFile(t, filepath.Join(dir, "inventories"), "inv.shellf", `host web = { address: "x", user: "u" }`)
+	_, defs, err := loadPlanPackage(filepath.Join(plans, "plan.shellf"),
+		filepath.Join(dir, "inventories", "inv.shellf"), map[string]string{}, map[string]string{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,16 +257,16 @@ func TestLoadPlanPackage_KeepsTemplateStepsForPerHostRender(t *testing.T) {
 	// the orchestrator (ADR-0024). loadPlanPackage keeps the `file.template` step, with
 	// its parse-time `dst` interpolation and `with { }` intact. Here a `for` loop
 	// var is captured into `with` for the render (ADR-0023 composition).
-	dir := t.TempDir()
-	writeFile(t, dir, "svc.tmpl", "service=@{svc}\n")
-	writeFile(t, dir, "plan.shellf", `on t {
+	dir := project(t, t.TempDir())
+	writeFile(t, filepath.Join(dir, "assets"), "svc.tmpl", "service=@{svc}\n")
+	writeFile(t, filepath.Join(dir, "plans"), "plan.shellf", `on t {
 		for svc in ["alpha", "beta"] {
 			file.template(%"svc.tmpl", "/opt/${svc}/x") with { svc = "${svc}" }
 		}
 	}`)
-	writeFile(t, dir, "inv.shellf", `host t = { address: "x", user: "u" }`)
+	writeFile(t, filepath.Join(dir, "inventories"), "inv.shellf", `host t = { address: "x", user: "u" }`)
 	plan, _, err := loadPlanPackage(
-		filepath.Join(dir, "plan.shellf"), filepath.Join(dir, "inv.shellf"),
+		filepath.Join(dir, "plans", "plan.shellf"), filepath.Join(dir, "inventories", "inv.shellf"),
 		map[string]string{}, map[string]string{})
 	if err != nil {
 		t.Fatal(err)
@@ -319,13 +321,14 @@ func TestReadImports_RemoteModule(t *testing.T) {
 	gitRun(t, repo, "tag", "v1.0.0")
 
 	// A plan that imports it remotely.
-	planDir := t.TempDir()
-	writeFile(t, planDir, "plan.shellf",
+	planDir := project(t, t.TempDir())
+	writeFile(t, filepath.Join(planDir, "plans"), "plan.shellf",
 		"import r \"file://"+repo+"@v1.0.0\"\non web { r.deploy(\"9090\") }")
-	writeFile(t, planDir, "inv.shellf", `host web = { address: "x", user: "u" }`)
+	writeFile(t, filepath.Join(planDir, "inventories"), "inv.shellf", `host web = { address: "x", user: "u" }`)
 
 	plan, defs, err := loadPlanPackage(
-		filepath.Join(planDir, "plan.shellf"), filepath.Join(planDir, "inv.shellf"),
+		filepath.Join(planDir, "plans", "plan.shellf"),
+		filepath.Join(planDir, "inventories", "inv.shellf"),
 		map[string]string{}, map[string]string{})
 	if err != nil {
 		t.Fatal(err)
@@ -378,6 +381,28 @@ func TestLoadInventory(t *testing.T) {
 	if _, err := loadInventory(filepath.Join(dir, "missing.shellf")); err == nil {
 		t.Fatal("a missing inventory must error")
 	}
+}
+
+// project lays out an empty shellf project (ADR-0038) under root and returns it, so a
+// test states the layout once instead of repeating four MkdirAll calls.
+func project(t *testing.T, root string) string {
+	t.Helper()
+	for _, d := range []string{"plans", "defs", "assets", "inventories"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+// writeDef writes a def into its package directory, creating it: defs/<pkg>/<name>.
+func writeDef(t *testing.T, root, pkg, name, content string) {
+	t.Helper()
+	dir := filepath.Join(root, "defs", pkg)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, name, content)
 }
 
 func writeFile(t *testing.T, dir, name, content string) {
@@ -778,19 +803,19 @@ func TestMergeVars(t *testing.T) {
 // loadPlanPackage runs before anything is dialled, so a failure here *is* the "no host
 // was contacted" assertion — there is no transport in this call path to stub out.
 func TestLoadPlanPackage_RefusesACycleBeforeAnyTransport(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "plan.shellf", `on web { a("/x") }`)
-	writeFile(t, dir, "a.shellf", `def a(p: str) { apply { b(p) return ok.done } }`)
-	writeFile(t, dir, "b.shellf", `def b(p: str) { apply { a(p) return ok.done } }`)
-	writeFile(t, dir, "inventory.shellf", `host web = { address: "1.1.1.1", user: "u" }`)
+	dir := project(t, t.TempDir())
+	writeFile(t, filepath.Join(dir, "plans"), "plan.shellf", `on web { c.a("/x") }`)
+	writeDef(t, dir, "c", "a.shellf", `def a(p: str) { apply { c.b(p) return ok.done } }`)
+	writeDef(t, dir, "c", "b.shellf", `def b(p: str) { apply { c.a(p) return ok.done } }`)
+	writeFile(t, filepath.Join(dir, "inventories"), "inventory.shellf", `host web = { address: "1.1.1.1", user: "u" }`)
 
 	_, _, err := loadPlanPackage(
-		filepath.Join(dir, "plan.shellf"), filepath.Join(dir, "inventory.shellf"),
+		filepath.Join(dir, "plans", "plan.shellf"), filepath.Join(dir, "inventories", "inventory.shellf"),
 		map[string]string{}, map[string]string{})
 	if err == nil {
 		t.Fatal("a cyclic package must not load")
 	}
-	if !strings.Contains(err.Error(), "call cycle: a -> b -> a") {
+	if !strings.Contains(err.Error(), "call cycle: c.a -> c.b -> c.a") {
 		t.Fatalf("the error must name the chain, got %v", err)
 	}
 }
@@ -799,20 +824,18 @@ func TestLoadPlanPackage_RefusesACycleBeforeAnyTransport(t *testing.T) {
 // the caller. This is why the check takes the run's own resolver rather than the package
 // map: seen from the user package alone, `file.write` is just a name that is not there.
 func TestLoadPlanPackage_RefusesACycleThroughAnOverride(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "plan.shellf", `on web { deliver("/x", "hi") }`)
-	writeFile(t, dir, "deliver.shellf", `def deliver(path: str, content: str) { apply { file.write(path, content) return ok.done } }`)
-	writeFile(t, dir, "inventory.shellf", `host web = { address: "1.1.1.1", user: "u" }`)
-	// A sub-package directory: its defs are qualified `<dir>.<def>` (ADR-0033), so this
-	// one is `file.write` and overrides the stdlib def of that name.
-	if err := os.MkdirAll(filepath.Join(dir, "file"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, filepath.Join(dir, "file"), "write.shellf",
-		`override def write(path: str, content: str) { apply { deliver(path, content) return ok.done } }`)
+	dir := project(t, t.TempDir())
+	writeFile(t, filepath.Join(dir, "plans"), "plan.shellf", `on web { d.deliver("/x", "hi") }`)
+	writeDef(t, dir, "d", "deliver.shellf",
+		`def deliver(path: str, content: str) { apply { file.write(path, content) return ok.done } }`)
+	writeFile(t, filepath.Join(dir, "inventories"), "inventory.shellf", `host web = { address: "1.1.1.1", user: "u" }`)
+	// `defs/file/` is the package `file`, so this declares `file.write` and overrides the
+	// stdlib def of that name (ADR-0038 §2 over ADR-0033's rule).
+	writeDef(t, dir, "file", "write.shellf",
+		`override def write(path: str, content: str) { apply { d.deliver(path, content) return ok.done } }`)
 
 	_, _, err := loadPlanPackage(
-		filepath.Join(dir, "plan.shellf"), filepath.Join(dir, "inventory.shellf"),
+		filepath.Join(dir, "plans", "plan.shellf"), filepath.Join(dir, "inventories", "inventory.shellf"),
 		map[string]string{}, map[string]string{})
 	if err == nil {
 		t.Fatal("a cycle through an override must not load")

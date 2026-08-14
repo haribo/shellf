@@ -1,8 +1,8 @@
 # A small web server, provisioned idempotently over SSH as a non-root user.
 #
-#   shellf run --inventory examples/inventory.shellf --dry-run examples/webserver/plan.shellf
-#   shellf run --inventory examples/inventory.shellf       examples/webserver/plan.shellf
-#   shellf status --inventory examples/inventory.shellf    examples/webserver/plan.shellf
+#   shellf run --inventory examples/inventories/inventory.shellf --dry-run examples/plans/webserver.shellf
+#   shellf run --inventory examples/inventories/inventory.shellf       examples/plans/webserver.shellf
+#   shellf status --inventory examples/inventories/inventory.shellf    examples/plans/webserver.shellf
 #
 # Flags come before the plan file. `--dry-run` previews without touching anything;
 # `status` reports current-vs-desired; a second real run changes nothing (every
