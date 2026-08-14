@@ -9,7 +9,7 @@ func testStdSig(name string) ([]string, int, bool) {
 	m := map[string][]string{
 		"apt.install":       {"pkg"},
 		"file.copy":         {"src", "dst"},
-		"service.ensure":           {"name", "running", "enabled"},
+		"service.ensure":    {"name", "running", "enabled"},
 		"file.download":     {"url", "dst", "sha256"},
 		"archive.extract":   {"src", "dst"},
 		"git.clone":         {"url", "dst"},

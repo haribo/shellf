@@ -232,14 +232,14 @@ func catch(dst *error) {
 }
 
 type parser struct {
-	lex      *lexer
-	tok      token
-	baseVars map[string]string // --vars + plan bindings (lower precedence)
-	setVars  map[string]string // --set overrides (highest precedence)
-	caught   map[string]bool   // vars bound with `?` in the current `on` block (ADR-0009)
-	sig      InstructionSig    // stdlib/builtin instruction parameter names (#107)
-	userDefs map[string]Def    // package + imported defs, resolved before the stdlib (ADR-0014/0015)
-	defPrefix string        // sub-package prefix for defs declared in this file (ADR-0033)
+	lex       *lexer
+	tok       token
+	baseVars  map[string]string // --vars + plan bindings (lower precedence)
+	setVars   map[string]string // --set overrides (highest precedence)
+	caught    map[string]bool   // vars bound with `?` in the current `on` block (ADR-0009)
+	sig       InstructionSig    // stdlib/builtin instruction parameter names (#107)
+	userDefs  map[string]Def    // package + imported defs, resolved before the stdlib (ADR-0014/0015)
+	defPrefix string            // sub-package prefix for defs declared in this file (ADR-0033)
 
 	imports         map[string][]string // alias → imported package's def sources (ADR-0015)
 	importedAliases map[string]bool     // aliases already imported (duplicate check)
@@ -750,11 +750,11 @@ var Renamed = map[string]string{
 	"file-exists": "file.exists", "file-download": "file.download",
 	"file-copy": "file.copy", "template": "file.template",
 	"dir-ensure": "dir.ensure", "dir-exists": "dir.exists", "dir-owner": "dir.owner",
-	"dir-copy": "dir.copy",
+	"dir-copy":        "dir.copy",
 	"archive-extract": "archive.extract", "archive-extract-member": "archive.extract-member",
 	"git-clone": "git.clone", "git-sync": "git.sync",
 	"service": "service.ensure", "service-restart": "service.restart",
-	"service-reload": "service.reload",
+	"service-reload":        "service.reload",
 	"systemd-daemon-reload": "systemd.daemon-reload",
 	"user-ensure":           "user.ensure", "user-group": "user.group",
 	"http-check": "http.check", "wait-for": "http.wait-for",
