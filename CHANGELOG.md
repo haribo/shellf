@@ -97,6 +97,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `sudo.write` and `sshd.config` tell the truth in `--dry-run`. Both compose in `apply`
+  and declared no `observe`, and `apply` never runs in check mode — so on a host whose
+  drop-in was already correct they announced `would.written` for a write that would not
+  happen. Each now observes the two things its apply sets: the content, and the mode the
+  daemon insists on. The mode half matters on its own — sudo silently ignores a drop-in
+  that is not 0440, so perfect content at 644 looked converged (#340).
 - `shellf status` no longer acts on the target. It is documented as reporting state
   without acting (ADR-0013), and its usage line says so, but the engine handled check
   mode and then fell through to apply: every remaining Go instruction ran for real, so
