@@ -97,6 +97,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A run survives its control-channel bridge being dropped. ADR-0031 §2 promised the
+  control host "reconnects, relaunches the bridge, and the dialogue resumes" — it dialled
+  once, so a flaky link, an idle timeout or a killed `sshd` child was fatal to every
+  remaining `~file.read` in the job. It now relaunches, bounded, and tells its own
+  shutdown apart from a drop so no session is left behind. This is the property the
+  socket in the agent's workdir was chosen for, and it had never held (#347).
 - `sudo.write` and `sshd.config` tell the truth in `--dry-run`. Both compose in `apply`
   and declared no `observe`, and `apply` never runs in check mode — so on a host whose
   drop-in was already correct they announced `would.written` for a write that would not
