@@ -23,7 +23,7 @@ on app {
     # `for` over a literal list (ADR-0017) is the clearest form for N ports.
     ufw.default("deny", "allow")
     for port in ["80", "443"] {
-        ufw.open(port, "tcp")
+        ufw.open("${port}", "tcp")
     }
     ufw.enable()
 
