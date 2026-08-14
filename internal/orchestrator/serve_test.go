@@ -132,15 +132,48 @@ func TestServe_ReturnsWhenThePeerGoes(t *testing.T) {
 }
 
 // An absolute path declared by the plan is served as-is, not joined to the plan dir.
-func TestAllowed_AbsoluteDeclaration(t *testing.T) {
-	dir := t.TempDir()
-	abs := filepath.Join(dir, "elsewhere.conf")
-	if err := os.WriteFile(abs, []byte("x"), 0o600); err != nil {
+// ADR-0038 §3: a control-host path resolves under `assets/`, and one that lands outside
+// it is refused. This test asserted the opposite — an absolute path anywhere on the disk
+// resolved — which is the behaviour the layout removes: the answer to "where does this
+// file come from" is one directory, not the whole filesystem.
+//
+// The test is on containment after resolution, not on how the path was written: an
+// absolute path *inside* assets/ still works, since it names a file the project owns.
+func TestAllowed_PathOutsideAssetsIsRefused(t *testing.T) {
+	assets := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "elsewhere.conf")
+	if err := os.WriteFile(outside, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	m := ask(t, NewAllowed("/some/other/plan/dir", []string{"file.read:" + abs}), "file.read:"+abs)
+	m := ask(t, NewAllowed(assets, []string{"file.read:" + outside}), "file.read:"+outside)
+	if m.Error == "" {
+		t.Fatal("a path outside assets/ must be refused, whatever the project declared")
+	}
+
+	inside := filepath.Join(assets, "conf.j2")
+	if err := os.WriteFile(inside, []byte("y"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m = ask(t, NewAllowed(assets, []string{"file.read:" + inside}), "file.read:"+inside)
 	if m.Error != "" {
-		t.Fatalf("an absolute declaration must resolve: %s", m.Error)
+		t.Fatalf("an absolute path inside assets/ names a file the project owns: %s", m.Error)
+	}
+}
+
+// The `../` form of the same escape: written relative, resolving outside.
+func TestAllowed_ClimbingOutOfAssetsIsRefused(t *testing.T) {
+	root := t.TempDir()
+	assets := filepath.Join(root, "assets")
+	if err := os.MkdirAll(assets, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(root, "secret.conf")
+	if err := os.WriteFile(secret, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := ask(t, NewAllowed(assets, []string{"file.read:../secret.conf"}), "file.read:../secret.conf")
+	if m.Error == "" {
+		t.Fatal("`../` out of assets/ must be refused")
 	}
 }
 

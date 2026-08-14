@@ -1,0 +1,20 @@
+# Targets for the examples. Authentication uses your ssh-agent by default
+# (ADR-0026); to pin a key instead, uncomment `key:` on a host or in `defaults`.
+#
+# The plans escalate with `as root`, so a non-root user works as long as it can
+# sudo (passwordless sudo is the common setup); use `root` directly if you SSH as
+# root. `pkg`/`webroot`/`domain` are free-form per-host variables the plans read.
+
+host web = {
+    address: "10.0.0.10",
+    user: "deploy",
+    # key: "~/.ssh/id_deploy",   # optional override — ssh-agent is the default
+    pkg: "nginx",
+    webroot: "/opt/dogfood"
+}
+
+host app = {
+    address: "10.0.0.20",
+    user: "deploy",
+    domain: "blog.example.com"
+}

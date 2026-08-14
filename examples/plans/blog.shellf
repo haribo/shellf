@@ -1,0 +1,45 @@
+# Deploy a containerized blog: a docker-compose stack behind ufw, its .env
+# rendered per host, its DB password passed in as a secret. A fuller tour of the
+# language than the webserver example.
+#
+#   shellf run --inventory examples/inventories/inventory.shellf \
+#     --secret-file db_password=./db_password \
+#     --dry-run examples/plans/blog.shellf
+#
+#   shellf run    --inventory examples/inventories/inventory.shellf --secret-file db_password=./db_password examples/plans/blog.shellf
+#   shellf status --inventory examples/inventories/inventory.shellf examples/plans/blog.shellf
+#
+# Flags come before the plan file. Assumes /opt/blog holds a docker-compose.yml;
+# the point here is the shellf orchestration around it.
+
+# Defs live under `defs/<package>/` and are called qualified by the directory
+# (ADR-0038 §2): `common.banner` is defs/common/, `blog.data-dir` is defs/blog/.
+# No import and no flag — the name says where the def is.
+
+on app {
+    common.banner("Managed by shellf — do not edit by hand")
+
+    # Firewall: deny inbound by default, then open exactly the stack's ports. A
+    # `for` over a literal list (ADR-0017) is the clearest form for N ports.
+    ufw.default("deny", "allow")
+    for port in ["80", "443"] {
+        ufw.open(port, "tcp")
+    }
+    ufw.enable()
+
+    # A private network for the stack's services.
+    docker.network("blog-net")
+
+    # The stack's files live under /opt/blog. `blog.data-dir` is a USER DEF in the
+    # sibling defs.shellf (ADR-0014), resolved by name with no import.
+    blog.data-dir("/opt/blog/data")
+
+    # Render the .env per host (ADR-0019/0024): `@{domain}` is the host's inventory
+    # var, `@{db_password}` is the secret passed via --secret-file (redacted in all
+    # output, ADR-0018). Config files keep their own `${...}` untouched.
+    file.template(%"blog/compose.env.tmpl", "/opt/blog/.env")
+
+    # Bring the stack up. `compose-up` is action-shaped; `--dry-run` still previews
+    # what it would recreate (docker compose --dry-run, ADR-0029).
+    docker.compose-up("/opt/blog")
+}

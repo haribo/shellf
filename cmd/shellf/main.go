@@ -199,7 +199,14 @@ func controlChannel(planPath string, plan []orchestrator.Block, defsSrc map[stri
 	// What the plan may ask for (ADR-0034 §5 → ADR-0031 §3). Derived from the defs
 	// before anything is sent: the channel serves this set and refuses the rest by
 	// name, which is what keeps an imported def from reading ~/.ssh.
-	planDir := filepath.Dir(planPath)
+	// The plan is inside the project by the time a run reaches here — loadPlanPackage
+	// refuses otherwise — so this cannot fail for a reason the operator has not been told
+	// about already.
+	root, err := projectRoot(planPath)
+	if err != nil {
+		root = filepath.Dir(filepath.Dir(planPath))
+	}
+	assetsDir := filepath.Join(root, dirAssets)
 	var allSteps []proto.Step
 	for _, b := range plan {
 		allSteps = append(allSteps, b.Steps...)
@@ -216,7 +223,7 @@ func controlChannel(planPath string, plan []orchestrator.Block, defsSrc map[stri
 		}
 		host, _ := inv.Resolve(alias)
 		env := mergeVars(baseVars, host.Vars, setVars)
-		allow := orchestrator.NewAllowed(planDir, declared)
+		allow := orchestrator.NewAllowed(assetsDir, declared)
 		allow.Render = func(content string, scope map[string]string) (string, error) {
 			// The call site wins over the host environment: that is what `with { }`
 			// means (ADR-0022), and a def's own params are more local still.
@@ -292,7 +299,11 @@ func loadPlanPackage(planPath, invPath string, baseVars, setVars map[string]stri
 	if err != nil {
 		return nil, nil, err
 	}
-	libs, err := packageLibs(planPath, invPath)
+	root, err := projectRoot(planPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	libs, err := packageLibs(root)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -316,9 +327,10 @@ func loadPlanPackage(planPath, invPath string, baseVars, setVars map[string]stri
 	//
 	// `dir.copy` IS resolved here: its bytes are control-side and identical for
 	// every host, so it expands once into dir-ensure + file-put steps (ADR-0028).
-	planDir := filepath.Dir(planPath)
+	// Content is addressed under `assets/`, not beside the plan (ADR-0038 §3).
+	assetsDir := filepath.Join(root, dirAssets)
 	for bi := range plan {
-		expanded, err := resolveDirCopy(plan[bi].Steps, planDir)
+		expanded, err := resolveDirCopy(plan[bi].Steps, assetsDir)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -506,8 +518,15 @@ func readImports(planPath, planSrc string) (map[string][]string, error) {
 	if len(imps) == 0 {
 		return nil, nil
 	}
+	// A local import path is relative to the plan file (ADR-0015, unchanged). The lock is
+	// not: it pins what the *project* depends on, like go.sum, so it belongs at the root
+	// rather than among the plans. ADR-0038 did not foresee this; recorded in the PR.
 	dir := filepath.Dir(planPath)
-	lock, err := module.LoadLock(dir)
+	lockDir := dir
+	if root, err := projectRoot(planPath); err == nil {
+		lockDir = root
+	}
+	lock, err := module.LoadLock(lockDir)
 	if err != nil {
 		return nil, err
 	}
@@ -535,7 +554,7 @@ func readImports(planPath, planSrc string) (map[string][]string, error) {
 		out[imp.Alias] = srcs
 	}
 	if lockChanged {
-		if err := module.SaveLock(dir, lock); err != nil {
+		if err := module.SaveLock(lockDir, lock); err != nil {
 			return nil, err
 		}
 	}
@@ -578,37 +597,64 @@ func shellfSources(dir string) ([]string, error) {
 // so the parser qualifies their defs as `<dir>.<def>` (ADR-0033). Two levels down is an
 // error, not a silent skip — a skipped directory is how an override fails to apply
 // while the plan reports success.
-func packageLibs(planPath, invPath string) (map[string]string, error) {
-	dir := filepath.Dir(planPath)
-	entries, err := os.ReadDir(dir)
+// packageLibs reads every def package under `<root>/defs/` (ADR-0038 §2). Each
+// `defs/<name>/` is one package, and its files are keyed `<name>/<file>` — the same key
+// shape ADR-0033 already uses for sub-packages, so the parser qualifies the defs
+// `<name>.<def>` with no further work.
+//
+// A plan's siblings are no longer defs. That is the convenience ADR-0014 §1 bought and
+// this layout removes: a def is addressed by name, so it lives where the name says.
+func packageLibs(root string) (map[string]string, error) {
+	defsDir := filepath.Join(root, dirDefs)
+	entries, err := os.ReadDir(defsDir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]string{}, nil // a project may have no defs of its own
+		}
 		return nil, err
 	}
-	planAbs, _ := filepath.Abs(planPath)
-	invAbs, _ := filepath.Abs(invPath)
 	libs := map[string]string{}
 	for _, e := range entries {
-		if e.IsDir() {
-			if err := readSubPackage(dir, e.Name(), libs); err != nil {
-				return nil, err
+		if !e.IsDir() {
+			if strings.HasSuffix(e.Name(), ".shellf") {
+				return nil, fmt.Errorf("%s: a def belongs to a package directory — "+
+					"move it to defs/<package>/%s (ADR-0038)", filepath.Join(defsDir, e.Name()), e.Name())
 			}
 			continue
 		}
-		if !strings.HasSuffix(e.Name(), ".shellf") {
-			continue
-		}
-		path := filepath.Join(dir, e.Name())
-		abs, _ := filepath.Abs(path)
-		if abs == planAbs || abs == invAbs {
-			continue // the plan carries the `on` blocks; the inventory is parsed apart
-		}
-		src, err := os.ReadFile(path)
-		if err != nil {
+		if err := readSubPackage(defsDir, e.Name(), libs); err != nil {
 			return nil, err
 		}
-		libs[e.Name()] = string(src)
 	}
 	return libs, nil
+}
+
+// Project layout (ADR-0038). A plan lives in `<root>/plans/`, so the root is its parent —
+// and `defs/`, `assets/` and `inventories/` hang off the same root. Directory names, not
+// a marker file: the layout already identifies the project, and a second mechanism to say
+// the same thing is one to keep in sync.
+const (
+	dirPlans  = "plans"
+	dirDefs   = "defs"
+	dirAssets = "assets"
+)
+
+// projectRoot returns the directory holding the layout, given the invoked plan.
+//
+// The error is most of this function's value: it is the first thing anyone running shellf
+// outside a project will see, so it names the layout rather than reporting a file that
+// could not be found somewhere inside the loader.
+func projectRoot(planPath string) (string, error) {
+	abs, err := filepath.Abs(planPath)
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Dir(abs)
+	if filepath.Base(dir) != dirPlans {
+		return "", fmt.Errorf("%s is not inside a shellf project: a plan lives in `plans/`, "+
+			"beside `defs/`, `assets/` and `inventories/` (ADR-0038)", planPath)
+	}
+	return filepath.Dir(dir), nil
 }
 
 // cycleResolver is the lookup a run uses — a package user def first, so an
