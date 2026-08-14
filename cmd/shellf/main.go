@@ -304,6 +304,13 @@ func loadPlanPackage(planPath, invPath string, baseVars, setVars map[string]stri
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s: %v", planPath, err)
 	}
+	// A call cycle is a writing error, refused from reading the files (ADR-0030 §6). Here
+	// and not in `lang`, because the graph spans two sets no single package sees: these
+	// user defs, and the stdlib, which `lang` cannot import. The evaluator keeps its own
+	// guard, but it fires on the target, after earlier steps have already acted (#311).
+	if err := lang.CheckCycles(defs, cycleResolver(defs)); err != nil {
+		return nil, nil, fmt.Errorf("%s: %v", planPath, err)
+	}
 	// `file.template` steps are NOT resolved here: they render per host, in the
 	// orchestrator, over each host's env (ADR-0024). See templateRenderer.
 	//
@@ -602,6 +609,19 @@ func packageLibs(planPath, invPath string) (map[string]string, error) {
 		libs[e.Name()] = string(src)
 	}
 	return libs, nil
+}
+
+// cycleResolver is the lookup a run uses — a package user def first, so an
+// `override def` wins, then the stdlib (ADR-0014). Giving the cycle check the same order
+// is the point: it must see the graph the run will walk, or it misses the case where a
+// user def redirects a stdlib one back into itself.
+func cycleResolver(defs map[string]lang.Def) lang.DefResolver {
+	return func(name string) (lang.Def, bool) {
+		if d, ok := defs[name]; ok {
+			return d, true
+		}
+		return std.Lookup(name)
+	}
 }
 
 // defSource maps each resolved instruction name to its def source, for the

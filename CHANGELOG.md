@@ -110,6 +110,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A call cycle is refused when the defs are loaded, not when they run (ADR-0030 §6, which
+  asked for exactly this). The evaluator's guard fired on the target, after earlier steps
+  of the plan had already acted — a partially applied host, for an error that is a writing
+  mistake readable from the files. The guard stays as a backstop, and both report the same
+  chain (`a -> b -> a`) so the two cannot drift. The walk follows delegations too, an edge
+  a phase-only traversal would miss (#311).
 - A run survives its control-channel bridge being dropped. ADR-0031 §2 promised the
   control host "reconnects, relaunches the bridge, and the dialogue resumes" — it dialled
   once, so a flaky link, an idle timeout or a killed `sshd` child was fatal to every
