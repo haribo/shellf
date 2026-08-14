@@ -97,6 +97,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `shellf status` no longer acts on the target. It is documented as reporting state
+  without acting (ADR-0013), and its usage line says so, but the engine handled check
+  mode and then fell through to apply: every remaining Go instruction ran for real, so
+  `status` wrote files and executed shells on a host the operator only meant to look at.
+  It now reports `would.<tag>` for a resource that has drifted, and the guard still runs
+  so a converged one is still recognised (#338).
 - An ask survives a bridge left over from a previous session. A resident agent outlives
   the command that created it (ADR-0005), so `shellf status` and the `shellf run` that
   follows attach different bridges; the agent held the dead one, which looks alive until
