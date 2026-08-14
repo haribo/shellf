@@ -194,7 +194,6 @@ func TestSshdConfig_ConvergedHostPreviewsNoAction(t *testing.T) {
 // with perfect content and mode 644 looks installed and does nothing.
 type dropInFake struct {
 	contentOK, modeOK bool
-	mode              string // what `stat -c %a` reports when modeOK is false
 }
 
 func (d *dropInFake) As(string) engine.Executor    { return d }
