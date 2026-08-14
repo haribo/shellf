@@ -17,7 +17,7 @@ func TestValidationViaCheckPhase(t *testing.T) {
 	        r = shell { visudo-stub }
 	        if !r { return err.validation(r) }
 	    }
-	    apply { shell { would-write "$name" } }
+	    apply { shell { would-write "$name" } return ok.done }
 	}`
 
 	t.Run("a refused content never reaches the write", func(t *testing.T) {

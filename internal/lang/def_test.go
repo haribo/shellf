@@ -161,11 +161,11 @@ func TestParseDef_Interp_Unknown(t *testing.T) {
 
 func TestParseDef_Errors(t *testing.T) {
 	cases := []string{
-		`def x(pkg str) { return ok.a }`,                 // missing colon in param
-		`def x() { apply { if a { return nope.tag } } }`, // unknown outcome category
-		`def x() { apply { shell { echo hi } }`,          // unterminated def (missing })
-		`def x() { apply { 5 == } }`,                     // dangling operator
-		`def x() { apply {} return ok.a }`,               // return outside a phase (ADR-0007)
+		`def x(pkg str) { return ok.a }`,                                // missing colon in param
+		`def x() { apply { if a { return nope.tag } return ok.done } }`, // unknown outcome category
+		`def x() { apply { shell { echo hi } return ok.done }`,          // unterminated def (missing })
+		`def x() { apply { 5 == return ok.done } }`,                     // dangling operator
+		`def x() { apply { return ok.done } return ok.a }`,              // return outside a phase (ADR-0007)
 	}
 	for _, src := range cases {
 		if _, err := ParseDefs(src); err == nil {

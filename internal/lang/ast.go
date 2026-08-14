@@ -10,6 +10,11 @@ type Def struct {
 	Interp   string // def-declared interpreter from `def … using <interp>` (ADR-0012)
 	Override bool   // `override def` — deliberately shadows a stdlib def (ADR-0014)
 	Phases   []Phase
+	// Delegate is a call sitting outside every phase: this def *is* that one with
+	// rebound arguments (ADR-0037 §2). Exactly one, and only `check` may sit beside it —
+	// the callee's own phases then run in every mode, which is what an `apply` cannot do,
+	// since `apply` never runs in `--dry-run`.
+	Delegate *Call
 	Return   *Outcome // derived: apply's trailing `return`, for `would` in check (ADR-0007)
 	Source   string   // the def's own source text, to ship to the agent (ADR-0014)
 }

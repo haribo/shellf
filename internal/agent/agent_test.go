@@ -215,7 +215,7 @@ func TestServe_UserDef_Resolves(t *testing.T) {
 	f.set(`echo "$msg"`, "", 0)
 	resp := serve(t, f, proto.Request{
 		Mode:  "apply",
-		Defs:  map[string]string{"greet": `def greet(msg: str) { apply { shell { echo "$msg" } } }`},
+		Defs:  map[string]string{"greet": `def greet(msg: str) { apply { shell { echo "$msg" } return ok.done } }`},
 		Steps: []proto.Step{{Instruction: "greet", Args: map[string]string{"msg": "hi"}}},
 	})
 	if len(resp.Results) != 1 || resp.Results[0].Category != "ok" {
@@ -233,7 +233,7 @@ func TestServe_ImportedDef_QualifiedName(t *testing.T) {
 	f.set(`run-deploy`, "", 0)
 	resp := serve(t, f, proto.Request{
 		Mode:  "apply",
-		Defs:  map[string]string{"web.deploy": `def deploy(port: str) { apply { shell { run-deploy } } }`},
+		Defs:  map[string]string{"web.deploy": `def deploy(port: str) { apply { shell { run-deploy } return ok.done } }`},
 		Steps: []proto.Step{{Instruction: "web.deploy", Args: map[string]string{"port": "8080"}}},
 	})
 	if len(resp.Results) != 1 || resp.Results[0].Category != "ok" {
@@ -254,7 +254,7 @@ func TestServe_UserDef_OverridesStdlib(t *testing.T) {
 	f.set(`my-mkdir "$path"`, "", 0)
 	resp := serve(t, f, proto.Request{
 		Mode:  "apply",
-		Defs:  map[string]string{"dir.ensure": `override def ensure(path: str) { apply { shell { my-mkdir "$path" } } }`},
+		Defs:  map[string]string{"dir.ensure": `override def ensure(path: str) { apply { shell { my-mkdir "$path" } return ok.done } }`},
 		Steps: []proto.Step{{Instruction: "dir.ensure", Args: map[string]string{"path": "/opt"}}},
 	})
 	if resp.Results[0].Category != "ok" {

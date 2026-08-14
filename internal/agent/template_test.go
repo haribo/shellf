@@ -31,7 +31,7 @@ func TestTemplateDef_RendersPerHost(t *testing.T) {
 			resp := serveCompCh(t, f, ch, proto.Request{
 				Mode: "apply",
 				Defs: map[string]string{
-					"t": `def t(src: str) { apply { c = ~file.render(~file.read(src)) shell { printf '%s' "$c" } } }`,
+					"t": `def t(src: str) { apply { c = ~file.render(~file.read(src)) shell { printf '%s' "$c" } return ok.done } }`,
 				},
 				Steps: []proto.Step{{Instruction: "t", Args: map[string]string{"src": src}, Control: []string{"src"}}},
 			})
@@ -58,7 +58,7 @@ func TestTemplateDef_UndefinedVariableFails(t *testing.T) {
 	resp := serveCompCh(t, newComp(), ch, proto.Request{
 		Mode: "apply",
 		Defs: map[string]string{
-			"t": `def t(src: str) { apply { c = ~file.render(~file.read(src)) } }`,
+			"t": `def t(src: str) { apply { c = ~file.render(~file.read(src)) return ok.done } }`,
 		},
 		Steps: []proto.Step{{Instruction: "t", Args: map[string]string{"src": src}, Control: []string{"src"}}},
 	})

@@ -74,6 +74,25 @@ func EvalDefFull(def Def, args, with map[string]string, control []string, ex eng
 	}
 	desired := ev.desiredState(def) // the effective arguments, keyed by name
 
+	// A delegation: this def *is* its callee with rebound arguments (ADR-0037 §2). Its
+	// own `check` runs first — argument validation belongs to the wrapper, and `check`
+	// runs in every mode (ADR-0035) — then the callee runs whole, in this mode. Every
+	// phase of the callee therefore applies: it decides convergence in `--dry-run`, where
+	// an `apply` would have decided nothing.
+	if def.Delegate != nil {
+		for _, ph := range def.Phases { // only `check` can be here (parser-enforced)
+			if o := ev.evalPhase(ph); o != nil {
+				return ev.toResult(*o), nil
+			}
+		}
+		res := ev.evalCall(*def.Delegate)
+		r, ok := res.(engine.Result)
+		if !ok {
+			ev.fail("%s did not yield a verdict", def.Delegate.Name)
+		}
+		return r, nil
+	}
+
 	// Status: report observed vs desired without acting (ADR-0013). A check
 	// error still surfaces; otherwise observe drives the field report.
 	if mode == engine.Status {
@@ -149,7 +168,6 @@ func (ev *evaluator) changedIfActed(r engine.Result) engine.Result {
 	}
 	return r
 }
-
 
 func retTag(def Def) string {
 	if def.Return != nil {
