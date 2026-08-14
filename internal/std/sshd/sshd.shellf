@@ -10,6 +10,13 @@
 # Note: `sshd -t` also validates the *running* configuration it includes, so a drop-in
 # that conflicts with an existing directive is caught here rather than at reload.
 def config(name: str, content: str) as root {
+    # Same shape, same reason as sudo.write (#340): a composed `apply` is invisible to
+    # `--dry-run`, so this def states its own convergence — content, and the mode sshd
+    # refuses to start without.
+    observe {
+        f = "/etc/ssh/sshd_config.d/${name}.conf"
+        return state(synced: shell { test -f "$f" && printf '%s\n' "$content" | cmp -s - "$f" }.exit == 0, secured: shell { [ "$(stat -c '%a' "$f" 2>/dev/null)" = "600" ] }.exit == 0)
+    }
     check {
         r = shell {
             tmp=$(mktemp)

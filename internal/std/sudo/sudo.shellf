@@ -15,6 +15,14 @@
 # Both are handled here, because a rule that looks installed and does nothing is worse
 # than one that fails.
 def write(name: str, content: str) as root {
+    # This def composes in `apply`, and `apply` never runs in `--dry-run` — so without an
+    # `observe` of its own it has no opinion there, and previews `would.written` on a host
+    # whose drop-in is already correct (#340). The two fields mirror what `apply` does:
+    # the content, and the mode sudo insists on.
+    observe {
+        f = "/etc/sudoers.d/${name}"
+        return state(synced: shell { test -f "$f" && printf '%s\n' "$content" | cmp -s - "$f" }.exit == 0, secured: shell { [ "$(stat -c '%a' "$f" 2>/dev/null)" = "440" ] }.exit == 0)
+    }
     check {
         n = shell { printf '%s' "$name" | grep -qE '^[A-Za-z0-9_-]+$' }
         if !n { return err.badName(n) }

@@ -146,3 +146,100 @@ func TestSudoWrite_ConvergedRunIsNotChanged(t *testing.T) {
 		t.Fatal("nothing changed, so the result must not be changed — a check-phase shell is a read")
 	}
 }
+
+// #340: a def that composes in `apply` and declares no `observe` of its own has no
+// opinion in check mode — `apply` never runs there, so its callees' `observe` phases
+// never run either. `sudo.write` therefore announced `would.written` on a host where the
+// drop-in was already correct: a preview of a write that would not happen, in a tool
+// whose thesis is that a run is readable before it happens.
+func TestSudoWrite_ConvergedHostPreviewsNoAction(t *testing.T) {
+	f := &checkFake{nameOK: true, visudoOK: true, converged: true}
+	res := evalWith(t, "sudo.write",
+		map[string]string{"name": "haribo", "content": "haribo ALL=(ALL) NOPASSWD: ALL"},
+		f, engine.Check)
+	if res.Category == engine.ERR {
+		t.Fatalf("must not error: %s", res.String())
+	}
+	if res.Tag != "already" {
+		t.Fatalf("a converged drop-in must preview as already, got %s", res.String())
+	}
+}
+
+// The other half: drift must still preview the action, or the fix would be "always say
+// already", which reports nothing and breaks the run it is meant to describe.
+func TestSudoWrite_DriftedHostPreviewsTheWrite(t *testing.T) {
+	f := &checkFake{nameOK: true, visudoOK: true, converged: false}
+	res := evalWith(t, "sudo.write",
+		map[string]string{"name": "haribo", "content": "haribo ALL=(ALL) NOPASSWD: ALL"},
+		f, engine.Check)
+	if res.Category != engine.WOULD {
+		t.Fatalf("a drifted drop-in must preview the write, got %s", res.String())
+	}
+}
+
+// sshd.config has the same shape and the same defect: composed apply, no observe.
+func TestSshdConfig_ConvergedHostPreviewsNoAction(t *testing.T) {
+	f := &checkFake{sshdOK: true, converged: true}
+	res := evalWith(t, "sshd.config",
+		map[string]string{"name": "hardening", "content": "PermitRootLogin no"},
+		f, engine.Check)
+	if res.Tag != "already" {
+		t.Fatalf("a converged sshd drop-in must preview as already, got %s", res.String())
+	}
+}
+
+// dropInFake separates the two things a drop-in must get right, which checkFake conflates
+// behind a single `converged` flag. Content and mode drift independently, and the mode
+// half is the one that fails silently: sudo ignores a drop-in that is not 0440, so a rule
+// with perfect content and mode 644 looks installed and does nothing.
+type dropInFake struct {
+	contentOK, modeOK bool
+	mode              string // what `stat -c %a` reports when modeOK is false
+}
+
+func (d *dropInFake) As(string) engine.Executor    { return d }
+func (d *dropInFake) Using(string) engine.Executor { return d }
+
+func (d *dropInFake) Shell(script string, _ engine.Env) engine.ShellResult {
+	switch {
+	case strings.Contains(script, "grep -qE"), strings.Contains(script, "visudo -cf"),
+		strings.Contains(script, "sshd -t -f"):
+		return engine.ShellResult{Exit: 0} // validation passes; not what these tests probe
+	case strings.Contains(script, "cmp -s"):
+		return boolExit(d.contentOK)
+	case strings.Contains(script, "stat -c"):
+		return boolExit(d.modeOK)
+	}
+	return engine.ShellResult{Exit: 0}
+}
+
+// #340: each half of convergence must be able to fail on its own. A def observing only
+// the content would report `already` on a drop-in sudo is silently skipping.
+func TestDropIn_ModeDriftAloneIsNotConverged(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		def               string
+		args              map[string]string
+		contentOK, modeOK bool
+		want              string
+	}{
+		{"sudo content and mode right", "sudo.write",
+			map[string]string{"name": "haribo", "content": "x"}, true, true, "ok.already"},
+		{"sudo mode wrong alone", "sudo.write",
+			map[string]string{"name": "haribo", "content": "x"}, true, false, "would.written"},
+		{"sudo content wrong alone", "sudo.write",
+			map[string]string{"name": "haribo", "content": "x"}, false, true, "would.written"},
+		{"sshd content and mode right", "sshd.config",
+			map[string]string{"name": "hardening", "content": "x"}, true, true, "ok.already"},
+		{"sshd mode wrong alone", "sshd.config",
+			map[string]string{"name": "hardening", "content": "x"}, true, false, "would.written"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &dropInFake{contentOK: tc.contentOK, modeOK: tc.modeOK}
+			res := evalWith(t, tc.def, tc.args, f, engine.Check)
+			if res.String() != tc.want {
+				t.Fatalf("got %s, want %s", res.String(), tc.want)
+			}
+		})
+	}
+}
