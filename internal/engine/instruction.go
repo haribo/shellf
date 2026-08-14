@@ -30,7 +30,12 @@ type Instruction interface {
 }
 
 // Run drives an instruction through the engine.
-// Invariant: in Check mode, Apply is NEVER called (the read-only contract).
+//
+// Invariant: in Check **and Status** mode, Apply is NEVER called (the read-only
+// contract). Status was missing from that list and fell through to Apply, so
+// `shellf status` — documented as reporting state without acting (ADR-0013) — wrote
+// files and ran shells on the target (#338). Both modes are named here because the
+// invariant was stated for one and enforced for neither.
 func Run(inst Instruction, ex Executor, mode Mode) Result {
 	if r := inst.PreCheck(); r != nil {
 		return *r
@@ -38,11 +43,16 @@ func Run(inst Instruction, ex Executor, mode Mode) Result {
 	if skip := inst.Guard(ex); skip != nil {
 		return *skip // identical in both modes
 	}
-	if mode == Check {
+	if mode == Check || mode == Status {
 		res := Would(inst.ChangedTag()) // derived, never authored
 		res.Changed = true              // it would act
-		if p := inst.Preview(ex); p != nil {
-			res.Shell = p // e.g. the diff a file-copy would apply
+		// Preview is a `--dry-run` concern (ADR-0029): it describes an action the
+		// operator asked to see. `status` asks a different question — is this in sync —
+		// and the guard above already answered it.
+		if mode == Check {
+			if p := inst.Preview(ex); p != nil {
+				res.Shell = p // e.g. the diff a file-copy would apply
+			}
 		}
 		return res
 	}
