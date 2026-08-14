@@ -178,4 +178,38 @@ printf '%s' "$out" | grep -q 'file.read:motd.tmpl' || fail "the refusal must nam
 # And the refusal must be a refusal, not a warning: nothing lands on the target.
 docker exec "$cname" test -e /tmp/shellf-e2e/sneaked && fail "a refused read still wrote its destination"
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held"
+say "6. a dropped bridge is relaunched mid-run (#347, #329 case 3)"
+# The property that justifies a socket in the agent's workdir rather than a pipe
+# (ADR-0031 §2): the agent stays detached and keeps listening, so a dropped session costs
+# a reconnection, not the job. Until #347 the control host dialled once and gave up.
+#
+# The plan sleeps first, so the bridge can be killed on the target *before* the step that
+# needs the control host. A run that survives that is the whole claim.
+mkdir -p "$work/drop"
+printf 'late render, after the bridge died\n' > "$work/drop/late.tmpl"
+cat > "$work/drop/plan.shellf" <<'EOF'
+on target {
+    shell { sleep 6 }
+    file.template(%"late.tmpl", "/tmp/shellf-e2e/late")
+}
+EOF
+"$work/shellf" run --inventory "$work/inventory.shellf" --insecure --secret-file apisecret="$work/secret" "$work/drop/plan.shellf" > "$work/drop.out" 2>&1 &
+runpid=$!
+# Wait for the bridge to exist, then kill it — during the sleep, before the template.
+for _ in $(seq 1 40); do
+  if docker exec "$cname" pgrep -f '__bridge' >/dev/null 2>&1; then break; fi
+  sleep 0.25
+done
+docker exec "$cname" pgrep -f '__bridge' >/dev/null 2>&1 || fail "no bridge was ever opened, so this step proves nothing"
+docker exec "$cname" pkill -f '__bridge' || fail "could not kill the bridge"
+# `wait` must not kill the harness under `set -e` before its status is read — the point
+# of this step is to report the failure, not to die of it.
+rc=0; wait "$runpid" || rc=$?
+cat "$work/drop.out"
+[ "$rc" -eq 0 ] || fail "the run did not survive a dropped bridge (exit $rc)"
+# The detached agent must be untouched: a dropped session kills the bridge, not the job.
+docker exec "$cname" pgrep -f '__agent-resident' >/dev/null 2>&1 || fail "the agent died with its bridge"
+# And the step that needed the control host after the drop actually got its answer.
+docker exec "$cname" grep -q 'late render' /tmp/shellf-e2e/late || fail "the post-drop render never reached the target"
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, bridge relaunched"

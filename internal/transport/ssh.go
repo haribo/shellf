@@ -312,23 +312,51 @@ func (s SSH) bridge(binPath, wd string) (stop func()) {
 	var (
 		mu       sync.Mutex
 		sessions []io.Closer
+		stopped  bool
 	)
+	isStopped := func() bool { mu.Lock(); defer mu.Unlock(); return stopped }
+
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		cn, err := s.dialConn()
-		if err != nil {
-			return
+		// Relaunch the bridge when its session drops, which is the property that makes a
+		// socket worth having over a pipe (ADR-0031 §2): the agent stays detached and
+		// keeps listening, so a dropped session costs a reconnection, not the job. Until
+		// #347 this loop ran once, so a flaky link or an idle timeout killed every
+		// remaining `~file.read` in the job.
+		for attempt := 0; attempt <= bridgeRetries; attempt++ {
+			if isStopped() {
+				return
+			}
+			if attempt > 0 {
+				// Back off, and re-check: a host that has genuinely gone away must not
+				// keep the run alive by spinning on a dial that cannot succeed.
+				time.Sleep(bridgeRetryWait)
+				if isStopped() {
+					return
+				}
+			}
+			cn, err := s.dialConn()
+			if err != nil {
+				continue
+			}
+			out, in, sess, err := cn.duplex(posix(bridgeCmd(binPath, wd)))
+			if err != nil {
+				_ = cn.close()
+				continue
+			}
+			mu.Lock()
+			sessions = append(sessions, sess)
+			mu.Unlock()
+			_ = s.Channel(out, in)
+			_ = cn.close()
+			// Serving returned: either the session dropped, or stop() closed it. Only
+			// the first deserves another bridge — mistaking our own shutdown for a drop
+			// would reopen a session nobody will use, on a host we are done with.
+			if isStopped() {
+				return
+			}
 		}
-		defer func() { _ = cn.close() }()
-		out, in, sess, err := cn.duplex(posix(bridgeCmd(binPath, wd)))
-		if err != nil {
-			return
-		}
-		mu.Lock()
-		sessions = append(sessions, sess)
-		mu.Unlock()
-		_ = s.Channel(out, in)
 	}()
 
 	// stop closes the session, which kills the bridge on the target and unblocks the
@@ -339,6 +367,7 @@ func (s SSH) bridge(binPath, wd string) (stop func()) {
 	// notice its session went away — the job's result is already in hand by then.
 	return func() {
 		mu.Lock()
+		stopped = true // set before closing, so the loop reads it as shutdown, not a drop
 		for _, c := range sessions {
 			_ = c.Close()
 		}
@@ -458,6 +487,15 @@ func (s SSH) hostKeyCallback() (ssh.HostKeyCallback, error) {
 }
 
 var pollWait = time.Second // poll cadence; a var so tests can shrink it
+
+// How hard the control host tries to put a bridge back after its session drops (#347).
+// Bounded on purpose: a host that has genuinely gone away must let the run end, and the
+// job then fails on its next ask, naming the resource it waited for (ADR-0031 §2) rather
+// than hanging. Vars so a test need not sit through the waits.
+var (
+	bridgeRetries   = 5
+	bridgeRetryWait = 500 * time.Millisecond
+)
 
 // push streams the binary (stdin) to a temp then renames onto path (atomic, +x):
 // an interrupted push never leaves a partial binary, and a concurrent run sees
