@@ -293,4 +293,49 @@ docker exec "$cname" pgrep -f '__agent-resident' >/dev/null 2>&1 || fail "the ag
 # And the step that needed the control host after the drop actually got its answer.
 docker exec "$cname" grep -q 'late render' /tmp/shellf-e2e/late || fail "the post-drop render never reached the target"
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, bridge relaunched"
+say "7. every stdlib def runs against the target, and re-runs converged (#367)"
+# The plan that makes "every def is tested" a fact. `def-coverage.sh` guarantees the list
+# is complete; this step guarantees the calls actually work — a plan that names every def
+# and never runs would satisfy the ratchet and prove nothing.
+mkdir -p "$work/cov/inner"
+printf 'one\n' > "$work/cov/inner/one.txt"
+printf 'two\n' > "$work/cov/inner/two.txt"
+tar czf "$here/assets/cov/sample.tar.gz" -C "$work/cov" inner
+
+cov() { "$work/shellf" run --inventory "$work/inventory.shellf" --insecure "$@" "$here/plans/coverage.shellf"; }
+rc=0; out="$(cov 2>&1)" || rc=$?; printf '%s\n' "$out"
+printf '%s' "$out" | grep -qE 'err\.' && fail "a def failed against the target"
+
+# Idempotence, def by def: on a second run every def that *observes* state must report a
+# converged outcome. This is where a def that only looks idempotent gets caught — it is
+# how `dir.owner` was found reporting `changed` forever, its observe comparing
+# `user:group` against an argument that named a user (#367).
+#
+# Action-shaped defs are excluded, and the set is derived rather than listed: a def with
+# no `observe` phase always acts by design (ADR-0029) — `service.restart` restarting is
+# the point, not a defect. Deriving it means the exclusion cannot rot as the stdlib moves.
+rc=0; out="$(cov 2>&1)" || rc=$?; printf '%s\n' "$out"
+[ "$rc" -eq 0 ] || fail "the coverage plan failed on its second run (exit $rc)"
+
+observed="$(
+  for f in "$root"/internal/std/*/*.shellf; do
+    pkg="$(basename "$(dirname "$f")")"
+    awk -v pkg="$pkg" '
+      /^(override )?def [a-z]/ { if (name && seen) print pkg "." name; name=$0; sub(/^(override )?def /,"",name); sub(/\(.*/,"",name); seen=0 }
+      /observe \{/ { seen=1 }
+      END { if (name && seen) print pkg "." name }
+    ' "$f"
+  done | sort -u
+)"
+
+acting="$(printf '%s' "$out" | grep -oE '^\s+[a-z][a-z0-9.-]*\(.*\) ok\.[a-z]+$' \
+  | sed -E 's/^\s+([a-z][a-z0-9.-]*)\(.*\) ok\.([a-z]+)$/\1 \2/' \
+  | grep -vE ' (already|present|ready|match|converged)$' | awk '{print $1}' | sort -u)"
+
+for d in $acting; do
+  if printf '%s\n' "$observed" | grep -qx "$d"; then
+    fail "$d observes state yet acted on a converged target — its observe never matches"
+  fi
+done
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, bridge relaunched, every def exercised"
