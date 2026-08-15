@@ -17,7 +17,11 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
 work="$(mktemp -d)"
 cname="shellf-e2e-$$"
-image="debian:stable-slim"
+# The target image is built from test/e2e/Dockerfile and tagged by that file's hash, so a
+# run reuses it and only pays the build when the image itself changes (#366). The old
+# harness apt-installed sshd into debian:stable-slim on every run — and still could not
+# exercise systemd, docker or ufw.
+image_tag="shellf-e2e:$(sha256sum "$here/Dockerfile" | cut -c1-12)"
 
 cleanup() { docker rm -f "$cname" >/dev/null 2>&1 || true; rm -rf "$work"; }
 trap cleanup EXIT
@@ -28,17 +32,75 @@ fail() { printf '\033[1;31mFAIL: %s\033[0m\n' "$*" >&2; exit 1; }
 say "build shellf"
 ( cd "$root" && go build -o "$work/shellf" ./cmd/shellf )
 
-say "start throwaway sshd container ($image)"
-docker run -d --name "$cname" "$image" sleep 600 >/dev/null
-docker exec "$cname" sh -c '
-  set -e
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get update -qq
-  apt-get install -y -qq openssh-server >/dev/null
-  useradd -m -s /bin/bash deploy
-  mkdir -p /home/deploy/.ssh /run/sshd
-  chmod 700 /home/deploy/.ssh
-'
+if ! docker image inspect "$image_tag" >/dev/null 2>&1; then
+  say "build the target image ($image_tag) — once, then reused"
+  docker build -q -t "$image_tag" -f "$here/Dockerfile" "$here" >/dev/null
+fi
+
+say "start the throwaway target ($image_tag)"
+# systemd as PID 1 plus a docker daemon inside. `--privileged` is the documented way; the
+# narrower recipe (SYS_ADMIN alone) died on the CI runner with exit 255 and no logs.
+#
+# `--cgroupns=private` is not a detail — it is the whole safety of this line. A container
+# whose PID 1 is systemd behaves as a machine manager: it takes ownership of the cgroup
+# tree it can see and reconciles it against the units it knows. Given the host's tree
+# (`--cgroupns=host` plus a rw bind mount of /sys/fs/cgroup), it finds `user.slice` and
+# `session-N.scope` accounted for by no unit of its own, and tidies them away. On systemd,
+# session membership *is* cgroup position, so `systemd-logind` concludes the user logged
+# out — and the developer's graphical session dies. Observed twice on an Arch/GNOME
+# machine, one second after container start, with no crash of any kind.
+#
+# A private cgroup namespace gives it its own root to manage, and the explicit bind mount
+# is then unnecessary: `--privileged` already mounts /sys/fs/cgroup writable inside.
+docker run -d --name "$cname" \
+  --privileged --cgroupns=private --tmpfs /run --tmpfs /run/lock \
+  "$image_tag" >/dev/null
+
+# The guard for the above, asserted rather than trusted: inside a private namespace PID 1
+# sits at its own root (`0::/`). Under the host namespace it reads
+# `0::/system.slice/docker-<id>.scope`, which is exactly the configuration that reached
+# out and logged the operator out. A comment claiming a small blast radius is what hid
+# this the first time; this is the same claim, checkable.
+# Two checks, because each misses what the other catches.
+#
+# Structural: under a private namespace PID 1 sits at its own root (`/`, or `/init.scope`
+# once systemd has moved itself there). Under the host's, Docker places it under
+# `/system.slice/docker-<id>.scope` — so the path carrying `docker-` *is* the dangerous
+# configuration. Read the v2 line rather than the whole file: legacy v1 lines ride along,
+# and the first version of this guard compared the lot and would have failed every run.
+pid1_cgroup="$(docker exec "$cname" sh -c 'grep "^0::" /proc/1/cgroup' 2>/dev/null || true)"
+case "${pid1_cgroup:-none}" in
+  *docker-*|none)
+    docker rm -f "$cname" >/dev/null 2>&1
+    fail "the target sits in the host cgroup tree (${pid1_cgroup:-<no answer>}) — its systemd would manage the host's sessions" ;;
+esac
+
+# Semantic, and the one that matters: the host's login sessions must be invisible from
+# inside. Their presence is what a container's systemd tidied away, taking the operator's
+# graphical session with it — session membership on systemd *is* cgroup position.
+if docker exec "$cname" sh -c 'find /sys/fs/cgroup -maxdepth 4 -name "session-*.scope" | head -1' 2>/dev/null | grep -q .; then
+  docker rm -f "$cname" >/dev/null 2>&1
+  fail "the target can see host login sessions — it would log the operator out"
+fi
+
+# Wait for the boot to settle: `systemctl is-system-running` answers `running` (or
+# `degraded`, which a masked-unit container reaches legitimately) once units have started.
+booted=""
+for _ in $(seq 1 60); do
+  state="$(docker exec "$cname" systemctl is-system-running 2>&1 || true)"
+  case "$state" in running|degraded) booted=yes; break ;; esac
+  sleep 0.5
+done
+if [ -z "$booted" ]; then
+  # Say why, not just that. A boot failure here is environment-specific — cgroup layout,
+  # missing capability, a unit that cannot start — and "never finished booting" sends the
+  # reader nowhere.
+  printf 'last state: %s\n' "${state:-<no answer>}"
+  printf 'container: %s\n' "$(docker inspect -f '{{.State.Status}} exit={{.State.ExitCode}}' "$cname" 2>&1)"
+  echo '--- container logs ---'; docker logs --tail 40 "$cname" 2>&1 || true
+  echo '--- failed units ---'; docker exec "$cname" systemctl --failed --no-pager 2>&1 || true
+  fail "the target never finished booting"
+fi
 
 say "install an ephemeral key"
 ssh-keygen -t ed25519 -N '' -f "$work/id" -q
@@ -46,15 +108,15 @@ docker cp "$work/id.pub" "$cname:/home/deploy/.ssh/authorized_keys"
 docker exec "$cname" sh -c '
   chown -R deploy:deploy /home/deploy/.ssh
   chmod 600 /home/deploy/.ssh/authorized_keys
-  /usr/sbin/sshd
+  systemctl restart ssh
 '
 
 ip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$cname")"
 [ -n "$ip" ] || fail "could not read container IP"
 
-# Wait for sshd to accept connections (image boot + first apt can lag).
-for i in $(seq 1 30); do
-  if docker exec "$cname" sh -c 'pgrep sshd >/dev/null'; then break; fi
+# Wait for sshd to accept connections.
+for _ in $(seq 1 30); do
+  if docker exec "$cname" systemctl is-active --quiet ssh; then break; fi
   sleep 1
 done
 
