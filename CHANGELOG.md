@@ -8,6 +8,17 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **BREAKING** — `dir.copy` is a def over the new `~dir.sync` primitive (ADR-0039), and
+  its source must be marked: `dir.copy("tree", …)` becomes `dir.copy(%"tree", …)`. The
+  tree is read on the control host, and since #332 that is what `%` says — the marker was
+  absent only because the copy used to be expanded before the plan was sent. The 32 MB
+  ceiling is gone, files stream in chunks, and the transfer sends **only what differs**:
+  a converged tree transfers zero bytes and reports `already`, where the old expansion
+  inlined the whole tree into the request on every run. A third argument, `compare`,
+  chooses size+mtime (default) or `"sha256"`; the default cannot see a change that
+  preserves both, which is stated in `language.md` rather than left to be discovered.
+  With it goes the last control-side transformation — `file.template` lost its own
+  in #334 (#335).
 - **BREAKING** — a project is laid out by type (ADR-0038): `plans/` holds what a run
   invokes, `defs/<package>/` the reusable instructions, `assets/` the content a plan
   delivers, `inventories/` the hosts. The anchor moves from the invoked plan's directory
