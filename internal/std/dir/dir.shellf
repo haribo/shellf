@@ -24,3 +24,28 @@ def exists(path: str) {
         return err.absent
     }
 }
+
+# Deliver a control-host tree to the target (ADR-0036 §6, ADR-0039). A def over
+# `~dir.sync` with `delete = "false"`: **a copy is a sync that deletes nothing** — what is
+# already on the target and absent from the source is left alone.
+#
+# `src` must be marked `%"…"` at the call site: the tree is read on the control host, and
+# an unmarked path would name a directory on the target, which is a different operation.
+#
+# The transfer sends only what differs, so a converged tree costs one round trip and zero
+# bytes — the property the old control-side expansion never had, since it inlined the
+# whole tree into the request on every run and refused above 32 MB.
+#
+# `compare` defaults to size+mtime. Its limit is documented rather than discovered: a
+# change that preserves both is invisible to it — a restored backup with preserved
+# timestamps is the realistic case. Pass `compare = "sha256"` when that matters.
+def copy(src: str, dst: str, compare: str = "meta") {
+    apply {
+        # The transfer reports how many files it wrote, so the verdict comes from the work
+        # itself — no `observe` walking the tree a second time to ask a question the sync
+        # already answered.
+        n = ~dir.sync(src, dst, "false", compare)
+        if n == "0" { return ok.already }
+        return ok.copied
+    }
+}

@@ -118,7 +118,9 @@ docker exec "$cname" grep -q 'token=SEKRET-abc123' /tmp/shellf-e2e/motd || fail 
 docker exec "$cname" grep -q 'role=edge' /tmp/shellf-e2e/motd || fail "the per-host var did not reach the template"
 # the `for` loop unrolled and both iterations ran on the target
 docker exec "$cname" test -d /tmp/shellf-e2e/one && docker exec "$cname" test -d /tmp/shellf-e2e/two || fail "the for loop did not run both iterations"
-# dir-copy delivered the control-host tree, text + binary, byte-for-byte (ADR-0028)
+# dir.copy delivered the control-host tree, text + binary, byte-for-byte. Since #335 it is
+# a def over `~dir.sync` (ADR-0039), so this also exercises the streaming transfer, the
+# manifest and the staged writes against a real target.
 docker exec "$cname" grep -q 'delivered by dir-copy' /tmp/shellf-e2e/delivered/hello.txt || fail "dir-copy did not deliver the text file"
 want_bin="$(sha256sum "$here/assets/tree/assets/logo.bin" | cut -d' ' -f1)"
 got_bin="$(docker exec "$cname" sha256sum /tmp/shellf-e2e/delivered/assets/logo.bin | cut -d' ' -f1)"
@@ -133,6 +135,11 @@ printf '%s' "$out" | grep -q 'already' || fail "re-apply should report 'already'
 if printf '%s' "$out" | grep -qE 'created|written'; then
   fail "re-apply mutated; expected a no-op"
 fi
+
+# #335 / ADR-0039 §1: a converged tree transfers **zero bytes**, not merely writes nothing.
+# `dir.copy` reports `already` only if `~dir.sync` wrote no file — the property the old
+# control-side expansion never had, since it inlined the whole tree on every run.
+printf '%s' "$out" | grep -qE 'dir\.copy.*ok\.already' || fail "a converged tree must report already, not a fresh copy"
 
 say "3b. --dry-run on a converged host announces nothing (#339)"
 # The reason the delegation form exists (ADR-0037 §2). `file.template` is now `file.write`

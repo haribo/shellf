@@ -16,7 +16,7 @@ on target {
     }
     file.write("/tmp/shellf-e2e/sec", "${apisecret}")
     # deliver a control-host tree verbatim, binary-safe (ADR-0028)
-    dir.copy("tree", "/tmp/shellf-e2e/delivered")
+    dir.copy(%"tree", "/tmp/shellf-e2e/delivered")
     file.template(%"motd.tmpl", "/tmp/shellf-e2e/motd")
     # `with { }` overrides a variable for this one call (ADR-0022): `greeting` is
     # not a global here — it exists only for this render, and for the shell below.
