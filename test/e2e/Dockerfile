@@ -24,8 +24,12 @@ RUN apt-get update -qq \
       openssh-server sudo \
       docker.io docker-cli docker-compose \
       ufw iptables \
-      git curl ca-certificates tar xz-utils coreutils \
- && rm -rf /var/lib/apt/lists/*
+      git curl ca-certificates tar xz-utils coreutils
+
+# The package lists are kept, deliberately. Removing them is the usual way to shrink an
+# image, and it makes the target unrepresentative: a real Debian host has them, so
+# `apt.install` works there and failed here with "Unable to locate package". An example
+# should not have to carry an `apt.update()` that only this container needs.
 
 # The unprivileged user shellf connects as. Passwordless sudo because the whole point is
 # to exercise `as root` escalation (ADR-0011) — this is a throwaway target, not a model
