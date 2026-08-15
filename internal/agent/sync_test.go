@@ -337,3 +337,61 @@ func TestSync_RetriesAfterAStaleBridge(t *testing.T) {
 		t.Fatalf("content: %q (%v)", b, err)
 	}
 }
+
+// #373: a preview answers what a transfer would do and does none of it. It is what lets
+// `dir.sync` name the files it would delete *before* deleting them — a destructive
+// instruction whose `--dry-run` says nothing is a design defect, not a missing nicety.
+func TestSync_PreviewTouchesNothing(t *testing.T) {
+	root := sourceTree(t)
+	dst := filepath.Join(t.TempDir(), "delivered")
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(dst, "stale.txt")
+	if err := os.WriteFile(stale, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ch := syncPair(t, root)
+
+	n, extras, err := ch.Preview("dir.sync:tree", dst, "meta")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("the preview must count what it would write, got %d", n)
+	}
+	if len(extras) != 1 || extras[0] != "stale.txt" {
+		t.Fatalf("the preview must name what it would remove, got %v", extras)
+	}
+	// And it did none of it.
+	if _, err := os.Stat(stale); err != nil {
+		t.Fatal("a preview must not remove anything")
+	}
+	if _, err := os.Stat(filepath.Join(dst, "hello.txt")); err == nil {
+		t.Fatal("a preview must not write anything")
+	}
+}
+
+// The acting half, so the two cannot drift: `delete = true` removes what the source does
+// not have, and the destination ends up matching.
+func TestSync_DeleteMakesTheTargetMatch(t *testing.T) {
+	root := sourceTree(t)
+	dst := filepath.Join(t.TempDir(), "delivered")
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dst, "stale.txt"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ch := syncPair(t, root)
+
+	if _, err := ch.Sync("dir.sync:tree", dst, "meta", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "stale.txt")); err == nil {
+		t.Fatal("delete = true must remove what the source does not have")
+	}
+	if _, err := os.Stat(filepath.Join(dst, "hello.txt")); err != nil {
+		t.Fatal("delete = true must still deliver the source")
+	}
+}

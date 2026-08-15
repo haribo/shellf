@@ -26,14 +26,14 @@ func EvalDef(def Def, args, with map[string]string, ex engine.Executor, mode eng
 // resolver rejects any call, which is what a def evaluated in isolation (a unit test)
 // wants.
 func EvalDefWith(def Def, args, with map[string]string, ex engine.Executor, mode engine.Mode, resolve DefResolver, stack []string, fetch ControlFetcher) (res engine.Result, err error) {
-	return EvalDefFull(def, args, with, nil, ex, mode, resolve, stack, fetch, nil)
+	return EvalDefFull(def, args, with, nil, ex, mode, resolve, stack, fetch, nil, nil)
 }
 
 // EvalDefFull is EvalDefWith plus `control`: the names of arguments the caller wrote
 // `%"…"`. Without it the marker dies at the call boundary — a def receives strings, so
 // `deliver(%"conf.j2", dst)` would read on the target, which is the opposite of what
 // the plan asked (#332).
-func EvalDefFull(def Def, args, with map[string]string, control []string, ex engine.Executor, mode engine.Mode, resolve DefResolver, stack []string, fetch ControlFetcher, sync TreeSyncer) (res engine.Result, err error) {
+func EvalDefFull(def Def, args, with map[string]string, control []string, ex engine.Executor, mode engine.Mode, resolve DefResolver, stack []string, fetch ControlFetcher, sync TreeSyncer, preview TreePreviewer) (res engine.Result, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			if ee, ok := r.(evalErr); ok {
@@ -48,7 +48,7 @@ func EvalDefFull(def Def, args, with map[string]string, control []string, ex eng
 	// block's become (applied last). `As("")` is a no-op (ADR-0011).
 	ev := &evaluator{
 		ex: ex.As(def.Become).Using(def.Interp), vars: map[string]value{},
-		resolve: resolve, mode: mode, stack: stack, fetch: fetch, sync: sync,
+		resolve: resolve, mode: mode, stack: stack, fetch: fetch, sync: sync, preview: preview,
 	}
 	for k, v := range args {
 		ev.vars[k] = v
@@ -200,6 +200,7 @@ type evaluator struct {
 	resolve DefResolver
 	fetch   ControlFetcher
 	sync    TreeSyncer
+	preview TreePreviewer
 	mode    engine.Mode
 	stack   []string
 	acted   bool // a shell ran, or a callee reported changed (ADR-0030 §3)
@@ -220,6 +221,10 @@ type ControlFetcher func(resource string, payload []byte, vars map[string]string
 // Separate from ControlFetcher because the answer is a sequence, not one payload: the
 // agent writes files as they arrive rather than holding a tree in memory to return it.
 type TreeSyncer func(resource, dst, compare string, del bool) (int, error)
+
+// TreePreviewer answers what a transfer would do without doing it: how many files it
+// would write, and which it would remove (#373).
+type TreePreviewer func(resource, dst, compare string) (int, []string, error)
 
 func (ev *evaluator) fail(format string, a ...any) {
 	panic(evalErr{fmt.Errorf(format, a...)})
@@ -361,8 +366,16 @@ func (ev *evaluator) evalPreview(ph Phase) string {
 	var out []string
 	for _, s := range ph.Stmts {
 		ev.evalStmt(s)
-		if sr, ok := ev.last.(engine.ShellResult); ok {
-			if t := strings.TrimRight(sr.Stdout, " \t\r\n"); t != "" {
+		switch v := ev.last.(type) {
+		case engine.ShellResult:
+			if t := strings.TrimRight(v.Stdout, " \t\r\n"); t != "" {
+				out = append(out, t)
+			}
+		case string:
+			// A primitive can describe what it would do too. Collecting only shell stdout
+			// made that impossible, so a destructive primitive had no way to say what it
+			// would remove — which is the whole point of previewing one (#373).
+			if t := strings.TrimRight(v, " \t\r\n"); t != "" {
 				out = append(out, t)
 			}
 		}
@@ -451,7 +464,12 @@ func (ev *evaluator) evalExpr(e Expr) value {
 		return controlPath(ev.interpolate(x.Value))
 	case Call:
 		if x.Control {
-			return ev.evalControlCall(x)
+			// A primitive's value is the last thing evaluated, like a shell's or a def
+			// call's. Without this a `preview { ~dir.sync(…) }` collected nothing and
+			// announced a deletion it could not describe (#373).
+			v := ev.evalControlCall(x)
+			ev.last = v
+			return v
 		}
 		return ev.evalCall(x)
 	}
@@ -499,7 +517,7 @@ func (ev *evaluator) evalCall(c Call) value {
 			control = append(control, name)
 		}
 	}
-	res, err := EvalDefFull(def, args, nil, control, ev.ex, ev.mode, ev.resolve, append(ev.stack, c.Name), ev.fetch, ev.sync)
+	res, err := EvalDefFull(def, args, nil, control, ev.ex, ev.mode, ev.resolve, append(ev.stack, c.Name), ev.fetch, ev.sync, ev.preview)
 	if err != nil {
 		ev.fail("%s: %v", c.Name, err)
 	}
@@ -679,6 +697,20 @@ func (ev *evaluator) evalSync(c Call, arg value) value {
 	if ev.sync == nil {
 		ev.fail("~dir.sync: no control host channel available for this run")
 	}
+	// Inert in check mode, by construction rather than by where it is called: it asks for
+	// the delta, receives the terminator alone and writes nothing. A destructive
+	// primitive that acted in `--dry-run` because someone put it outside a `preview`
+	// would be the worst kind of surprise (#373).
+	if ev.mode == engine.Check {
+		if ev.preview == nil {
+			ev.fail("~dir.sync: no control host channel available for this run")
+		}
+		n, extras, err := ev.preview(resourceKey("dir.sync", string(src)), dst, compare)
+		if err != nil {
+			ev.fail("%v", err)
+		}
+		return syncSummary(n, extras, del == "true")
+	}
 	n, err := ev.sync(resourceKey("dir.sync", string(src)), dst, compare, del == "true")
 	if err != nil {
 		ev.fail("%v", err)
@@ -689,6 +721,25 @@ func (ev *evaluator) evalSync(c Call, arg value) value {
 		ev.acted = true
 	}
 	return strconv.Itoa(n)
+}
+
+// syncSummary is what a transfer says it would do. Deletions are named one per line and
+// not merely counted: "3 files would be removed" tells an operator nothing they can act
+// on, and this is the text a `preview` phase puts in front of them before they say yes.
+func syncSummary(written int, extras []string, del bool) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d file(s) would be transferred", written)
+	if !del || len(extras) == 0 {
+		if len(extras) > 0 {
+			fmt.Fprintf(&b, "; %d extra file(s) on the target would be left alone", len(extras))
+		}
+		return b.String()
+	}
+	fmt.Fprintf(&b, "; %d file(s) would be REMOVED from the target:", len(extras))
+	for _, e := range extras {
+		fmt.Fprintf(&b, "\n  - %s", e)
+	}
+	return b.String()
 }
 
 // readTarget reads a path on the target. Content comes back base64-encoded so a binary

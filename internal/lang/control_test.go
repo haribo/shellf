@@ -111,7 +111,7 @@ func evalWithFetchControl(t *testing.T, src, entry string, args map[string]strin
 		byName[d.Name] = d
 	}
 	resolve := func(n string) (Def, bool) { d, ok := byName[n]; return d, ok }
-	return EvalDefFull(byName[entry], args, nil, control, noopExec{}, engine.Apply, resolve, []string{entry}, fetch, nil)
+	return EvalDefFull(byName[entry], args, nil, control, noopExec{}, engine.Apply, resolve, []string{entry}, fetch, nil, nil)
 }
 
 type noopExec struct{}
@@ -583,5 +583,53 @@ func TestControl_SyncArity(t *testing.T) {
 		map[string]string{"s": "tree", "dst": "/opt/x"}, []string{"s"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "exactly 4") {
 		t.Fatalf("wrong arity must be refused by count: %v", err)
+	}
+}
+
+// #373: `~dir.sync` must be inert in check mode wherever it appears — not only inside a
+// `preview` phase. A destructive primitive that acted during `--dry-run` because someone
+// wrote it in an `apply` would be the worst kind of surprise, and no phase placement
+// should be load-bearing for that.
+func TestControl_SyncIsInertInCheckMode(t *testing.T) {
+	// A `preview` phase, because that is the one that *runs* in check mode: `apply` is
+	// never evaluated there, so the primitive is unreachable from it. The guard exists for
+	// the phases that do run — preview today, and anything else tomorrow.
+	src := `def d(s: str, dst: str) {
+		preview { ~dir.sync(s, dst, "true", "meta") }
+		apply { x = ~dir.sync(s, dst, "true", "meta") return ok.x }
+	}`
+	defs, err := ParseDefs(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolve := func(string) (Def, bool) { return Def{}, false }
+
+	var synced, previewed bool
+	sync := func(string, string, string, bool) (int, error) { synced = true; return 1, nil }
+	preview := func(string, string, string) (int, []string, error) { previewed = true; return 1, []string{"gone"}, nil }
+
+	args := map[string]string{"s": "tree", "dst": "/opt/x"}
+	// A non-nil fetcher: the agent supplies all three together, and the generic
+	// "no control host channel" guard tests that one.
+	fetch := func(string, []byte, map[string]string) ([]byte, error) { return nil, nil }
+	if _, err := EvalDefFull(defs[0], args, nil, []string{"s"}, noopExec{}, engine.Check,
+		resolve, []string{"d"}, fetch, sync, preview); err != nil {
+		t.Fatal(err)
+	}
+	if synced {
+		t.Fatal("check mode must never reach the acting transfer")
+	}
+	if !previewed {
+		t.Fatal("check mode must ask what the transfer would do")
+	}
+
+	// And apply does act, or the inertness would be indistinguishable from doing nothing.
+	synced, previewed = false, false
+	if _, err := EvalDefFull(defs[0], args, nil, []string{"s"}, noopExec{}, engine.Apply,
+		resolve, []string{"d"}, fetch, sync, preview); err != nil {
+		t.Fatal(err)
+	}
+	if !synced {
+		t.Fatal("apply must perform the transfer")
 	}
 }

@@ -269,6 +269,28 @@ The default's limit is documented rather than discovered: when it matters, pass
 `"sha256"`. What is on the target and absent from the source is left alone — a copy is a
 sync that deletes nothing.
 
+### `dir.sync` — the same transfer, and it deletes
+
+```
+dir.sync(%"assets/site", "/var/www/site")
+```
+
+One word apart from `dir.copy`, and that word removes: everything on the target and absent
+from the source is deleted. Use it when the destination must *match* the source, not
+merely contain it.
+
+`--dry-run` names what it would remove, one file per line, before removing anything:
+
+```
+dir.sync(dst=/var/www/site, src=site) would.synced
+    preview ▸ 2 file(s) would be transferred; 2 file(s) would be REMOVED from the target:
+    preview ▸   - old-page.html
+    preview ▸   - stale/asset.css
+```
+
+That preview is not a nicety. A destructive instruction whose dry-run says nothing tells
+the operator what they lost only afterwards.
+
 ## Per-call override — `with { … }` (ADR-0022)
 
 Any instruction call — a def, `shell`, `file.template`, or a builtin — may be followed

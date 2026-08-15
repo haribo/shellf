@@ -37,6 +37,10 @@ func serveSync(ch *proto.Conn, allow *Allowed, m proto.Msg) error {
 	if compare == "" {
 		compare = "meta"
 	}
+	// A preview asks the same question and takes no answer: the delta is computed, the
+	// terminator carries it, and not one file is streamed. It is what lets a destructive
+	// def name what it would remove before it removes it (#373).
+	preview := m.Vars["preview"] == "true"
 
 	have := make(map[string]proto.Entry, len(m.Entries))
 	for _, e := range m.Entries {
@@ -61,8 +65,10 @@ func serveSync(ch *proto.Conn, allow *Allowed, m proto.Msg) error {
 		if same(have[rel], source[rel], compare) {
 			continue
 		}
-		if err := sendFile(ch, m.ID, src, rel, source[rel]); err != nil {
-			return err
+		if !preview {
+			if err := sendFile(ch, m.ID, src, rel, source[rel]); err != nil {
+				return err
+			}
 		}
 		written++
 	}

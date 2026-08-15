@@ -40,6 +40,17 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `dir.sync(%"src", dst)` makes the target *match* the source: it delivers, and it
+  **removes** what the source does not have. One word apart from `dir.copy` — the
+  primitive already took the flag — which is why ADR-0039 refused to add it as a side
+  effect and why it lands with a `preview` phase: `--dry-run` names every file it would
+  delete, one per line, before deleting any. A destructive instruction whose dry-run says
+  nothing tells the operator what they lost only afterwards. The primitive is inert in
+  check mode by construction, so previewing costs a manifest exchange and touches nothing
+  (#373).
+- A `preview` phase can describe a **primitive**, not only a shell. It collected shell
+  stdout alone, so a primitive had no way to say what it would do — which is exactly what
+  previewing a destructive one requires (#373).
 - A def can **delegate**: one call outside every phase, and the def *is* that def with
   rebound arguments (ADR-0037 §2). The callee's own phases then run in every mode, which
   an `apply` cannot do — `apply` is skipped in `--dry-run`, so a wrapper calling from
