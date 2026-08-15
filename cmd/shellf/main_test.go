@@ -732,3 +732,33 @@ func TestControlChannel_ServesADeclaredPath(t *testing.T) {
 		t.Fatal("a plan declaring a control-host path must get a bridge")
 	}
 }
+
+// #356: a plan that catches an error with `?` and handles it did its job, yet shellf
+// exited 1 — so `shellf run … && echo deployed` never printed, and the language's own
+// error handling was unusable from a script or a CI job.
+//
+// Found by running examples/plans/webserver.shellf, which demonstrates `?` on purpose:
+// nothing failed, and the run reported failure.
+func TestReportText_ACaughtErrorIsNotARunFailure(t *testing.T) {
+	caught := []orchestrator.BlockReport{{
+		Target: "web",
+		Hosts: []orchestrator.HostOutcome{{
+			Host: "app1",
+			Response: proto.Response{Results: []proto.StepResult{
+				{Label: "apt.install(pkg=absent)", Category: "err", Tag: "runtime", Caught: true},
+				{Label: "shell(logger …)", Category: "ok", Tag: "ran"},
+			}},
+		}},
+	}}
+	if _, anyErr := reportText(caught); anyErr {
+		t.Fatal("an error the plan caught and handled must not fail the run")
+	}
+
+	// The other half: an uncaught error still fails, or `?` would be a way to make every
+	// failure invisible.
+	uncaught := caught
+	uncaught[0].Hosts[0].Response.Results[0].Caught = false
+	if _, anyErr := reportText(uncaught); !anyErr {
+		t.Fatal("an uncaught error must still fail the run")
+	}
+}

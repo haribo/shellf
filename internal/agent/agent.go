@@ -134,6 +134,7 @@ func runSteps(steps []proto.Step, ex engine.Executor, m engine.Mode, scope map[s
 			pending = ""
 		}
 		sr := runStep(step, ex, m, scope, defs, ch)
+		sr.Caught = step.Caught // the report must tell a handled error from a failed run
 		results = append(results, sr)
 		if step.Caught && step.Bind != "" && sr.Category == "err" {
 			pending = step.Bind // `?` defers the halt to the handling `if`

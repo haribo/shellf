@@ -338,4 +338,70 @@ for d in $acting; do
   fi
 done
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, bridge relaunched, every def exercised"
+say "8. the shipped examples run for real (#356)"
+# They are what a new user copies, and neither had ever been executed — which is how
+# `blog.shellf` shipped enabling a deny-inbound firewall without an SSH rule, and calling
+# `ufw.open(port, …)` in the bare form the language forbids. Parsing proved nothing.
+#
+# Two targets, not one: the examples' inventory declares `web` and `app` as separate
+# machines, and they are. Sharing a container makes `blog` fail to bind :80 because
+# `webserver` installed nginx there — an artefact of the test setup, not of the examples,
+# and papering over it in the plan would teach a port nobody chose.
+appname="$cname-app"
+docker run -d --name "$appname" \
+  --privileged --cgroupns=private --tmpfs /run --tmpfs /run/lock \
+  "$image_tag" >/dev/null
+trap 'docker rm -f "$cname" "$appname" >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
+for _ in $(seq 1 60); do
+  st="$(docker exec "$appname" systemctl is-system-running 2>/dev/null || true)"
+  case "$st" in running|degraded) break ;; esac
+  sleep 0.5
+done
+docker cp "$work/id.pub" "$appname:/home/deploy/.ssh/authorized_keys"
+docker exec "$appname" sh -c '
+  chown -R deploy:deploy /home/deploy/.ssh
+  chmod 600 /home/deploy/.ssh/authorized_keys
+  systemctl restart ssh
+'
+appip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$appname")"
+[ -n "$appip" ] || fail "could not read the app container IP"
+
+cat > "$work/examples-inventory.shellf" <<EOF
+host web = {
+    address: "$ip", user: "deploy", key: "$work/id",
+    pkg: "nginx-light", webroot: "/opt/dogfood"
+}
+host app = {
+    address: "$appip", user: "deploy", key: "$work/id",
+    domain: "blog.example.test"
+}
+EOF
+printf 'examples-db-password' > "$work/dbpw"
+
+example() {
+  "$work/shellf" run --inventory "$work/examples-inventory.shellf" --insecure \
+    --secret-file db_password="$work/dbpw" "$@"
+}
+
+for plan in "$root"/examples/plans/*.shellf; do
+  name="$(basename "$plan")"
+  rc=0; out="$(example "$plan" 2>&1)" || rc=$?
+  printf '%s\n' "$out"
+  # The exit code is the signal, not the presence of `err.` in the report: an example
+  # demonstrating `?` shows a caught error on purpose, and since #356 a caught error no
+  # longer fails the run. Grepping for `err.` would refuse the very feature being taught.
+  [ "$rc" -eq 0 ] || fail "example $name failed (exit $rc)"
+
+  # And it converges: an example that cannot be run twice teaches a plan nobody can re-run.
+  rc=0; out="$(example "$plan" 2>&1)" || rc=$?
+  printf '%s\n' "$out"
+  [ "$rc" -eq 0 ] || fail "example $name failed on its second run (exit $rc)"
+done
+
+# Artefacts asserted on the target, not in the report.
+docker exec "$cname" test -f /opt/dogfood/index.html || fail "the webserver example delivered nothing"
+docker exec "$appname" grep -q 'blog.example.test' /opt/blog/.env || fail "the blog .env was not rendered per host"
+docker exec "$appname" sh -c 'docker compose -f /opt/blog/docker-compose.yml ps --status running | grep -q blog' \
+  || fail "the blog stack is not running"
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, bridge relaunched, every def exercised, examples run"

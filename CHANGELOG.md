@@ -130,6 +130,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- An error caught with `?` no longer fails the run. The plan handles it and carries on —
+  that is what `?` is for (ADR-0009) — yet shellf exited 1, so `shellf run … && …` never
+  succeeded for any plan using the language's own error handling, and a CI job saw a
+  failure where there was none. The report now carries the caught flag the agent already
+  had, and only an *uncaught* error fails the run (#356).
 - `dir.owner` converges. Its `observe` read `stat -c '%U:%G'` — `covuser:deploy` — and
   compared it to the argument, which names a user: the two can only be equal when the
   caller writes `"user:group"`, so every run reported `changed` and every

@@ -212,14 +212,19 @@ type Request struct {
 }
 
 type StepResult struct {
-	Label    string              `json:"label"`
-	Category string              `json:"category"`
-	Tag      string              `json:"tag,omitempty"`
-	Changed  bool                `json:"changed,omitempty"`
-	Shell    *engine.ShellResult `json:"shell,omitempty"`
-	Fields   []engine.FieldDiff  `json:"fields,omitempty"`  // status mode: observed vs desired (ADR-0013)
-	Preview  string              `json:"preview,omitempty"` // check mode: what an action would do (ADR-0029)
-	Sub      []StepResult        `json:"sub,omitempty"`
+	Label    string `json:"label"`
+	Category string `json:"category"`
+	Tag      string `json:"tag,omitempty"`
+	Changed  bool   `json:"changed,omitempty"`
+	// Caught marks a step whose `?` handed its error to the plan (ADR-0009). It rides the
+	// result because the *report* has to tell the two apart: an error the plan handled is
+	// not a failed run, and counting it as one made `shellf run … && …` unusable for any
+	// plan using `?` (#356).
+	Caught  bool                `json:"caught,omitempty"`
+	Shell   *engine.ShellResult `json:"shell,omitempty"`
+	Fields  []engine.FieldDiff  `json:"fields,omitempty"`  // status mode: observed vs desired (ADR-0013)
+	Preview string              `json:"preview,omitempty"` // check mode: what an action would do (ADR-0029)
+	Sub     []StepResult        `json:"sub,omitempty"`
 }
 
 type Response struct {

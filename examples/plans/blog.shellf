@@ -9,8 +9,9 @@
 #   shellf run    --inventory examples/inventories/inventory.shellf --secret-file db_password=./db_password examples/plans/blog.shellf
 #   shellf status --inventory examples/inventories/inventory.shellf examples/plans/blog.shellf
 #
-# Flags come before the plan file. Assumes /opt/blog holds a docker-compose.yml;
-# the point here is the shellf orchestration around it.
+# Flags come before the plan file. The stack's compose file is delivered from
+# `assets/blog/`, so the plan is self-contained; the point here is the shellf
+# orchestration around it.
 
 # Defs live under `defs/<package>/` and are called qualified by the directory
 # (ADR-0038 §2): `common.banner` is defs/common/, `blog.data-dir` is defs/blog/.
@@ -21,6 +22,12 @@ on app {
 
     # Firewall: deny inbound by default, then open exactly the stack's ports. A
     # `for` over a literal list (ADR-0017) is the clearest form for N ports.
+    #
+    # **22 comes first, and the order is the lesson.** Enabling a deny-inbound firewall
+    # without an SSH rule locks you out of the machine you are configuring — and shellf
+    # would report every step green while doing it. This example shipped in that order
+    # until it was run for the first time (#356).
+    ufw.open("22", "tcp")
     ufw.default("deny", "allow")
     for port in ["80", "443"] {
         ufw.open("${port}", "tcp")
@@ -37,7 +44,20 @@ on app {
     # Render the .env per host (ADR-0019/0024): `@{domain}` is the host's inventory
     # var, `@{db_password}` is the secret passed via --secret-file (redacted in all
     # output, ADR-0018). Config files keep their own `${...}` untouched.
-    file.template(%"blog/compose.env.tmpl", "/opt/blog/.env")
+    # `as root`, because `blog.data-dir` created /opt/blog as root and the connecting
+    # user cannot write there. `file.template` is path-dependent, not intrinsically
+    # privileged (ADR-0011), so the caller escalates — the same reason `webserver.shellf`
+    # wraps its writes to /opt/dogfood.
+    as root {
+        file.template(%"blog/compose.env.tmpl", "/opt/blog/.env")
+    }
+
+    # The stack's compose file, delivered from `assets/` like any other content. An
+    # example that assumes a file it does not ship is an example nobody can run — and one
+    # nothing can test.
+    as root {
+        file.copy(%"blog/docker-compose.yml", "/opt/blog/docker-compose.yml")
+    }
 
     # Bring the stack up. `compose-up` is action-shaped; `--dry-run` still previews
     # what it would recreate (docker compose --dry-run, ADR-0029).
