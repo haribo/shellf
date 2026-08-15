@@ -59,6 +59,7 @@ Rules must be concise. One rule per line when possible.
 - History of decisions lives in `docs/adr/`, not in the docs above — each ADR carries its own rejected alternatives.
 - Documentation strategy: `docs/adr/0001-documentation-strategy.md`.
 - ADR lifecycle: never delete an ADR; a reversal is a **new** ADR, and both sides carry the link — `Superseded by ADR-NNN` on the old, `Supersedes ADR-MMM` on the new. A one-sided link is how the chain rots
+- An ADR records a **decision**, never the state of the code. A note saying something is "not yet implemented" is true for a day and misleading afterwards — it was added to ADR-0036 and went stale within one. Track the gap in the issue; the ADR says what was decided and why.
 - An ADR whose decision no longer applies, with no replacement, is marked `Deprecated` — never edited away or moved
 - In-place edits only for corrections of form and for clarifications that do not change the decision
 - ADR lifecycle details and the full status vocabulary: see ADR-0001 §4
