@@ -24,9 +24,22 @@ import (
 // trip is what buys a converged run its zero bytes, and what keeps a large tree from
 // costing one round trip per file.
 func (c *Channel) Sync(resource, dst, compare string, del bool) (int, error) {
+	n, _, err := c.sync(resource, dst, compare, del, false)
+	return n, err
+}
+
+// Preview answers what a transfer *would* do without doing any of it: the delta is
+// computed on the control host, no file is streamed, nothing is written and nothing is
+// removed. It returns how many files would be written and which would be deleted, so a
+// destructive def can name them before acting (#373).
+func (c *Channel) Preview(resource, dst, compare string) (int, []string, error) {
+	return c.sync(resource, dst, compare, false, true)
+}
+
+func (c *Channel) sync(resource, dst, compare string, del, preview bool) (int, []string, error) {
 	entries, err := scanTarget(dst, compare)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	// Two attempts, for the same reason an ask gets two (#334): the connection this agent
 	// holds may belong to a session that has already ended, and it only reveals itself on
@@ -36,15 +49,15 @@ func (c *Channel) Sync(resource, dst, compare string, del bool) (int, error) {
 	//
 	// Restarting is safe and cheap by construction (ADR-0039 §3): the second attempt
 	// rebuilds its manifest, so whatever arrived before the drop is not sent again.
-	n, err, stale := c.streamOnce(resource, dst, compare, del, entries)
+	n, extras, err, stale := c.streamOnce(resource, dst, compare, del, preview, entries)
 	if stale {
 		entries, serr := scanTarget(dst, compare)
 		if serr != nil {
-			return 0, serr
+			return 0, nil, serr
 		}
-		n, err, _ = c.streamOnce(resource, dst, compare, del, entries)
+		n, extras, err, _ = c.streamOnce(resource, dst, compare, del, preview, entries)
 	}
-	return n, err
+	return n, extras, err
 }
 
 // scanTarget lists what is already under dst, in the same shape the control host walks
@@ -93,20 +106,20 @@ func scanTarget(dst, compare string) ([]proto.Entry, error) {
 // rule #298 already imposes on `file.write`: a reader must never catch a partial file. A
 // transfer cut short therefore leaves the destination as it was, and the retry's manifest
 // lists what did arrive, so only the interrupted file is sent again (ADR-0039 §3).
-func (c *Channel) streamOnce(resource, dst, compare string, del bool, entries []proto.Entry) (n int, err error, stale bool) {
+func (c *Channel) streamOnce(resource, dst, compare string, del, preview bool, entries []proto.Entry) (n int, extras []string, err error, stale bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	conn, err := c.attached(resource)
 	if err != nil {
-		return 0, err, false
+		return 0, nil, err, false
 	}
 	c.next++
 	id := strconv.Itoa(c.next)
 	if err := conn.Send(proto.Msg{Kind: proto.KindAsk, ID: id, Resource: resource,
-		Entries: entries, Vars: map[string]string{"compare": compare}}); err != nil {
+		Entries: entries, Vars: syncVars(compare, preview)}); err != nil {
 		c.drop()
-		return 0, fmt.Errorf("%s: control host went away while asking: %v", resource, err), true
+		return 0, nil, fmt.Errorf("%s: control host went away while asking: %v", resource, err), true
 	}
 
 	var staged *stagedFile
@@ -120,7 +133,7 @@ func (c *Channel) streamOnce(resource, dst, compare string, del bool, entries []
 		m, err := conn.Recv()
 		if err != nil {
 			c.drop()
-			return 0, fmt.Errorf("%s: control host went away mid-transfer: %v", resource, err), true
+			return 0, nil, fmt.Errorf("%s: control host went away mid-transfer: %v", resource, err), true
 		}
 		if m.ID != id {
 			continue // another exchange on the same socket
@@ -128,33 +141,33 @@ func (c *Channel) streamOnce(resource, dst, compare string, del bool, entries []
 		switch m.Kind {
 		case proto.KindAnswer: // only ever an error for this resource
 			if m.Error != "" {
-				return 0, fmt.Errorf("%s: %s", resource, m.Error), false
+				return 0, nil, fmt.Errorf("%s: %s", resource, m.Error), false
 			}
-			return 0, fmt.Errorf("%s: unexpected answer mid-transfer", resource), false
+			return 0, nil, fmt.Errorf("%s: unexpected answer mid-transfer", resource), false
 
 		case proto.KindFile:
 			if m.Mode != "" && staged == nil || (staged != nil && staged.rel != m.Path) {
 				if staged != nil {
 					if err := staged.commit(); err != nil {
-						return 0, err, false
+						return 0, nil, err, false
 					}
 				}
 				if staged, err = openStaged(dst, m.Path, m.Mode, m.MTime); err != nil {
-					return 0, err, false
+					return 0, nil, err, false
 				}
 			}
 			if m.Data != "" {
 				b, derr := base64.StdEncoding.DecodeString(m.Data)
 				if derr != nil {
-					return 0, fmt.Errorf("%s: unreadable chunk for %s", resource, m.Path), false
+					return 0, nil, fmt.Errorf("%s: unreadable chunk for %s", resource, m.Path), false
 				}
 				if err := staged.write(b); err != nil {
-					return 0, err, false
+					return 0, nil, err, false
 				}
 			}
 			if m.Last {
 				if err := staged.commit(); err != nil {
-					return 0, err, false
+					return 0, nil, err, false
 				}
 				staged = nil
 			}
@@ -163,16 +176,26 @@ func (c *Channel) streamOnce(resource, dst, compare string, del bool, entries []
 			if staged != nil {
 				// A file left open when the terminator arrives means the stream lost a
 				// chunk: refuse rather than commit a truncated file.
-				return 0, fmt.Errorf("%s: transfer ended with %s unfinished", resource, staged.rel), false
+				return 0, nil, fmt.Errorf("%s: transfer ended with %s unfinished", resource, staged.rel), false
 			}
-			if del {
+			if del && !preview {
 				if err := removeExtras(dst, m.Delete); err != nil {
-					return 0, err, false
+					return 0, nil, err, false
 				}
 			}
-			return m.Written, nil, false
+			return m.Written, m.Delete, nil, false
 		}
 	}
+}
+
+// syncVars carries the primitive's options to the control host. `preview` makes the
+// answer a terminator with no file behind it.
+func syncVars(compare string, preview bool) map[string]string {
+	v := map[string]string{"compare": compare}
+	if preview {
+		v["preview"] = "true"
+	}
+	return v
 }
 
 // stagedFile is one destination being written: a temporary beside it, renamed on commit.

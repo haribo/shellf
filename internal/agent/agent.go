@@ -304,13 +304,14 @@ func runInstruction(step proto.Step, ex engine.Executor, m engine.Mode, defs map
 	resolve := resolver(defs)
 	fetch := fetcher(ch)
 	sync := syncer(ch)
+	preview := previewer(ch)
 	// A package user def resolves first, so it can add new instructions and
 	// (with `override def`) replace a stdlib one (ADR-0014).
 	if def, ok := defs[step.Instruction]; ok {
-		return lang.EvalDefFull(def, step.Args, step.With, step.Control, ex, m, resolve, []string{step.Instruction}, fetch, sync)
+		return lang.EvalDefFull(def, step.Args, step.With, step.Control, ex, m, resolve, []string{step.Instruction}, fetch, sync, preview)
 	}
 	if def, ok := std.Lookup(step.Instruction); ok {
-		return lang.EvalDefFull(def, step.Args, step.With, step.Control, ex, m, resolve, []string{step.Instruction}, fetch, sync)
+		return lang.EvalDefFull(def, step.Args, step.With, step.Control, ex, m, resolve, []string{step.Instruction}, fetch, sync, preview)
 	}
 	inst, err := dispatch(step)
 	if err != nil {
@@ -342,6 +343,15 @@ func syncer(ch *Channel) lang.TreeSyncer {
 		return nil
 	}
 	return ch.Sync
+}
+
+// previewer is the same entry point in check mode: it answers what a transfer would do
+// and touches nothing (#373).
+func previewer(ch *Channel) lang.TreePreviewer {
+	if ch == nil {
+		return nil
+	}
+	return ch.Preview
 }
 
 func resolver(defs map[string]lang.Def) lang.DefResolver {
