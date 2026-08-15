@@ -397,6 +397,7 @@ var ControlPrimitives = map[string]bool{
 	"file.write":  true,
 	"file.render": true,
 	"dir.list":    true,
+	"dir.sync":    true,
 }
 
 func (p *parser) primary() Expr {

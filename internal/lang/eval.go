@@ -26,14 +26,14 @@ func EvalDef(def Def, args, with map[string]string, ex engine.Executor, mode eng
 // resolver rejects any call, which is what a def evaluated in isolation (a unit test)
 // wants.
 func EvalDefWith(def Def, args, with map[string]string, ex engine.Executor, mode engine.Mode, resolve DefResolver, stack []string, fetch ControlFetcher) (res engine.Result, err error) {
-	return EvalDefFull(def, args, with, nil, ex, mode, resolve, stack, fetch)
+	return EvalDefFull(def, args, with, nil, ex, mode, resolve, stack, fetch, nil)
 }
 
 // EvalDefFull is EvalDefWith plus `control`: the names of arguments the caller wrote
 // `%"…"`. Without it the marker dies at the call boundary — a def receives strings, so
 // `deliver(%"conf.j2", dst)` would read on the target, which is the opposite of what
 // the plan asked (#332).
-func EvalDefFull(def Def, args, with map[string]string, control []string, ex engine.Executor, mode engine.Mode, resolve DefResolver, stack []string, fetch ControlFetcher) (res engine.Result, err error) {
+func EvalDefFull(def Def, args, with map[string]string, control []string, ex engine.Executor, mode engine.Mode, resolve DefResolver, stack []string, fetch ControlFetcher, sync TreeSyncer) (res engine.Result, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			if ee, ok := r.(evalErr); ok {
@@ -48,7 +48,7 @@ func EvalDefFull(def Def, args, with map[string]string, control []string, ex eng
 	// block's become (applied last). `As("")` is a no-op (ADR-0011).
 	ev := &evaluator{
 		ex: ex.As(def.Become).Using(def.Interp), vars: map[string]value{},
-		resolve: resolve, mode: mode, stack: stack, fetch: fetch,
+		resolve: resolve, mode: mode, stack: stack, fetch: fetch, sync: sync,
 	}
 	for k, v := range args {
 		ev.vars[k] = v
@@ -199,6 +199,7 @@ type evaluator struct {
 	// is the call chain, for a readable cycle error.
 	resolve DefResolver
 	fetch   ControlFetcher
+	sync    TreeSyncer
 	mode    engine.Mode
 	stack   []string
 	acted   bool // a shell ran, or a callee reported changed (ADR-0030 §3)
@@ -214,6 +215,11 @@ type DefResolver func(name string) (Def, bool)
 // vars carries the caller's scope for a primitive that substitutes; it is nil for one
 // that only names a path.
 type ControlFetcher func(resource string, payload []byte, vars map[string]string) ([]byte, error)
+
+// TreeSyncer drives a tree transfer and returns how many files were written (ADR-0039).
+// Separate from ControlFetcher because the answer is a sequence, not one payload: the
+// agent writes files as they arrive rather than holding a tree in memory to return it.
+type TreeSyncer func(resource, dst, compare string, del bool) (int, error)
 
 func (ev *evaluator) fail(format string, a ...any) {
 	panic(evalErr{fmt.Errorf(format, a...)})
@@ -493,7 +499,7 @@ func (ev *evaluator) evalCall(c Call) value {
 			control = append(control, name)
 		}
 	}
-	res, err := EvalDefFull(def, args, nil, control, ev.ex, ev.mode, ev.resolve, append(ev.stack, c.Name), ev.fetch)
+	res, err := EvalDefFull(def, args, nil, control, ev.ex, ev.mode, ev.resolve, append(ev.stack, c.Name), ev.fetch, ev.sync)
 	if err != nil {
 		ev.fail("%s: %v", c.Name, err)
 	}
@@ -537,18 +543,28 @@ type controlPath string
 // evalControlCall runs a `%` primitive by asking the control host (ADR-0034 §3, using
 // the channel of ADR-0031). It reads; it never acts.
 func (ev *evaluator) evalControlCall(c Call) value {
-	if ev.fetch == nil {
-		ev.fail("~%s: no control host channel available for this run", c.Name)
-	}
-	// Arity per primitive: write takes a destination and content, the readers take one.
+	// Arity first: it is a property of the call, not of the environment. Checking the
+	// channel before it answers "no control host" to a def written with the wrong number
+	// of arguments, which sends the author looking at their transport.
 	want := 1
-	if c.Name == "file.write" {
+	switch c.Name {
+	case "file.write":
 		want = 2
+	case "dir.sync":
+		want = 4
 	}
 	if len(c.Args) != want {
 		ev.fail("~%s takes exactly %d argument(s), got %d", c.Name, want, len(c.Args))
 	}
+	if ev.fetch == nil {
+		ev.fail("~%s: no control host channel available for this run", c.Name)
+	}
 	arg := ev.evalExpr(c.Args[0])
+
+	// A transfer is not a request/response: it drives a sequence and writes as it goes.
+	if c.Name == "dir.sync" {
+		return ev.evalSync(c, arg)
+	}
 
 	switch c.Name {
 	case "file.write":
@@ -638,6 +654,41 @@ func (ev *evaluator) evalControlCall(c Call) value {
 	}
 	ev.fail("~%s is not a primitive", c.Name)
 	return nil
+}
+
+// evalSync drives a tree transfer (ADR-0039). Unlike the other primitives it is not a
+// single request/response, so it goes through its own channel entry point rather than
+// through fetch — the answer is a sequence, and the agent writes files as it arrives.
+//
+// `src` must be marked `%"…"`: a tree is transferred *from* the control host, and an
+// unmarked path would name a directory on the target, which is a different operation
+// nobody asked for.
+func (ev *evaluator) evalSync(c Call, arg value) value {
+	src, ok := arg.(controlPath)
+	if !ok {
+		ev.fail("~dir.sync reads its source on the control host: mark it %%\"…\"")
+	}
+	dst := stringify(ev.evalExpr(c.Args[1]))
+	del := stringify(ev.evalExpr(c.Args[2]))
+	compare := stringify(ev.evalExpr(c.Args[3]))
+	switch compare {
+	case "", "meta", "sha256":
+	default:
+		ev.fail("~dir.sync: compare must be \"meta\" or \"sha256\", got %q", compare)
+	}
+	if ev.sync == nil {
+		ev.fail("~dir.sync: no control host channel available for this run")
+	}
+	n, err := ev.sync(resourceKey("dir.sync", string(src)), dst, compare, del == "true")
+	if err != nil {
+		ev.fail("%v", err)
+	}
+	// A transfer that wrote nothing changed nothing: this is what makes a converged tree
+	// report `already` instead of claiming an action (ADR-0039 §1).
+	if n > 0 {
+		ev.acted = true
+	}
+	return strconv.Itoa(n)
 }
 
 // readTarget reads a path on the target. Content comes back base64-encoded so a binary
