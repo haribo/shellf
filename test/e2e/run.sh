@@ -17,7 +17,11 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
 work="$(mktemp -d)"
 cname="shellf-e2e-$$"
-image="debian:stable-slim"
+# The target image is built from test/e2e/Dockerfile and tagged by that file's hash, so a
+# run reuses it and only pays the build when the image itself changes (#366). The old
+# harness apt-installed sshd into debian:stable-slim on every run — and still could not
+# exercise systemd, docker or ufw.
+image_tag="shellf-e2e:$(sha256sum "$here/Dockerfile" | cut -c1-12)"
 
 cleanup() { docker rm -f "$cname" >/dev/null 2>&1 || true; rm -rf "$work"; }
 trap cleanup EXIT
@@ -28,17 +32,30 @@ fail() { printf '\033[1;31mFAIL: %s\033[0m\n' "$*" >&2; exit 1; }
 say "build shellf"
 ( cd "$root" && go build -o "$work/shellf" ./cmd/shellf )
 
-say "start throwaway sshd container ($image)"
-docker run -d --name "$cname" "$image" sleep 600 >/dev/null
-docker exec "$cname" sh -c '
-  set -e
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get update -qq
-  apt-get install -y -qq openssh-server >/dev/null
-  useradd -m -s /bin/bash deploy
-  mkdir -p /home/deploy/.ssh /run/sshd
-  chmod 700 /home/deploy/.ssh
-'
+if ! docker image inspect "$image_tag" >/dev/null 2>&1; then
+  say "build the target image ($image_tag) — once, then reused"
+  docker build -q -t "$image_tag" -f "$here/Dockerfile" "$here" >/dev/null
+fi
+
+say "start the throwaway target ($image_tag)"
+# systemd needs a writable cgroup tree, a tmpfs on /run and the host's cgroup namespace;
+# dockerd inside needs SYS_ADMIN and an unconfined seccomp profile. Verified together:
+# neither --privileged nor the host's docker socket is required, and both would give the
+# target more reach over this machine than a test should have.
+docker run -d --name "$cname" \
+  --cgroupns=host --tmpfs /run --tmpfs /run/lock \
+  -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+  --cap-add=NET_ADMIN --cap-add=SYS_ADMIN --security-opt seccomp=unconfined \
+  "$image_tag" >/dev/null
+
+# Wait for the boot to settle: `systemctl is-system-running` answers `running` (or
+# `degraded`, which a masked-unit container reaches legitimately) once units have started.
+for _ in $(seq 1 60); do
+  state="$(docker exec "$cname" systemctl is-system-running 2>/dev/null || true)"
+  case "$state" in running|degraded) break ;; esac
+  sleep 0.5
+done
+[ -n "${state:-}" ] || fail "the target never finished booting"
 
 say "install an ephemeral key"
 ssh-keygen -t ed25519 -N '' -f "$work/id" -q
@@ -46,15 +63,15 @@ docker cp "$work/id.pub" "$cname:/home/deploy/.ssh/authorized_keys"
 docker exec "$cname" sh -c '
   chown -R deploy:deploy /home/deploy/.ssh
   chmod 600 /home/deploy/.ssh/authorized_keys
-  /usr/sbin/sshd
+  systemctl restart ssh
 '
 
 ip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$cname")"
 [ -n "$ip" ] || fail "could not read container IP"
 
-# Wait for sshd to accept connections (image boot + first apt can lag).
-for i in $(seq 1 30); do
-  if docker exec "$cname" sh -c 'pgrep sshd >/dev/null'; then break; fi
+# Wait for sshd to accept connections.
+for _ in $(seq 1 30); do
+  if docker exec "$cname" systemctl is-active --quiet ssh; then break; fi
   sleep 1
 done
 
