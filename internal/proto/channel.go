@@ -18,6 +18,11 @@ const (
 	KindHello  = "hello"  // version handshake, first message each way
 	KindAsk    = "ask"    // agent -> control: give me this resource
 	KindAnswer = "answer" // control -> agent: here it is, or why not
+
+	// A tree transfer (ADR-0039): the answer to a `dir.sync` ask is a *sequence*, not one
+	// message. `KindAnswer` stays terminal for every other primitive.
+	KindFile = "file" // control -> agent: this file, then its chunks
+	KindDone = "done" // control -> agent: the transfer is complete
 )
 
 // ChannelVersion is the wire version. Bumped when a change is not backward compatible;
@@ -39,6 +44,26 @@ type Msg struct {
 	// a second framing. An answer carries exactly one of Data or Error.
 	Data  string `json:"data,omitempty"`
 	Error string `json:"error,omitempty"`
+
+	// Path names the file a `file` message opens, relative to the transfer's destination.
+	// Its chunks are the `data` of the messages that follow, until the next `file` or the
+	// `done` — order is the framing, so no sequence number is needed on a stream that
+	// cannot reorder.
+	Path  string `json:"path,omitempty"`
+	Mode  string `json:"mode,omitempty"`  // octal, as `stat -c %a` prints it
+	MTime int64  `json:"mtime,omitempty"` // the source's, applied on commit — see below
+	Last  bool   `json:"last,omitempty"`  // this message closes Path
+
+	// Entries is the manifest an agent sends with a `dir.sync` ask: what it already has
+	// under the destination. The control host answers only what differs (ADR-0039 §1).
+	Entries []Entry `json:"entries,omitempty"`
+
+	// Written and Delete ride the terminator. Written is what the transfer sent, so a
+	// truncated stream is detected rather than mistaken for a finished one; Delete is the
+	// target paths absent from the source, applied only when the caller asked for it —
+	// carried here, so a transfer that never terminates deletes nothing (ADR-0039 §5).
+	Written int      `json:"written,omitempty"`
+	Delete  []string `json:"delete,omitempty"`
 
 	// Vars carries the variables in scope where the primitive was called, for an ask
 	// that substitutes (`file.render`). The control host owns the host environment and
@@ -112,4 +137,15 @@ func (c *Conn) Handshake() error {
 		return fmt.Errorf("channel: peer speaks version %d, this build speaks %d — the agent predates this client, run `shellf clean` to replace it", m.Version, ChannelVersion)
 	}
 	return nil
+}
+
+// Entry is one file in a transfer manifest (ADR-0039 §1). Metadata only: the agent says
+// what it has, never what it holds. SHA is empty unless the caller asked to compare by
+// digest — computing one over a tree that only needs size and mtime is the cost the
+// default exists to avoid.
+type Entry struct {
+	Path  string `json:"path"`
+	Size  int64  `json:"size"`
+	MTime int64  `json:"mtime"` // Unix seconds; second precision is what a tar or a copy preserves
+	SHA   string `json:"sha,omitempty"`
 }

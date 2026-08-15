@@ -98,6 +98,14 @@ func Serve(ch *proto.Conn, allow *Allowed) error {
 		if m.Kind != proto.KindAsk {
 			continue // hello, or something a newer peer knows and we do not
 		}
+		// A tree transfer answers with a sequence, so it writes to the connection itself
+		// instead of returning one payload (ADR-0039 §2).
+		if strings.HasPrefix(m.Resource, "dir.sync:") {
+			if err := serveSync(ch, allow, m); err != nil {
+				return err
+			}
+			continue
+		}
 		data, aerr := answer(allow, m)
 		ans := proto.Msg{Kind: proto.KindAnswer, ID: m.ID}
 		if aerr != nil {
