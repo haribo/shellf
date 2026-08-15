@@ -338,6 +338,11 @@ for d in $acting; do
   fi
 done
 
+# `dir.sync` removed what the source does not have, and `dir.copy` did not — one word
+# apart, so the difference is asserted rather than assumed (#373).
+docker exec "$cname" test -e /tmp/cov/mirror/stale.txt && fail "dir.sync did not remove the extra file"
+docker exec "$cname" test -f /tmp/cov/mirror/hello.txt || fail "dir.sync did not deliver the tree"
+
 say "8. the shipped examples run for real (#356)"
 # They are what a new user copies, and neither had ever been executed — which is how
 # `blog.shellf` shipped enabling a deny-inbound firewall without an SSH rule, and calling

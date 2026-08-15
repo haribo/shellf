@@ -60,3 +60,24 @@ def copy(src: str, dst: str, compare: str = "meta") {
         return ok.copied
     }
 }
+
+# Make the target match the source exactly — including by **removing** what the source
+# does not have (ADR-0036 §6, #373). One word apart from `dir.copy`, and that word
+# deletes, so the difference is stated everywhere it can be:
+#
+#   dir.copy(%"site", "/var/www")   delivers, leaves anything else alone
+#   dir.sync(%"site", "/var/www")   delivers, and removes the rest
+#
+# The `preview` phase is not decoration. `apply` never runs in `--dry-run`, so without it
+# this def would announce `would.synced` and name not one file it would delete — in a tool
+# whose thesis is that a run is readable before it happens, that is a design defect. The
+# primitive is inert in check mode, so previewing costs a manifest exchange and touches
+# nothing.
+def sync(src: str, dst: str, compare: str = "meta") {
+    preview { ~dir.sync(src, dst, "true", compare) }
+    apply {
+        n = ~dir.sync(src, dst, "true", compare)
+        if n == "0" { return ok.already }
+        return ok.synced
+    }
+}
