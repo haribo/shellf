@@ -875,7 +875,10 @@ func reportText(reports []orchestrator.BlockReport) (string, bool) {
 			fmt.Fprintf(&b, "  %s:\n", h.Host)
 			for _, s := range h.Response.Results {
 				stepText(&b, s, "    ")
-				anyErr = anyErr || s.Category == "err"
+				// A caught error is not a failed run: `?` means the plan handles it,
+				// and it did (ADR-0009). Counting it made `shellf run … && …` never
+				// succeed for any plan using the language's own error handling (#356).
+				anyErr = anyErr || (s.Category == "err" && !s.Caught)
 			}
 			if h.Response.Halted {
 				fmt.Fprintf(&b, "    (halted)\n")
