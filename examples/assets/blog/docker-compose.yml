@@ -1,0 +1,15 @@
+# The blog stack, kept deliberately small: the example is about how shellf delivers and
+# manages it, not about the application. `.env` beside this file is rendered per host by
+# `file.template` and read by compose.
+services:
+  blog:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    env_file: .env
+    networks: [blog-net]
+
+networks:
+  blog-net:
+    external: true
