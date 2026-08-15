@@ -38,14 +38,17 @@ if ! docker image inspect "$image_tag" >/dev/null 2>&1; then
 fi
 
 say "start the throwaway target ($image_tag)"
-# systemd needs a writable cgroup tree, a tmpfs on /run and the host's cgroup namespace;
-# dockerd inside needs SYS_ADMIN and an unconfined seccomp profile. Verified together:
-# neither --privileged nor the host's docker socket is required, and both would give the
-# target more reach over this machine than a test should have.
+# systemd as PID 1 plus a docker daemon inside: `--privileged` is the documented way, and
+# the narrower recipe (SYS_ADMIN + a host cgroup mount) that works on a developer machine
+# died on the CI runner with exit 255 and no logs at all — the two disagree on cgroup
+# layout, and guessing which capability closes that gap is not worth the round trips.
+#
+# The container is created and destroyed by this script, so the blast radius is a
+# throwaway target. That is a different trade from mounting the host's docker socket,
+# which is still refused: it would hand this target control of the daemon running it.
 docker run -d --name "$cname" \
-  --cgroupns=host --tmpfs /run --tmpfs /run/lock \
+  --privileged --cgroupns=host --tmpfs /run --tmpfs /run/lock \
   -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
-  --cap-add=NET_ADMIN --cap-add=SYS_ADMIN --security-opt seccomp=unconfined \
   "$image_tag" >/dev/null
 
 # Wait for the boot to settle: `systemctl is-system-running` answers `running` (or
