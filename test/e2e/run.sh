@@ -38,18 +38,50 @@ if ! docker image inspect "$image_tag" >/dev/null 2>&1; then
 fi
 
 say "start the throwaway target ($image_tag)"
-# systemd as PID 1 plus a docker daemon inside: `--privileged` is the documented way, and
-# the narrower recipe (SYS_ADMIN + a host cgroup mount) that works on a developer machine
-# died on the CI runner with exit 255 and no logs at all — the two disagree on cgroup
-# layout, and guessing which capability closes that gap is not worth the round trips.
+# systemd as PID 1 plus a docker daemon inside. `--privileged` is the documented way; the
+# narrower recipe (SYS_ADMIN alone) died on the CI runner with exit 255 and no logs.
 #
-# The container is created and destroyed by this script, so the blast radius is a
-# throwaway target. That is a different trade from mounting the host's docker socket,
-# which is still refused: it would hand this target control of the daemon running it.
+# `--cgroupns=private` is not a detail — it is the whole safety of this line. A container
+# whose PID 1 is systemd behaves as a machine manager: it takes ownership of the cgroup
+# tree it can see and reconciles it against the units it knows. Given the host's tree
+# (`--cgroupns=host` plus a rw bind mount of /sys/fs/cgroup), it finds `user.slice` and
+# `session-N.scope` accounted for by no unit of its own, and tidies them away. On systemd,
+# session membership *is* cgroup position, so `systemd-logind` concludes the user logged
+# out — and the developer's graphical session dies. Observed twice on an Arch/GNOME
+# machine, one second after container start, with no crash of any kind.
+#
+# A private cgroup namespace gives it its own root to manage, and the explicit bind mount
+# is then unnecessary: `--privileged` already mounts /sys/fs/cgroup writable inside.
 docker run -d --name "$cname" \
-  --privileged --cgroupns=host --tmpfs /run --tmpfs /run/lock \
-  -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+  --privileged --cgroupns=private --tmpfs /run --tmpfs /run/lock \
   "$image_tag" >/dev/null
+
+# The guard for the above, asserted rather than trusted: inside a private namespace PID 1
+# sits at its own root (`0::/`). Under the host namespace it reads
+# `0::/system.slice/docker-<id>.scope`, which is exactly the configuration that reached
+# out and logged the operator out. A comment claiming a small blast radius is what hid
+# this the first time; this is the same claim, checkable.
+# Two checks, because each misses what the other catches.
+#
+# Structural: under a private namespace PID 1 sits at its own root (`/`, or `/init.scope`
+# once systemd has moved itself there). Under the host's, Docker places it under
+# `/system.slice/docker-<id>.scope` — so the path carrying `docker-` *is* the dangerous
+# configuration. Read the v2 line rather than the whole file: legacy v1 lines ride along,
+# and the first version of this guard compared the lot and would have failed every run.
+pid1_cgroup="$(docker exec "$cname" sh -c 'grep "^0::" /proc/1/cgroup' 2>/dev/null || true)"
+case "${pid1_cgroup:-none}" in
+  *docker-*|none)
+    docker rm -f "$cname" >/dev/null 2>&1
+    fail "the target sits in the host cgroup tree (${pid1_cgroup:-<no answer>}) — its systemd would manage the host's sessions" ;;
+esac
+
+# Semantic, and the one that matters: the host's login sessions must be invisible from
+# inside. Their presence is what a container's systemd tidied away, taking the operator's
+# graphical session with it — session membership on systemd *is* cgroup position.
+if docker exec "$cname" sh -c 'find /sys/fs/cgroup -maxdepth 4 -name "session-*.scope" | head -1' 2>/dev/null | grep -q .; then
+  docker rm -f "$cname" >/dev/null 2>&1
+  fail "the target can see host login sessions — it would log the operator out"
+fi
 
 # Wait for the boot to settle: `systemctl is-system-running` answers `running` (or
 # `degraded`, which a masked-unit container reaches legitimately) once units have started.
