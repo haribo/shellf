@@ -1,8 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"encoding/base64"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -480,101 +478,6 @@ func TestVersionLine(t *testing.T) {
 	}
 }
 
-func TestResolveDirCopy_ExpandsTree(t *testing.T) {
-	dir := t.TempDir()
-	// a small tree with a nested dir and a binary file
-	if err := os.MkdirAll(filepath.Join(dir, "site", "assets"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "site", "index.html"), []byte("<h1>hi</h1>"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "site", "assets", "logo.bin"), []byte{0x00, 0xff, 0x10}, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	steps := []proto.Step{{Instruction: "dir.copy", Args: map[string]string{"src": "site", "dst": "/var/www/app"}}}
-	out, err := resolveDirCopy(steps, dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var dirEnsures, filePuts int
-	var binContent string
-	for _, s := range out {
-		switch s.Instruction {
-		case "dir.ensure":
-			dirEnsures++
-		case "file.put":
-			filePuts++
-			if s.Args["path"] == "/var/www/app/assets/logo.bin" {
-				binContent = s.Args["content"]
-			}
-		default:
-			t.Fatalf("unexpected step %q", s.Instruction)
-		}
-	}
-	if dirEnsures < 2 || filePuts != 2 { // dst root + assets/ ; index.html + logo.bin
-		t.Fatalf("expansion: %d dir-ensure, %d file-put", dirEnsures, filePuts)
-	}
-	// the binary file is base64 of the raw bytes (byte-for-byte)
-	if got, _ := base64.StdEncoding.DecodeString(binContent); !bytes.Equal(got, []byte{0x00, 0xff, 0x10}) {
-		t.Fatalf("binary member not base64-preserved: %v", got)
-	}
-}
-
-func TestResolveDirCopy_Errors(t *testing.T) {
-	dir := t.TempDir()
-	// missing src
-	if _, err := resolveDirCopy([]proto.Step{{Instruction: "dir.copy", Args: map[string]string{"src": "nope", "dst": "/x"}}}, dir); err == nil {
-		t.Fatal("a missing src must error")
-	}
-	// a per-host ref for src/dst is rejected
-	if _, err := resolveDirCopy([]proto.Step{{Instruction: "dir.copy", Args: map[string]string{"dst": "/x"}, Refs: map[string]string{"src": "v"}}}, dir); err == nil {
-		t.Fatal("a ref src must error")
-	}
-}
-
-func TestResolveDirCopy_RecursesAndCeiling(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "t"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "t", "a"), []byte("hello"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	dc := proto.Step{Instruction: "dir.copy", Args: map[string]string{"src": "t", "dst": "/d"}}
-
-	// dir-copy nested in if / block / parallel is expanded in place.
-	steps := []proto.Step{
-		{If: &proto.IfBlock{Then: []proto.Step{dc}, Else: []proto.Step{dc}}},
-		{Block: []proto.Step{dc}},
-		{Parallel: []proto.Step{dc}},
-	}
-	out, err := resolveDirCopy(steps, dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	hasPut := func(steps []proto.Step) bool {
-		for _, s := range steps {
-			if s.Instruction == "file.put" {
-				return true
-			}
-		}
-		return false
-	}
-	if !hasPut(out[0].If.Then) || !hasPut(out[0].If.Else) || !hasPut(out[1].Block) || !hasPut(out[2].Parallel) {
-		t.Fatalf("dir-copy not expanded inside if/block/parallel: %+v", out)
-	}
-
-	// the payload ceiling is enforced with a clear error.
-	old := dirCopyCeiling
-	dirCopyCeiling = 1 // 1 byte
-	defer func() { dirCopyCeiling = old }()
-	if _, err := resolveDirCopy([]proto.Step{dc}, dir); err == nil || !strings.Contains(err.Error(), "ceiling") {
-		t.Fatalf("an oversized tree must be refused: %v", err)
-	}
-}
-
 func TestReportText_Preview(t *testing.T) {
 	reports := []orchestrator.BlockReport{{
 		Target: "web",
@@ -596,99 +499,6 @@ func TestReportText_Preview(t *testing.T) {
 			t.Fatalf("preview not rendered (%q) in:\n%s", want, text)
 		}
 	}
-}
-
-func TestResolveDirCopy_AbsoluteSrc(t *testing.T) {
-	// #281: an absolute src must be used as-is, not glued onto the plan dir.
-	src := t.TempDir() // an absolute path unrelated to the plan dir
-	if err := os.WriteFile(filepath.Join(src, "f"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	planDir := t.TempDir() // a different dir
-	out, err := resolveDirCopy([]proto.Step{{Instruction: "dir.copy", Args: map[string]string{"src": src, "dst": "/d"}}}, planDir)
-	if err != nil {
-		t.Fatalf("absolute src must resolve as-is (#281): %v", err)
-	}
-	var puts int
-	for _, s := range out {
-		if s.Instruction == "file.put" {
-			puts++
-		}
-	}
-	if puts != 1 {
-		t.Fatalf("expected the file under the absolute src, got %d file-put", puts)
-	}
-}
-
-func TestSrcPath(t *testing.T) {
-	if got := srcPath("/plan/dir", "/abs/x"); got != "/abs/x" {
-		t.Fatalf("absolute src should be used as-is: %q", got)
-	}
-	if got := srcPath("/plan/dir", "rel/x"); got != "/plan/dir/rel/x" {
-		t.Fatalf("relative src should join the plan dir: %q", got)
-	}
-}
-
-// Regression for #293: resolveDirCopy must reach a `dir.copy` wherever it can
-// appear in the step tree. In a condition it cannot be expanded at all — one
-// dir-copy becomes one step per file, and a condition holds a single step with a
-// single Result — so the plan must be refused control-side with a clear message
-// instead of shipping `dir.copy` to the agent, which fails the opaque `err.agent`.
-func TestResolveDirCopy_EveryRecursivePosition(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "tree"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "tree", "f.txt"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	dc := func() proto.Step {
-		return proto.Step{Instruction: "dir.copy", Args: map[string]string{"src": "tree", "dst": "/d"}}
-	}
-
-	expanded := map[string]struct {
-		in  proto.Step
-		get func(proto.Step) []proto.Step
-	}{
-		"sequence": {dc(), nil}, // expands in place, checked separately
-		"block":    {proto.Step{Block: []proto.Step{dc()}}, func(s proto.Step) []proto.Step { return s.Block }},
-		"parallel": {proto.Step{Parallel: []proto.Step{dc()}}, func(s proto.Step) []proto.Step { return s.Parallel }},
-		"if-then": {proto.Step{If: &proto.IfBlock{CondRef: &proto.ResultRef{Name: "x"}, Then: []proto.Step{dc()}}},
-			func(s proto.Step) []proto.Step { return s.If.Then }},
-		"if-else": {proto.Step{If: &proto.IfBlock{CondRef: &proto.ResultRef{Name: "x"}, Else: []proto.Step{dc()}}},
-			func(s proto.Step) []proto.Step { return s.If.Else }},
-	}
-	for name, c := range expanded {
-		t.Run(name, func(t *testing.T) {
-			out, err := resolveDirCopy([]proto.Step{c.in}, dir)
-			if err != nil {
-				t.Fatal(err)
-			}
-			got := out
-			if c.get != nil {
-				got = c.get(out[0])
-			}
-			for _, s := range got {
-				if s.Instruction == "dir.copy" {
-					t.Fatalf("dir-copy left unexpanded in %s position: %+v", name, got)
-				}
-			}
-			if len(got) == 0 {
-				t.Fatalf("%s: nothing expanded", name)
-			}
-		})
-	}
-
-	t.Run("if-cond", func(t *testing.T) {
-		in := proto.Step{If: &proto.IfBlock{Cond: &proto.Step{Instruction: "dir.copy", Args: map[string]string{"src": "tree", "dst": "/d"}}}}
-		_, err := resolveDirCopy([]proto.Step{in}, dir)
-		if err == nil {
-			t.Fatal("dir-copy as a condition must be refused control-side, not shipped to the agent")
-		}
-		if !strings.Contains(err.Error(), "condition") {
-			t.Fatalf("the error must say the condition is the problem, got: %v", err)
-		}
-	})
 }
 
 // The rename table must not advise a name that does not exist: a message pointing at
@@ -842,5 +652,83 @@ func TestLoadPlanPackage_RefusesACycleThroughAnOverride(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "call cycle") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// #355: a def must live in a package directory. The message says where to move it —
+// written when `defs/` replaced the plan's siblings, and never exercised until now.
+func TestPackageLibs_RefusesALooseDef(t *testing.T) {
+	dir := project(t, t.TempDir())
+	writeFile(t, filepath.Join(dir, "defs"), "stray.shellf",
+		`def a() { apply { return ok.done } }`)
+
+	_, err := packageLibs(dir)
+	if err == nil {
+		t.Fatal("a def outside a package directory must be refused")
+	}
+	if !strings.Contains(err.Error(), "defs/<package>/stray.shellf") {
+		t.Fatalf("the error must name where to move it, got %v", err)
+	}
+}
+
+// A project with no `defs/` at all is legitimate — a plan may call only stdlib
+// instructions — and must load rather than fail on a missing directory.
+func TestPackageLibs_NoDefsDirectoryIsFine(t *testing.T) {
+	dir := t.TempDir() // deliberately not laid out: only plans/ is required
+	libs, err := packageLibs(dir)
+	if err != nil {
+		t.Fatalf("a project without defs/ must load: %v", err)
+	}
+	if len(libs) != 0 {
+		t.Fatalf("expected no libs, got %v", keys(libs))
+	}
+}
+
+// #345: a plan that asks the control host for nothing opens no bridge. The channel
+// factory returns nil for every host, which is what keeps a detached job detached
+// (ADR-0031 §2) — a bridge opened for nothing would make every plan depend on the
+// control host staying reachable.
+func TestControlChannel_NilWhenThePlanAsksNothing(t *testing.T) {
+	dir := project(t, t.TempDir())
+	writeFile(t, filepath.Join(dir, "plans"), "plan.shellf", `on web { dir.ensure("/x") }`)
+	writeFile(t, filepath.Join(dir, "inventories"), "inv.shellf", `host web = { address: "1.1.1.1", user: "u" }`)
+	planPath := filepath.Join(dir, "plans", "plan.shellf")
+	invPath := filepath.Join(dir, "inventories", "inv.shellf")
+
+	plan, defsSrc, err := loadPlanPackage(planPath, invPath, map[string]string{}, map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv, err := loadInventory(invPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	channelFor := controlChannel(planPath, plan, defsSrc, inv, map[string]string{}, map[string]string{})
+	if channelFor("web") != nil {
+		t.Fatal("a plan that asks for nothing must open no bridge")
+	}
+}
+
+// And the other half: a plan that marks a control-host path gets a channel.
+func TestControlChannel_ServesADeclaredPath(t *testing.T) {
+	dir := project(t, t.TempDir())
+	writeFile(t, filepath.Join(dir, "assets"), "motd.tmpl", "hello @{who}\n")
+	writeFile(t, filepath.Join(dir, "plans"), "plan.shellf",
+		`on web { file.template(%"motd.tmpl", "/etc/motd") }`)
+	writeFile(t, filepath.Join(dir, "inventories"), "inv.shellf", `host web = { address: "1.1.1.1", user: "u" }`)
+	planPath := filepath.Join(dir, "plans", "plan.shellf")
+	invPath := filepath.Join(dir, "inventories", "inv.shellf")
+
+	plan, defsSrc, err := loadPlanPackage(planPath, invPath, map[string]string{}, map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv, err := loadInventory(invPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	channelFor := controlChannel(planPath, plan, defsSrc, inv, map[string]string{}, map[string]string{})
+	if channelFor("web") == nil {
+		t.Fatal("a plan declaring a control-host path must get a bridge")
 	}
 }

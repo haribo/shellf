@@ -33,14 +33,16 @@ func ControlResources(defs map[string]Def, steps []proto.Step) []string {
 // while the def reading it only sees a parameter — so scanning defs alone would miss it
 // and the request would be refused at runtime for a file the plan legitimately needs.
 //
-// Both read primitives are allowed for such a path: the plan says "this is mine to
-// serve", and which primitive reads it is the def's business.
+// Every read primitive is allowed for such a path: the plan says "this is mine to serve",
+// and which one reads it is the def's business — `file.template` reads it, `dir.copy`
+// syncs it, and both are the same declaration seen from the plan.
 func scanSteps(steps []proto.Step, seen map[string]bool) {
 	for _, s := range steps {
 		for _, arg := range s.Control {
 			if p, ok := s.Args[arg]; ok {
 				seen[resourceKey("file.read", p)] = true
 				seen[resourceKey("dir.list", p)] = true
+				seen[resourceKey("dir.sync", p)] = true
 			}
 		}
 		scanSteps(s.Block, seen)

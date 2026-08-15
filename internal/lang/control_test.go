@@ -111,7 +111,7 @@ func evalWithFetchControl(t *testing.T, src, entry string, args map[string]strin
 		byName[d.Name] = d
 	}
 	resolve := func(n string) (Def, bool) { d, ok := byName[n]; return d, ok }
-	return EvalDefFull(byName[entry], args, nil, control, noopExec{}, engine.Apply, resolve, []string{entry}, fetch)
+	return EvalDefFull(byName[entry], args, nil, control, noopExec{}, engine.Apply, resolve, []string{entry}, fetch, nil)
 }
 
 type noopExec struct{}
@@ -293,9 +293,18 @@ func TestControl_PlanArgumentIsDeclared(t *testing.T) {
 		t.Fatalf("the value must travel as an ordinary string: %q", step.Args["src"])
 	}
 
+	// Every read primitive is declared for a marked path: the plan says the file is its
+	// to serve, and which primitive reads it is the def's business — `file.template`
+	// reads it, `dir.copy` syncs it (#335). Sorted, so the set is comparable.
 	got := ControlResources(nil, plan[0].Steps)
-	if len(got) != 2 || got[0] != "dir.list:conf.j2" || got[1] != "file.read:conf.j2" {
+	want := []string{"dir.list:conf.j2", "dir.sync:conf.j2", "file.read:conf.j2"}
+	if len(got) != len(want) {
 		t.Fatalf("a marked plan argument must enter the allow-list: %v", got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Fatalf("allow-list entry %d: got %q, want %q (full set %v)", i, got[i], w, got)
+		}
 	}
 }
 
@@ -535,5 +544,44 @@ func TestControl_UsesPrimitiveWalksTheTree(t *testing.T) {
 				t.Fatalf("got %v, want %v", got, c.want)
 			}
 		})
+	}
+}
+
+// #335: `~dir.sync` transfers *from* the control host, so its source must be marked.
+// An unmarked path would name a directory on the target — a different operation nobody
+// asked for — so it is refused rather than quietly done.
+func TestControl_SyncRequiresAMarkedSource(t *testing.T) {
+	src := `def d(s: str, dst: str) { apply { x = ~dir.sync(s, dst, "false", "meta") return ok.x } }`
+	_, err := evalWithFetch(t, src, "d", map[string]string{"s": "tree", "dst": "/opt/x"}, nil)
+	if err == nil {
+		t.Fatal("an unmarked source must be refused")
+	}
+	if !strings.Contains(err.Error(), "control host") {
+		t.Fatalf("the message must say where the source is read, got %v", err)
+	}
+}
+
+// `compare` is a closed set: a typo must fail at the call, not silently fall back to a
+// comparison the author did not choose.
+func TestControl_SyncRejectsAnUnknownCompare(t *testing.T) {
+	src := `def d(s: str, dst: str) { apply { x = ~dir.sync(s, dst, "false", "md5") return ok.x } }`
+	noop := func(string, []byte, map[string]string) ([]byte, error) { return nil, nil }
+	_, err := evalWithFetchControl(t, src, "d",
+		map[string]string{"s": "tree", "dst": "/opt/x"}, []string{"s"}, noop)
+	if err == nil {
+		t.Fatal("an unknown compare must be refused")
+	}
+	if !strings.Contains(err.Error(), "sha256") {
+		t.Fatalf("the message must name the accepted values, got %v", err)
+	}
+}
+
+// Arity is checked before anything else: four arguments, or a message saying so.
+func TestControl_SyncArity(t *testing.T) {
+	src := `def d(s: str, dst: str) { apply { x = ~dir.sync(s, dst) return ok.x } }`
+	_, err := evalWithFetchControl(t, src, "d",
+		map[string]string{"s": "tree", "dst": "/opt/x"}, []string{"s"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "exactly 4") {
+		t.Fatalf("wrong arity must be refused by count: %v", err)
 	}
 }

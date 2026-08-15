@@ -242,6 +242,33 @@ on host {
 - Lists are literals of strings; glob/range iteration and list variables are not
   in this version.
 
+## Delivering a tree — `dir.copy` (ADR-0039)
+
+```
+dir.copy(%"assets/site", "/var/www/site")
+dir.copy(%"assets/site", "/var/www/site", "sha256")
+```
+
+The source is read on the control host, so it carries `%"…"`; an unmarked path would name
+a directory on the target, which is a different operation.
+
+The agent sends what it already has, the control host answers only what differs. A
+converged tree therefore transfers **zero bytes** and reports `ok.already` — not merely
+"wrote nothing". There is no size limit: files stream in chunks, and each is written
+beside its destination and renamed once complete, so a dropped connection never leaves a
+half-written file.
+
+`compare` decides what "identical" means:
+
+| value | compares | limit |
+|---|---|---|
+| `"meta"` (default) | size + mtime | **misses a change that preserves both** — a restored backup with preserved timestamps is the realistic case |
+| `"sha256"` | content | reads every file on both sides |
+
+The default's limit is documented rather than discovered: when it matters, pass
+`"sha256"`. What is on the target and absent from the source is left alone — a copy is a
+sync that deletes nothing.
+
 ## Per-call override — `with { … }` (ADR-0022)
 
 Any instruction call — a def, `shell`, `file.template`, or a builtin — may be followed

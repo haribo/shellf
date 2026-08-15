@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
@@ -327,81 +326,10 @@ func loadPlanPackage(planPath, invPath string, baseVars, setVars map[string]stri
 	//
 	// `dir.copy` IS resolved here: its bytes are control-side and identical for
 	// every host, so it expands once into dir-ensure + file-put steps (ADR-0028).
-	// Content is addressed under `assets/`, not beside the plan (ADR-0038 §3).
-	assetsDir := filepath.Join(root, dirAssets)
-	for bi := range plan {
-		expanded, err := resolveDirCopy(plan[bi].Steps, assetsDir)
-		if err != nil {
-			return nil, nil, err
-		}
-		plan[bi].Steps = expanded
-	}
+	// No control-side expansion left: `file.template` stopped being one in #334, and
+	// `dir.copy` is a def over `~dir.sync` since #335. A plan now reaches the agent as
+	// written.
 	return plan, defSource(defs), nil
-}
-
-// dirCopyCeiling bounds the base64-encoded payload a single dir-copy may carry, so
-// a large tree is refused with a clear error instead of OOMing the agent (ADR-0028).
-// A var, not a const, so a test can lower it without a 32 MB fixture.
-var dirCopyCeiling int64 = 32 << 20
-
-// resolveDirCopy expands every `dir.copy(src, dst)` step into a `dir.ensure` per
-// directory and a `file.put(dst, base64)` per file, reading src relative to the
-// plan dir. Recurses into if/block/parallel; other steps pass through.
-func resolveDirCopy(steps []proto.Step, dir string) ([]proto.Step, error) {
-	var out []proto.Step
-	for _, s := range steps {
-		switch {
-		case s.Instruction == "dir.copy":
-			if s.Refs["src"] != "" || s.Refs["dst"] != "" {
-				return nil, fmt.Errorf("dir-copy: src and dst must be literal paths, not per-host refs")
-			}
-			expanded, err := expandTree(srcPath(dir, s.Args["src"]), s.Args["dst"])
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, expanded...)
-		case s.If != nil:
-			// A condition is one step yielding one Result, but dir-copy expands to
-			// one step per file — there is nothing sound to put there. Refuse it
-			// here, with the reason, rather than ship `dir.copy` to the agent and
-			// surface the opaque `err.agent` it dies on (#293).
-			if s.If.Cond != nil && s.If.Cond.Instruction == "dir.copy" {
-				return nil, fmt.Errorf("dir-copy: cannot be used as a condition (it expands to one step per file)")
-			}
-			then, err := resolveDirCopy(s.If.Then, dir)
-			if err != nil {
-				return nil, err
-			}
-			els, err := resolveDirCopy(s.If.Else, dir)
-			if err != nil {
-				return nil, err
-			}
-			ib := *s.If
-			ib.Then, ib.Else = then, els
-			ns := s
-			ns.If = &ib
-			out = append(out, ns)
-		case len(s.Block) > 0:
-			sub, err := resolveDirCopy(s.Block, dir)
-			if err != nil {
-				return nil, err
-			}
-			ns := s
-			ns.Block = sub
-			out = append(out, ns)
-		case len(s.Parallel) > 0:
-			sub, err := resolveDirCopy(s.Parallel, dir)
-			if err != nil {
-				return nil, err
-			}
-			ns := s
-			ns.Parallel = sub
-			out = append(out, ns)
-		default:
-			out = append(out, s)
-		}
-	}
-	return out, nil
 }
 
 // readSubPackage reads one sub-package directory into libs, keyed `<name>/<file>`.
@@ -437,63 +365,6 @@ func readSubPackage(parent, name string, libs map[string]string) error {
 		libs[name+"/"+e.Name()] = string(src)
 	}
 	return nil
-}
-
-// srcPath resolves a control-side `src`: absolute paths are used as-is, relative
-// ones are joined to the plan dir (#281). Shared by `dir.copy` and `file.template` so
-// the two cannot drift.
-func srcPath(planDir, src string) string {
-	if filepath.IsAbs(src) {
-		return src
-	}
-	return filepath.Join(planDir, src)
-}
-
-// expandTree walks srcRoot (control host) and returns the dir-ensure + file-put
-// steps that deliver it verbatim under dstRoot (target). Refuses a tree whose
-// base64 payload exceeds the ceiling (ADR-0028).
-func expandTree(srcRoot, dstRoot string) ([]proto.Step, error) {
-	info, err := os.Stat(srcRoot)
-	if err != nil {
-		return nil, fmt.Errorf("dir-copy: %v", err)
-	}
-	if !info.IsDir() {
-		return nil, fmt.Errorf("dir-copy: %s is not a directory", srcRoot)
-	}
-	steps := []proto.Step{{Instruction: "dir.ensure", Args: map[string]string{"path": dstRoot}}}
-	var total int64
-	walkErr := filepath.WalkDir(srcRoot, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(srcRoot, path)
-		if err != nil {
-			return err
-		}
-		if rel == "." {
-			return nil
-		}
-		dst := filepath.Join(dstRoot, rel)
-		if d.IsDir() {
-			steps = append(steps, proto.Step{Instruction: "dir.ensure", Args: map[string]string{"path": dst}})
-			return nil
-		}
-		b, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		enc := base64.StdEncoding.EncodeToString(b)
-		total += int64(len(enc))
-		if total > dirCopyCeiling {
-			return fmt.Errorf("dir-copy: %s exceeds the %d MB payload ceiling (ADR-0028)", srcRoot, dirCopyCeiling>>20)
-		}
-		steps = append(steps, proto.Step{Instruction: "file.put", Args: map[string]string{"path": dst, "content": enc}})
-		return nil
-	})
-	if walkErr != nil {
-		return nil, walkErr
-	}
-	return steps, nil
 }
 
 // templateRenderer builds the per-host renderer the orchestrator injects
