@@ -124,6 +124,28 @@ func (c *Channel) AskWith(resource string, payload []byte, vars map[string]strin
 // failure was a connection that went away mid-ask — the one case worth retrying, as
 // opposed to "nobody attached" or a refusal from the control host, which a second ask
 // would only repeat.
+// attached returns the live connection, waiting for a bridge if none has arrived yet.
+// Assumes c.mu is held, and releases it around the wait so accept() can install one.
+func (c *Channel) attached(resource string) (*proto.Conn, error) {
+	if c.conn != nil {
+		return c.conn, nil
+	}
+	// A bridge may still be attaching — the control host opens it while the job is
+	// already running. Wait, but not forever: a job blocked on an answer nobody will
+	// give must fail naming what it waited for (ADR-0031 §2).
+	ready := c.ready
+	c.mu.Unlock()
+	select {
+	case <-ready:
+	case <-time.After(attachWait):
+	}
+	c.mu.Lock()
+	if c.conn == nil {
+		return nil, fmt.Errorf("%s: no control host attached", resource)
+	}
+	return c.conn, nil
+}
+
 func (c *Channel) askOnce(resource string, payload []byte, vars map[string]string) ([]byte, error, bool) {
 	if c.conn == nil {
 		// A bridge may still be attaching — the control host opens it while the job is

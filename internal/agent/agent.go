@@ -302,13 +302,14 @@ func runInstruction(step proto.Step, ex engine.Executor, m engine.Mode, defs map
 	// used here, passed down so `lang` needs no import of `std`.
 	resolve := resolver(defs)
 	fetch := fetcher(ch)
+	sync := syncer(ch)
 	// A package user def resolves first, so it can add new instructions and
 	// (with `override def`) replace a stdlib one (ADR-0014).
 	if def, ok := defs[step.Instruction]; ok {
-		return lang.EvalDefFull(def, step.Args, step.With, step.Control, ex, m, resolve, []string{step.Instruction}, fetch)
+		return lang.EvalDefFull(def, step.Args, step.With, step.Control, ex, m, resolve, []string{step.Instruction}, fetch, sync)
 	}
 	if def, ok := std.Lookup(step.Instruction); ok {
-		return lang.EvalDefFull(def, step.Args, step.With, step.Control, ex, m, resolve, []string{step.Instruction}, fetch)
+		return lang.EvalDefFull(def, step.Args, step.With, step.Control, ex, m, resolve, []string{step.Instruction}, fetch, sync)
 	}
 	inst, err := dispatch(step)
 	if err != nil {
@@ -330,6 +331,16 @@ func fetcher(ch *Channel) lang.ControlFetcher {
 		return nil
 	}
 	return ch.AskWith
+}
+
+// syncer exposes the transfer entry point the same way, and for the same reason: a nil
+// channel yields nil, so `~dir.sync` fails naming the resource instead of silently
+// delivering nothing.
+func syncer(ch *Channel) lang.TreeSyncer {
+	if ch == nil {
+		return nil
+	}
+	return ch.Sync
 }
 
 func resolver(defs map[string]lang.Def) lang.DefResolver {
