@@ -248,12 +248,17 @@ func TestValueResource_Service(t *testing.T) {
 
 func TestValueResource_DirOwner(t *testing.T) {
 	args := map[string]string{"path": "/opt", "owner": "haribo:haribo"}
-	// observed owner matches the argument → converged.
-	if got := eval(t, "dir.owner", args, &fakeExec{observe: engine.ShellResult{Stdout: "haribo:haribo\n"}, applyMatch: "chown"}, engine.Apply).String(); got != "ok.already" {
+	// The comparison happens in the shell now, not by matching an observed string against
+	// the argument (#367): `stat` always prints `user:group`, so a plan asking for a bare
+	// user never matched and the def reported `changed` forever. The fake therefore
+	// answers the comparison's exit code rather than an owner.
+	//
+	// owner matches → converged.
+	if got := eval(t, "dir.owner", args, &fakeExec{observe: engine.ShellResult{Exit: 0}, applyMatch: "chown"}, engine.Apply).String(); got != "ok.already" {
 		t.Fatalf("dir-owner converged: got %s, want ok.already", got)
 	}
-	// observed owner differs → chown.
-	if got := eval(t, "dir.owner", args, &fakeExec{observe: engine.ShellResult{Stdout: "root:root\n"}, apply: engine.ShellResult{Exit: 0}, applyMatch: "chown"}, engine.Apply).String(); got != "ok.changed" {
+	// owner differs → chown.
+	if got := eval(t, "dir.owner", args, &fakeExec{observe: engine.ShellResult{Exit: 1}, apply: engine.ShellResult{Exit: 0}, applyMatch: "chown"}, engine.Apply).String(); got != "ok.changed" {
 		t.Fatalf("dir-owner drift: got %s, want ok.changed", got)
 	}
 }

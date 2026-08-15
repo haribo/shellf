@@ -7,8 +7,19 @@ def ensure(path: str) {
     }
 }
 
+# `chown` accepts both `user` and `user:group`, so the comparison has to accept both too.
+# It happens in the shell, not by comparing an observed string to the argument: `stat`
+# always prints `user:group`, so a plan asking for `covuser` never matched what was read
+# and the def reported `changed` on every single run — firing every `if x.changed { … }`
+# downstream for nothing (#367). Caught by running it twice against a real target; no unit
+# test had, because a fake executor answers whatever the test asks for.
 def owner(path: str, owner: str) as root {
-    observe { return state(owner: shell { stat -c '%U:%G' "$path" 2>/dev/null }.stdout) }
+    observe {
+        return state(owned: shell {
+            cur="$(stat -c '%U:%G' "$path" 2>/dev/null)"
+            [ "$cur" = "$owner" ] || [ "${cur%%:*}" = "$owner" ]
+        }.exit == 0)
+    }
     apply {
         r = shell { chown -R "$owner" "$path" }
         if !r { return err.runtime(r) }
