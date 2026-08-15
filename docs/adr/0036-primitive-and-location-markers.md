@@ -74,11 +74,6 @@ write `~/.ssh/authorized_keys`.
 | `~dir.list(path)` | returns the entries | control host if `%"…"`, else the target |
 | `~dir.sync(src, dst, delete, compare)` | transfers a tree | control host to target |
 
-Four of those five exist. `~dir.sync` is decided here and **not yet implemented** (#335):
-writing it in a plan today fails with `~dir.sync is not a primitive`. An ADR decides, it
-does not describe the tree — but a table reads as an inventory, so the gap is named rather
-than left for a reader to discover.
-
 `shell { }` stays a language block, not a call, so it carries no marker.
 
 `~file.render` substitutes over **both** halves of a template's namespace: the host's
