@@ -130,6 +130,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `dir.owner` converges. Its `observe` read `stat -c '%U:%G'` — `covuser:deploy` — and
+  compared it to the argument, which names a user: the two can only be equal when the
+  caller writes `"user:group"`, so every run reported `changed` and every
+  `if x.changed { … }` gated on it fired for nothing. The comparison now happens in the
+  shell and accepts both forms `chown` accepts. Invisible to unit tests — a fake executor
+  answers whatever the test asks — and found by running the def twice against a real
+  container (#367).
 - A call cycle is refused when the defs are loaded, not when they run (ADR-0030 §6, which
   asked for exactly this). The evaluator's guard fired on the target, after earlier steps
   of the plan had already acted — a partially applied host, for an error that is a writing

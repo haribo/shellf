@@ -41,6 +41,9 @@ Rules must be concise. One rule per line when possible.
 
 ## Testing
 
+- **Every stdlib def is exercised against a real target by `test/e2e/plans/coverage.shellf`, no exception.** `test/e2e/def-coverage.sh` fails the build when one is not, so a new def arrives with its coverage or turns CI red. An exemption is allowed, named in that script with its reason — never silent.
+- A def that declares `observe` must report a converged outcome on a second run; the harness derives that set from the stdlib and checks it. A def with no `observe` is action-shaped (ADR-0029) and is excluded by construction, not by a list.
+- Unit tests with a fake executor cannot prove idempotence: the fake answers whatever the test asks. `dir.owner` reported `changed` on every run for months and every unit test passed — it took running it twice against a container to see it.
 - Bug fixes start with a failing test that reproduces the bug: write the test first and watch it fail, then fix, then re-run it green (red → green)
 - That test stays as the regression test for this bug — reference the issue number in it, so a later reader knows what it guards and does not delete it as noise
 - Bug fixes must reproduce the failure from observed evidence (logs, network capture, repro steps); never invent the failure scenario from a hypothesis
