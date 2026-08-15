@@ -50,12 +50,22 @@ docker run -d --name "$cname" \
 
 # Wait for the boot to settle: `systemctl is-system-running` answers `running` (or
 # `degraded`, which a masked-unit container reaches legitimately) once units have started.
+booted=""
 for _ in $(seq 1 60); do
-  state="$(docker exec "$cname" systemctl is-system-running 2>/dev/null || true)"
-  case "$state" in running|degraded) break ;; esac
+  state="$(docker exec "$cname" systemctl is-system-running 2>&1 || true)"
+  case "$state" in running|degraded) booted=yes; break ;; esac
   sleep 0.5
 done
-[ -n "${state:-}" ] || fail "the target never finished booting"
+if [ -z "$booted" ]; then
+  # Say why, not just that. A boot failure here is environment-specific — cgroup layout,
+  # missing capability, a unit that cannot start — and "never finished booting" sends the
+  # reader nowhere.
+  printf 'last state: %s\n' "${state:-<no answer>}"
+  printf 'container: %s\n' "$(docker inspect -f '{{.State.Status}} exit={{.State.ExitCode}}' "$cname" 2>&1)"
+  echo '--- container logs ---'; docker logs --tail 40 "$cname" 2>&1 || true
+  echo '--- failed units ---'; docker exec "$cname" systemctl --failed --no-pager 2>&1 || true
+  fail "the target never finished booting"
+fi
 
 say "install an ephemeral key"
 ssh-keygen -t ed25519 -N '' -f "$work/id" -q
