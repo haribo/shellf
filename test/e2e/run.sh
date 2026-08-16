@@ -489,4 +489,27 @@ out="$(drift)" || fail "the third delivery failed"
 printf '%s' "$out" | grep -qE 'file\.copy.*ok\.already' \
   || fail "an unchanged source must report already"
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered"
+say "11. shell a def already does is refused, and unsafe shell keeps it (#382)"
+# ADR-0040 §2 is a *parse-time* refusal, so it must hold for the binary an operator runs,
+# not only for the parser package. The same plan is run twice, one word apart.
+mkdir -p "$work/rules/plans" "$work/rules/inventories" "$work/rules/assets" "$work/rules/defs"
+cp "$work/inventory.shellf" "$work/rules/inventories/inv.shellf"
+cat > "$work/rules/plans/plan.shellf" <<'EOF'
+on target {
+    shell { mkdir -p /tmp/shellf-rules }
+}
+EOF
+rc=0; out="$("$work/shellf" run --inventory "$work/rules/inventories/inv.shellf" --insecure \
+  "$work/rules/plans/plan.shellf" 2>&1)" || rc=$?
+[ "$rc" -ne 0 ] || fail "mkdir in a shell block must not run"
+printf '%s' "$out" | grep -q 'dir.ensure(path)' || fail "the refusal must name the replacement"
+printf '%s' "$out" | grep -q 'unsafe shell' || fail "the refusal must name the way out"
+docker exec "$cname" test -e /tmp/shellf-rules && fail "a refused plan must not have run"
+
+# The way out works, and it is one word.
+sed -i 's/    shell {/    unsafe shell {/' "$work/rules/plans/plan.shellf"
+"$work/shellf" run --inventory "$work/rules/inventories/inv.shellf" --insecure \
+  "$work/rules/plans/plan.shellf" >/dev/null 2>&1 || fail "unsafe shell must run"
+docker exec "$cname" test -d /tmp/shellf-rules || fail "unsafe shell did not run the command"
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced"

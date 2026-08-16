@@ -243,6 +243,12 @@ type parser struct {
 
 	imports         map[string][]string // alias → imported package's def sources (ADR-0015)
 	importedAliases map[string]bool     // aliases already imported (duplicate check)
+
+	// trusted exempts this source from the shell detector (ADR-0040 §6). Only the
+	// embedded stdlib is: it is the layer that reaches the system, and `service.ensure`
+	// is *implemented* with systemctl — a rule forbidding that would forbid the
+	// replacement it recommends. An imported module is user code and is checked.
+	trusted bool
 }
 
 // resolveSig looks up an instruction's parameter names and required count: a
@@ -527,7 +533,17 @@ func copyVars(m map[string]string) map[string]string {
 func (p *parser) step() proto.Step {
 	// `shell` and `if` are special forms, handled before the call() path.
 	if p.tok.kind == tIdent && p.tok.val == "shell" {
-		return p.shellStep()
+		return p.shellStep(false)
+	}
+	// `unsafe shell { … }` (ADR-0040 §3): the block runs exactly like `shell { … }`.
+	// The word buys two things and neither is runtime behaviour — it exempts the body
+	// from the detector, and it is what `grep -r 'unsafe shell'` finds.
+	if p.tok.kind == tIdent && p.tok.val == "unsafe" {
+		p.adv()
+		if p.tok.kind != tIdent || p.tok.val != "shell" {
+			p.fail("`unsafe` marks a shell block: write `unsafe shell { … }`")
+		}
+		return p.shellStep(true)
 	}
 	if p.tok.kind == tIdent && p.tok.val == "if" {
 		return p.ifStep()
@@ -594,7 +610,18 @@ func (p *parser) ifStep() proto.Step {
 // `.changed` flag; or a bare capture (`s` = `s == ok`). See ADR-0008/0009.
 func (p *parser) condition() (*proto.Step, *proto.ResultRef, bool) {
 	if p.tok.kind == tIdent && p.tok.val == "shell" {
-		s := p.shellStep()
+		s := p.shellStep(false)
+		return &s, nil, false
+	}
+	// A guard is shell like any other, so it is checked like any other — and it can be
+	// marked: `if !unsafe shell { mkdir /var/lock/x } { … }`. An escape hatch that does
+	// not reach every position is a hole, not a hatch.
+	if p.tok.kind == tIdent && p.tok.val == "unsafe" {
+		p.adv()
+		if p.tok.kind != tIdent || p.tok.val != "shell" {
+			p.fail("`unsafe` marks a shell block: write `unsafe shell { … }`")
+		}
+		s := p.shellStep(true)
 		return &s, nil, false
 	}
 	name := p.expect(tIdent, "condition").val
@@ -660,7 +687,7 @@ func (p *parser) inlineCond(s proto.Step) (*proto.Step, *proto.ResultRef, bool) 
 // shellStep parses `shell <line>` or `shell { … }` with an optional
 // `unless { … }` guard. When p.tok is the `shell`/`unless` keyword, the lexer
 // sits right after it, so raw capture reads from there.
-func (p *parser) shellStep() proto.Step {
+func (p *parser) shellStep(unsafe bool) proto.Step {
 	// `shell(<interp>) as <user> { … }` — both read from the raw stream, since
 	// the shell body itself is raw-captured (ADR-0012 / ADR-0011).
 	interp := p.shellInterp()
@@ -673,6 +700,11 @@ func (p *parser) shellStep() proto.Step {
 	body, err := p.lex.rawShellBody()
 	if err != nil {
 		panic(parseErr{err})
+	}
+	if !unsafe && !p.trusted {
+		if msg := checkShellBody(body); msg != "" {
+			p.fail("%s", msg)
+		}
 	}
 	p.adv() // resync to the token after the shell body
 

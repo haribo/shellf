@@ -57,7 +57,7 @@ func TestPackage_ShadowStdlibNeedsOverride(t *testing.T) {
 	sub := func(src string) map[string]string { return map[string]string{"dir/ensure.shellf": src} }
 
 	// A plain def whose qualified name hits the stdlib is an error…
-	_, _, err := ParsePackage(`on web { }`, sub(`def ensure(path: str) { apply { shell { mkdir "$path" } return ok.done } }`),
+	_, _, err := ParsePackage(`on web { }`, sub(`def ensure(path: str) { apply { shell { test -d "$path" } return ok.done } }`),
 		nil, map[string]string{}, map[string]string{}, testStdSig)
 	if err == nil || !strings.Contains(err.Error(), "shadows a stdlib def") {
 		t.Fatalf("shadowing must error without override: %v", err)
@@ -68,7 +68,7 @@ func TestPackage_ShadowStdlibNeedsOverride(t *testing.T) {
 	}
 
 	// …but `override def` is allowed and wins.
-	_, defs, err := ParsePackage(`on web { }`, sub(`override def ensure(path: str) { apply { shell { mkdir "$path" } return ok.done } }`),
+	_, defs, err := ParsePackage(`on web { }`, sub(`override def ensure(path: str) { apply { shell { test -d "$path" } return ok.done } }`),
 		nil, map[string]string{}, map[string]string{}, testStdSig)
 	if err != nil {
 		t.Fatalf("override should be allowed: %v", err)

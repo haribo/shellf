@@ -8,6 +8,21 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **BREAKING** — a `shell { }` block whose command has an exact def equivalent no longer
+  parses (ADR-0040). Two rules: `mkdir` names `dir.ensure`, `cp` names `file.copy` for a
+  file and `dir.copy` for a tree — and says that neither carries mode or ownership, since
+  `cp -p` does. `unsafe shell { … }` keeps the shell, runs identically, and composes with
+  the interpreter override and with `if !`. The point is not style: a def tolerates being
+  re-run, and a step that does not is what wedges a host after a partial failure —
+  measured in #377, where the same def written with `mkdir` blamed the wrong step forever
+  and the one written with `dir.ensure` converged as soon as the cause was fixed.
+  `unsafe` means **"no def covers this"**, not "dangerous": an atomic `mkdir` lock is
+  irreproachable and is marked, which is what keeps `grep -r 'unsafe shell'` — the list of
+  every place shellf's guarantees stop, imported modules included — worth reading. The
+  detector is a heuristic and says so: `$CMD`, `eval`, `xargs` and `find -exec` go through
+  it, and each of the two rules carries its written justification because both were found
+  inexact on first reading. The standard library is exempt — it is the layer that reaches
+  the system (#382).
 - **BREAKING** — `dir.copy` is a def over the new `~dir.sync` primitive (ADR-0039), and
   its source must be marked: `dir.copy("tree", …)` becomes `dir.copy(%"tree", …)`. The
   tree is read on the control host, and since #332 that is what `%` says — the marker was

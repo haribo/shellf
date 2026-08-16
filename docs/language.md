@@ -115,6 +115,39 @@ s.ok == want -> ...
 shell { … } -> err.runtime when err
 ```
 
+### `unsafe shell` — shell a def already does (ADR-0040)
+
+A `shell { }` block whose command has an **exact** def equivalent does not parse. The def
+is re-runnable by construction — it observes, it reports, it converges — and a step that
+tolerates being re-run is what makes a failed run recoverable instead of wedged:
+
+```
+shell { mkdir -p /opt/app }
+→ mkdir here — dir.ensure(path) is idempotent and previewable.
+  Write `unsafe shell { … }` to keep the shell.
+```
+
+Two rules today: `mkdir` → `dir.ensure`, and `cp` → `file.copy` for a file or `dir.copy`
+for a tree (neither carries mode or ownership — that is `file.mode` / `dir.owner`).
+
+`unsafe shell { … }` keeps the shell, and runs exactly like `shell { … }`. It composes
+with the interpreter override and works in a condition:
+
+```
+unsafe shell { mkdir /var/lock/deploy || exit 1 }     // an atomic lock: no def does this
+unsafe shell(bash) { … }
+if !unsafe shell { … } { … }
+```
+
+**`unsafe` does not mean dangerous.** It means shellf cannot vouch for what the block
+does — the lock above is irreproachable shell that no def replaces, and it is marked,
+correctly. That is what keeps the word usable, and what makes `grep -r 'unsafe shell'` the
+list of every place shellf's guarantees stop, imported modules included.
+
+The detector is a heuristic and does not claim otherwise: `$CMD`, `eval`, `xargs`,
+`install -d` and `find -exec` go through it. It runs on plans and on your own defs; the
+standard library is exempt, since it is the layer that reaches the system.
+
 ## Variables
 
 Immutable bindings, **no keyword** — same syntax in plans, vars files, and `def` bodies:

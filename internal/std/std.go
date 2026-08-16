@@ -44,7 +44,7 @@ func load() {
 		if err != nil {
 			return err
 		}
-		parsed, err := lang.ParseDefs(string(src))
+		parsed, err := lang.ParseStdlibDefs(string(src))
 		if err != nil {
 			return fmt.Errorf("%s: %w", p, err)
 		}

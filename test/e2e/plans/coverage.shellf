@@ -73,7 +73,11 @@ on target {
     # Created as the connecting user, not root: git refuses a repository owned by someone
     # else ("dubious ownership"), so a root-owned seed would fail the clone for a reason
     # that has nothing to do with shellf.
-    shell {
+    # `unsafe shell` (ADR-0040): this seeds a git repository, and the `mkdir -p` is one
+    # step of a sequence that also `cd`s into it — splitting it out would change what the
+    # block does. Marked rather than rewritten, which is what the marker is for, and it
+    # puts the new form on a real target rather than only in a unit test.
+    unsafe shell {
         if [ ! -d /tmp/cov/repo.git ]; then
             mkdir -p /tmp/cov/seed && cd /tmp/cov/seed
             git init -q -b main . && git config user.email e@x && git config user.name e

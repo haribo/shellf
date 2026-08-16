@@ -10,7 +10,7 @@ func TestParseShell(t *testing.T) {
 on web {
   shell docker compose up -d
   shell {
-    mkdir -p /opt/app
+    install -d /opt/app
     echo "done ${HOME}"
   }
 }
@@ -27,7 +27,7 @@ on web {
 		t.Fatalf("one-line: %+v", steps[0])
 	}
 	// Block body captured verbatim, including the ${HOME} braces.
-	if !strings.Contains(steps[1].Args["cmd"], "mkdir -p /opt/app") ||
+	if !strings.Contains(steps[1].Args["cmd"], "install -d /opt/app") ||
 		!strings.Contains(steps[1].Args["cmd"], "${HOME}") {
 		t.Fatalf("block: %q", steps[1].Args["cmd"])
 	}
