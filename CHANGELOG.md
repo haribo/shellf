@@ -8,6 +8,17 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **BREAKING** — a tree transfer inside an escalated block (`as root { dir.copy(…) }`)
+  now **fails** instead of writing as the wrong user (ADR-0044 §6). It never honoured the
+  escalation: every other instruction reaches the filesystem through the executor, which
+  is what carries `as <user>`, while a transfer writes from the agent's own process. So
+  the tree landed owned by the connecting user — and the run reported `ok.copied` with
+  exit 0, measured side by side with a `file.write` in the same block that did land
+  root-owned. Into a directory the connecting user cannot write, it failed on permissions
+  instead. The refusal names the escalation it cannot honour and what to do meanwhile:
+  deliver outside the block, then `dir.owner`. Honouring it properly means running the
+  placement under an escalated child of the agent, decided in ADR-0044 and not yet
+  implemented (#390).
 - **BREAKING** — a `%"…"` inside a def no longer parses (ADR-0043): only a plan names a
   file on your machine, and a def receives that path as a parameter. The allow-list is
   what stops a job from reading the operator's disk, and it was built by scanning the plan
