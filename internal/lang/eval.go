@@ -613,7 +613,15 @@ func (ev *evaluator) evalControlCall(c Call) value {
 		if res.Category == engine.ERR {
 			ev.fail("~file.write: %s", res.String())
 		}
-		return res
+		// The count of files written — "1" or "0" — exactly what `~dir.sync` returns for
+		// a tree. The primitive is idempotent by content sha256 (engine.FilePut.Guard),
+		// so it is the only party that knows whether anything changed; returning the
+		// Result instead left the caller to re-derive it with a weaker question, which is
+		// how `file.copy` came to report `already` over a stale destination (#378).
+		if res.Changed {
+			return "1"
+		}
+		return "0"
 
 	case "file.read", "dir.list":
 		// These name something on the control host, so a plain string is a mistake

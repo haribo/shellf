@@ -151,6 +151,18 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `file.copy` delivers a changed source. Its `observe` asked whether the destination
+  *existed*, which is true forever after the first run, so an edited source was never
+  re-delivered — and the run reported `ok.already` over a stale file. Worse than a
+  failure, which at least stops the plan. The `observe` is gone rather than repaired:
+  `~file.write` is already idempotent by content sha256, so the def was asking a second,
+  weaker version of a question the primitive answers exactly — the same duplication
+  `file.template` removed in #334, and the same drift. The verdict now comes from the
+  work itself, as in `dir.copy`, which is why `~file.write` returns the number of files
+  it wrote (`"1"` or `"0"`) the way `~dir.sync` already did for a tree. Binary safety is
+  untouched: the bytes still travel through the primitive, never through a shell
+  variable. The e2e harness grew the case that catches this class — a source edited
+  *between* two runs, which no fixed asset can exercise (#378).
 - An error caught with `?` no longer fails the run. The plan handles it and carries on —
   that is what `?` is for (ADR-0009) — yet shellf exited 1, so `shellf run … && …` never
   succeeded for any plan using the language's own error handling, and a CI job saw a

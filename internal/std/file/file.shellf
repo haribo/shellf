@@ -114,12 +114,17 @@ def exists(path: str) {
 # `%"…"` at the call site — an unmarked path would be read on the target, which is a
 # copy, not a delivery. Binary-safe: the content travels as bytes, never through a shell
 # variable, which would stop at the first null byte.
+#
+# No `observe`: the verdict comes from the work itself, as in `dir.copy`. `~file.write` is
+# idempotent by content sha256 and reports whether it wrote, so asking a second question
+# here would be a second implementation of one rule — free to drift, and it did: the
+# `observe` this def used to carry asked *"does the destination exist"*, answered `true`
+# forever after the first run, and left a changed source undelivered under an `ok.already`
+# (#378).
 def copy(src: str, dst: str) {
-    observe {
-        return state(synced: shell { test -f "$dst" }.exit == 0)
-    }
     apply {
-        ~file.write(dst, ~file.read(src))
+        n = ~file.write(dst, ~file.read(src))
+        if n == "0" { return ok.already }
         return ok.copied
     }
 }
