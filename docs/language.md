@@ -294,6 +294,31 @@ on host {
 - Lists are literals of strings; glob/range iteration and list variables are not
   in this version.
 
+## `%"…"` — a file on your machine, named by the plan (ADR-0043)
+
+A `%` marks a path the control host owns: `file.copy(%"conf.j2", "/etc/app.conf")`. What a
+plan marks is what the control host will serve — the list is built from the plan before
+the run, and any other request is refused by name.
+
+**Only a plan may write one.** A `%"…"` inside a def is a parse error: the def takes the
+path as a parameter, and the plan passes it marked.
+
+```
+# refused — the def would be adding to the list that bounds it
+def deliver() { apply { file.copy(%"conf.j2", "/etc/app.conf") return ok.done } }
+
+# how it is written
+def deliver(src: str) { apply { file.copy(src, "/etc/app.conf") return ok.done } }
+on web { deliver(%"conf.j2") }
+```
+
+The rule has no exception — not for the standard library, not for a def in your own
+project. A def written locally today is an imported def tomorrow, and a rule that depended
+on where the file lives would change meaning when it moves.
+
+It bounds *which* files a def can obtain, not what it does with them: a def still runs
+shell on the target.
+
 ## Delivering a tree — `dir.copy` (ADR-0039)
 
 ```

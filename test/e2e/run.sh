@@ -228,25 +228,19 @@ fi
 
 say "5. the allow-list holds over a real bridge (#329)"
 # The unit tests prove the control host refuses an undeclared resource; they cannot prove
-# the refusal survives the transport. This runs a plan whose def asks for a path built at
-# runtime — the allow-list is syntactic, so the literal `${n}.tmpl` is what gets declared
-# while the ask, once the def body interpolates, is for `motd.tmpl`. Nothing else can
-# produce an undeclared ask: every literal in every shipped def is scanned.
+# the refusal survives the transport. The plan declares a path that climbs out of
+# `assets/`: it is scanned like any other `%"…"`, but `NewAllowed` drops what resolves
+# outside the project, so the ask reaches the control host with nothing to match.
+#
+# It used to be written as a def interpolating `%"${n}.tmpl"` — a path built at runtime
+# inside a def body. That is a parse error since ADR-0043, and step 5b below asserts it.
 #
 # Generated under $work, not kept in test/e2e/: a package directory may hold only defs
 # beside its plan, so a second plan file there breaks loading for the first one.
-mkdir -p "$work/refused/plans" "$work/refused/defs/s"
-cat > "$work/refused/defs/s/sneak.shellf" <<'EOF'
-def sneak(n: str, dst: str) {
-    apply {
-        ~file.write(dst, ~file.read(%"${n}.tmpl"))
-        return ok.written
-    }
-}
-EOF
+mkdir -p "$work/refused/plans" "$work/refused/assets"
 cat > "$work/refused/plans/plan.shellf" <<'EOF'
 on target {
-    s.sneak("motd", "/tmp/shellf-e2e/sneaked")
+    file.copy(%"../../../etc/passwd", "/tmp/shellf-e2e/sneaked")
 }
 EOF
 # The run exits non-zero by design (a refusal is an error), so the exit code is captured
@@ -255,9 +249,33 @@ out="$("$work/shellf" run --inventory "$work/inventory.shellf" --insecure --secr
 printf '%s\n' "$out"
 printf '%s' "$out" | grep -q 'was not declared by the plan' || fail "an undeclared resource must be refused over the bridge"
 # The message names the resource: a refusal the operator cannot read is a support ticket.
-printf '%s' "$out" | grep -q 'file.read:motd.tmpl' || fail "the refusal must name the resource it refused"
+printf '%s' "$out" | grep -q 'file.read:../../../etc/passwd' || fail "the refusal must name the resource it refused"
 # And the refusal must be a refusal, not a warning: nothing lands on the target.
 docker exec "$cname" test -e /tmp/shellf-e2e/sneaked && fail "a refused read still wrote its destination"
+
+say "5b. a def naming a control-host file is refused before connecting (#403)"
+# ADR-0043: the allow-list is the operator's declaration, so only a plan writes it. A def
+# that names a file on the operator's machine used to add itself to the list meant to
+# bound it — an imported def included. Refused at parse, before any connection.
+mkdir -p "$work/selfdecl/plans" "$work/selfdecl/defs/s" "$work/selfdecl/assets"
+echo "secret contents" > "$work/selfdecl/assets/private.txt"
+cat > "$work/selfdecl/defs/s/grab.shellf" <<'EOF'
+def grab(dst: str) {
+    apply {
+        ~file.write(dst, ~file.read(%"private.txt"))
+        return ok.written
+    }
+}
+EOF
+cat > "$work/selfdecl/plans/plan.shellf" <<'EOF'
+on target {
+    s.grab("/tmp/shellf-e2e/grabbed")
+}
+EOF
+out="$("$work/shellf" run --inventory "$work/inventory.shellf" --insecure --secret-file apisecret="$work/secret" "$work/selfdecl/plans/plan.shellf" 2>&1)" || true
+printf '%s\n' "$out"
+printf '%s' "$out" | grep -q 'belongs in a plan, not in a def' || fail "a def may not declare its own control-host path"
+docker exec "$cname" test -e /tmp/shellf-e2e/grabbed && fail "a refused def still wrote its destination"
 
 say "6. a dropped bridge is relaunched mid-run (#347, #329 case 3)"
 # The property that justifies a socket in the agent's workdir rather than a pipe
@@ -734,4 +752,4 @@ EOF
 link >/dev/null || fail "a link inside assets/ must still be served"
 docker exec "$cname" grep -qx 'INSIDE' /tmp/shellf-alias.txt || fail "the aliased content did not land"
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained"
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained"

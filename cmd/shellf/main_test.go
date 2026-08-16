@@ -519,27 +519,10 @@ func TestRenameTable_TargetsResolve(t *testing.T) {
 	}
 }
 
-// parseDefsFor re-parses the shipped def sources so their `%` occurrences can be
-// extracted for the allow-list. A source that no longer parses is skipped rather than
-// fatal: it parsed once already, and failing the run here would be a worse diagnostic
-// than the refusal the request will get.
-func TestParseDefsFor(t *testing.T) {
-	got := parseDefsFor(map[string]string{
-		"a":      `def a(p: str) { apply { x = ~file.read(%"conf.j2") return ok.done } }`,
-		"broken": `def b( {`,
-	})
-	if _, ok := got["a"]; !ok {
-		t.Fatalf("a valid def must be parsed: %v", got)
-	}
-	if _, ok := got["broken"]; ok {
-		t.Fatal("an unparsable source must be skipped, not returned")
-	}
-
-	declared := lang.ControlResources(got, nil)
-	if len(declared) != 1 || declared[0] != "file.read:conf.j2" {
-		t.Fatalf("the def's control-host resource must be extracted: %v", declared)
-	}
-}
+// TestParseDefsFor stood here: the CLI re-parsed the shipped def sources to extract
+// their `%` occurrences for the allow-list. A def may no longer name a control-host file
+// (#403, ADR-0043), so the plan's steps are the only source and the helper went with the
+// question — see TestControl_DefMayNotDeclareAPath in internal/lang.
 
 // ADR-0035 renames the flag. The old spelling must fail naming the new one rather than
 // be accepted, or two names live forever — the same rule as the renamed instructions.
@@ -682,7 +665,7 @@ func TestControlChannel_NilWhenThePlanAsksNothing(t *testing.T) {
 	planPath := filepath.Join(dir, "plans", "plan.shellf")
 	invPath := filepath.Join(dir, "inventories", "inv.shellf")
 
-	plan, defsSrc, err := loadPlanPackage(planPath, invPath, map[string]string{}, map[string]string{})
+	plan, _, err := loadPlanPackage(planPath, invPath, map[string]string{}, map[string]string{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -690,7 +673,7 @@ func TestControlChannel_NilWhenThePlanAsksNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	channelFor := controlChannel(planPath, plan, defsSrc, inv, map[string]string{}, map[string]string{})
+	channelFor := controlChannel(planPath, plan, inv, map[string]string{}, map[string]string{})
 	if channelFor("web") != nil {
 		t.Fatal("a plan that asks for nothing must open no bridge")
 	}
@@ -706,7 +689,7 @@ func TestControlChannel_ServesADeclaredPath(t *testing.T) {
 	planPath := filepath.Join(dir, "plans", "plan.shellf")
 	invPath := filepath.Join(dir, "inventories", "inv.shellf")
 
-	plan, defsSrc, err := loadPlanPackage(planPath, invPath, map[string]string{}, map[string]string{})
+	plan, _, err := loadPlanPackage(planPath, invPath, map[string]string{}, map[string]string{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -714,7 +697,7 @@ func TestControlChannel_ServesADeclaredPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	channelFor := controlChannel(planPath, plan, defsSrc, inv, map[string]string{}, map[string]string{})
+	channelFor := controlChannel(planPath, plan, inv, map[string]string{}, map[string]string{})
 	if channelFor("web") == nil {
 		t.Fatal("a plan declaring a control-host path must get a bridge")
 	}

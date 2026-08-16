@@ -167,7 +167,7 @@ func runCmd(args []string) {
 		os.Exit(1)
 	}
 
-	channelFor := controlChannel(fs.Arg(0), plan, defsSrc, inv, baseVars, setVars)
+	channelFor := controlChannel(fs.Arg(0), plan, inv, baseVars, setVars)
 
 	dial := func(alias string) transport.Transport {
 		h, _ := inv.Resolve(alias)
@@ -192,10 +192,10 @@ func runCmd(args []string) {
 // observe may call a primitive — `file.template` renders there to decide whether the
 // destination is in sync (#334). Wiring this in `run` alone made `status` report
 // `err.agent` for every template, which is how it was found.
-func controlChannel(planPath string, plan []orchestrator.Block, defsSrc map[string]string, inv inventory.Inventory,
+func controlChannel(planPath string, plan []orchestrator.Block, inv inventory.Inventory,
 	baseVars, setVars map[string]string) func(alias string) func(io.Reader, io.WriteCloser) error {
 
-	// What the plan may ask for (ADR-0034 §5 → ADR-0031 §3). Derived from the defs
+	// What the plan may ask for (ADR-0034 §5 → ADR-0031 §3). Derived from the plan
 	// before anything is sent: the channel serves this set and refuses the rest by
 	// name, which is what keeps an imported def from reading ~/.ssh.
 	// The plan is inside the project by the time a run reaches here — loadPlanPackage
@@ -210,8 +210,9 @@ func controlChannel(planPath string, plan []orchestrator.Block, defsSrc map[stri
 	for _, b := range plan {
 		allSteps = append(allSteps, b.Steps...)
 	}
-	defs := parseDefsFor(defsSrc)
-	declared := lang.ControlResources(defs, allSteps)
+	// The plan's steps are the whole source of the allow-list: a def may not name a
+	// control-host file (ADR-0043), so there is nothing to extract from the def sources.
+	declared := lang.ControlResources(allSteps)
 	// A render names a declared template since #392, so the allow-list answers on its
 	// own: nothing asks the control host for anything when it is empty.
 	needsChannel := len(declared) > 0
@@ -254,21 +255,6 @@ func mergeVars(base, host, set map[string]string) map[string]string {
 		for k, v := range m {
 			out[k] = v
 		}
-	}
-	return out
-}
-
-// parseDefsFor re-parses the shipped def sources so their `%` occurrences can be
-// extracted. The sources are what travels to the agent (ADR-0014), so parsing them here
-// scans exactly what will run there.
-func parseDefsFor(srcByName map[string]string) map[string]lang.Def {
-	out := map[string]lang.Def{}
-	for name, src := range srcByName {
-		defs, err := lang.ParseDefs(src)
-		if err != nil || len(defs) != 1 {
-			continue // it already parsed once; a failure here cannot be actioned
-		}
-		out[name] = defs[0]
 	}
 	return out
 }
@@ -767,7 +753,7 @@ func statusCmd(args []string) {
 	// `secrets` sits in the --set layer here, exactly as `run` merges it (ADR-0018):
 	// a template naming a secret must render in `status` too, or `status` reports an
 	// error on a plan that applies cleanly.
-	channelFor := controlChannel(fs.Arg(0), plan, defsSrc, inv, base, secrets)
+	channelFor := controlChannel(fs.Arg(0), plan, inv, base, secrets)
 
 	dial := func(alias string) transport.Transport {
 		h, _ := inv.Resolve(alias)
