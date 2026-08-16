@@ -40,6 +40,16 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- The shipped examples now exercise the language rather than a corner of it: 24 of the 25
+  constructs a reader can meet appear in `examples/`, up from 8. `parallel { }`, `else`,
+  `.changed`, `with { }`, a triple-quoted raw string, a local `import`, a delegating def
+  and a def with `check`/`preview`/`using bash`/`shell(sh)`/a defaulted parameter — each
+  where it belongs, a def-authoring feature in a def and never in a plan to tick a box.
+  The e2e harness runs every example against the real target, so a construct that stops
+  working fails the build instead of misleading a reader. The 25th, `import` of a remote
+  module, is proven by the harness — which builds a bare repository, tags it, imports it
+  by URL and checks the resulting `shellf.lock` — and left out of the examples until a
+  published module exists to point at (#357).
 - `dir.sync(%"src", dst)` makes the target *match* the source: it delivers, and it
   **removes** what the source does not have. One word apart from `dir.copy` — the
   primitive already took the flag — which is why ADR-0039 refused to add it as a side

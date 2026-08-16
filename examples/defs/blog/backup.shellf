@@ -1,0 +1,44 @@
+# A def that shows what writing one involves, on a real job: snapshot a directory to a
+# dated tarball, keeping the last N.
+#
+# It is here because these are **def-authoring** features — a plan never declares a phase
+# or an interpreter. Putting them in a plan to tick a box would teach the wrong shape.
+#
+#   check           refuses bad arguments before anything runs, in every mode (ADR-0035)
+#   preview         says what apply would do, in `--dry-run` only (ADR-0029)
+#   using bash      this body needs bash arithmetic, not POSIX sh (ADR-0012)
+#   keep: str = "3" a parameter with a default — callers may omit it (ADR-0013)
+def backup(dir: str, keep: str = "3") as root using bash {
+    check {
+        n = shell { [[ "$keep" =~ ^[0-9]+$ ]] && (( keep >= 1 )) }
+        if !n { return err.badKeep(n) }
+    }
+
+    # Read-only, and best-effort: a preview that fails yields no preview, never a failed
+    # run. It names what would be removed, which is the part a reader cannot undo.
+    preview {
+        shell {
+            ls -1t "$dir"/../backups/*.tar.gz 2>/dev/null | tail -n +$((keep + 1)) \
+              | sed 's/^/would remove: /' || true
+        }
+    }
+
+    # `shell(sh)` overrides the interpreter for **one block**, where `using bash` set it
+    # for the whole def (ADR-0012). This probe is plain POSIX and says so.
+    observe {
+        return state(fresh: shell(sh) {
+            newest=$(ls -1t "$dir"/../backups/*.tar.gz 2>/dev/null | head -1)
+            [ -n "$newest" ] && [ "$(find "$newest" -mmin -60 | wc -l)" -eq 1 ]
+        }.exit == 0)
+    }
+
+    apply {
+        r = shell {
+            mkdir -p "$dir/../backups"
+            tar czf "$dir/../backups/$(date +%Y%m%d-%H%M%S).tar.gz" -C "$dir" .
+            ls -1t "$dir"/../backups/*.tar.gz | tail -n +$((keep + 1)) | xargs -r rm -f
+        }
+        if !r { return err.runtime(r) }
+        return ok.archived
+    }
+}

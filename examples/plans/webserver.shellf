@@ -29,5 +29,18 @@ on web {
     # Error handling: an optional package that may not exist. `?` catches its
     # failure so it does not halt the run; anything uncaught would.
     x = apt.install("no-such-pkg-shellf-xyz")?
-    if x == err.runtime { shell { logger "shellf: optional package absent, continuing" } }
+    if x == err.runtime {
+        shell { logger "shellf: optional package absent, continuing" }
+    } else {
+        shell { logger "shellf: optional package present" }
+    }
+
+    # **The idiom that makes a config tool worth using.** `cfg.changed` is true only when
+    # this run actually rewrote the file — not when it was already correct. Gate the
+    # restart on it and a converged run restarts nothing; forget it, and every run bounces
+    # the service for no reason.
+    as root {
+        cfg = file.write("/etc/nginx/conf.d/shellf.conf", "# managed by shellf\n")
+        if cfg.changed { service.restart("nginx") }
+    }
 }

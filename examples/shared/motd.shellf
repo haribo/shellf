@@ -1,0 +1,13 @@
+# A def package OUTSIDE the project, pulled in with a local import (ADR-0015).
+#
+# `defs/<name>/` is found by the project layout and needs no import (ADR-0038); this
+# directory is not under it, so a plan must name where it comes from. That is what an
+# import is for — sharing a package between projects, not inside one.
+def login-notice(text: str) as root {
+    observe { return state(set: shell { grep -qxF -- "$text" /etc/issue }.exit == 0) }
+    apply {
+        r = shell { printf '%s\n' "$text" > /etc/issue }
+        if !r { return err.runtime(r) }
+        return ok.set
+    }
+}

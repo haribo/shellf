@@ -1,0 +1,9 @@
+# A **delegation** (ADR-0037 §2): this def *is* `file.write`, with its content built from
+# the control host. One call, outside every phase — so `file.write`'s own `observe` runs,
+# and `--dry-run` reports `already` on a converged host instead of announcing a write.
+#
+# It also shows a **primitive**: `~file.read` is an engine call, marked `~` because it has
+# no phases and cannot be overridden. `%"…"` says the path is on the operator's machine.
+def deliver(src: str, dst: str) {
+    file.write(dst, ~file.read(src))
+}
