@@ -70,7 +70,30 @@ Under §1 it runs only when the apply found drift — on a converged host there 
 describe. `dir.sync` keeps its preview: naming the files it would delete is worth a second
 manifest exchange, and that exchange only happens when something would actually be deleted.
 
-### 4. What this does not claim
+### 4. A primitive returns what it did, counted
+
+§1 reads "no primitive reported a change", which presumes primitives report one. They do,
+and it is recorded here because three records now rely on it and none stated it:
+
+| Primitive | Returns |
+|---|---|
+| `~file.read`, `~dir.list` | the contents / the entries |
+| `~file.render` | the substituted content |
+| `~file.write` | the number of files written — `"1"` or `"0"` |
+| `~dir.sync` | the number of files transferred |
+
+A count and not a boolean, because `~dir.sync` acts on many files and `~file.write` on
+one: the same question answered in the same shape, and a def reads it the same way
+(`if n == "0"`). A count and not the engine `Result`, because the def language has no
+field access on one — the caller would have to re-derive what the primitive already knew,
+which is the duplication [ADR-0037](0037-explicit-verdict.md) and #378 both landed on.
+
+This is what makes a def's verdict come from the work itself: `dir.copy` and `file.copy`
+both end `if n == "0" { return ok.already }`, and neither carries an `observe` re-asking
+the question. See [ADR-0036](0036-primitive-and-location-markers.md) §5 for what each
+primitive *does*; this is what each one *answers*.
+
+### 5. What this does not claim
 
 An apply evaluated in check mode is a *prediction*, not a reservation. Between the dry-run
 and the real run the target can change, and the two verdicts can differ. That was already
