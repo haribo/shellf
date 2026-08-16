@@ -24,9 +24,9 @@ func evalCheck(t *testing.T, src, entry string, args map[string]string, n int, e
 	}
 	resolve := func(s string) (Def, bool) { d, ok := byName[s]; return d, ok }
 	fetch := func(string, []byte, map[string]string) ([]byte, error) { return []byte("body"), nil }
-	sync := func(string, string, string, bool) (int, error) {
+	sync := func(string, string, string, bool) (int, int, error) {
 		t.Error("check mode must not transfer")
-		return 0, nil
+		return 0, 0, nil
 	}
 	preview := func(string, string, string) (int, []string, error) { return n, extras, nil }
 	res, err := EvalDefFull(byName[entry], args, nil, []string{"s"}, ex, engine.Check, resolve,

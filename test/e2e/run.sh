@@ -527,4 +527,34 @@ printf '%s' "$out" | grep -qE 'file\.copy.*would' \
 docker exec "$cname" grep -qx 'v2' /tmp/shellf-drift/conf.txt \
   || fail "the dry-run wrote to the target — it must decide without acting"
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest"
+say "13. a sync that only deletes is not reported as already (#387)"
+# The case no fixed asset can produce: a *converged* tree plus an intruder, so the transfer
+# writes nothing and removes one file. The coverage plan creates its extra file and delivers
+# the tree in the same call, so `written` is never zero there and this path is invisible to
+# it — which is exactly why the bug shipped.
+mkdir -p "$work/del/plans" "$work/del/inventories" "$work/del/assets/tree"
+cp "$work/inventory.shellf" "$work/del/inventories/inv.shellf"
+printf 'kept\n' > "$work/del/assets/tree/kept.txt"
+cat > "$work/del/plans/plan.shellf" <<'EOF'
+on target {
+    dir.sync(%"tree", "/tmp/shellf-del")
+}
+EOF
+del() { "$work/shellf" run --inventory "$work/del/inventories/inv.shellf" --insecure \
+  "$work/del/plans/plan.shellf" 2>&1; }
+
+del >/dev/null || fail "the first sync failed"
+docker exec "$cname" touch /tmp/shellf-del/intruder.txt
+
+out="$(del)" || fail "the delete-only sync failed"; printf '%s\n' "$out"
+docker exec "$cname" test -e /tmp/shellf-del/intruder.txt \
+  && fail "the intruder was not removed"
+printf '%s' "$out" | grep -qE 'dir\.sync.*ok\.already' \
+  && fail "a sync that deleted a file must not report already (#387)"
+
+# And the half the fix must not cost: nothing to write, nothing to remove, still `already`.
+out="$(del)" || fail "the third sync failed"
+printf '%s' "$out" | grep -qE 'dir\.sync.*ok\.already' \
+  || fail "a converged sync must still report already"
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported"

@@ -166,7 +166,17 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- `--dry-run` stops announcing writes that would not happen. On a converged host
+- `dir.sync` no longer reports `ok.already` after deleting files. The transfer counted the
+  files it **wrote**, and the agent discarded the removal list on the way back
+  (`Sync` returned `n, _, err`), so a run over a converged tree holding one intruder
+  removed it and announced that nothing had changed — a destructive action reported as a
+  no-op, which is worse than an error since an error at least stops the plan. `~dir.sync`
+  now returns the work it did, written **plus** removed. The check-mode half of this same
+  defect was fixed in #384 and this one was left behind, so the dry-run told the truth
+  while the real run did not — the inversion of what an operator expects. `dir.copy` is
+  unaffected: it passes `delete = "false"` and removes nothing. Found by an external audit;
+  the e2e coverage plan cannot produce the case, because it creates its extra file and
+  delivers a tree in the same call, so the harness grew the one that can (#387). On a converged host
   `file.copy`, `dir.copy` and `dir.sync` reported `would.copied` / `would.synced` — and
   `dir.sync` contradicted its own verdict in the preview line below it (*0 file(s) would
   be transferred*). An operator who learns that `would` means "maybe" stops reading it,

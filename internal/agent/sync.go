@@ -23,9 +23,12 @@ import (
 // The manifest goes first, so the control host can answer only the delta — that one round
 // trip is what buys a converged run its zero bytes, and what keeps a large tree from
 // costing one round trip per file.
-func (c *Channel) Sync(resource, dst, compare string, del bool) (int, error) {
-	n, _, err := c.sync(resource, dst, compare, del, false)
-	return n, err
+func (c *Channel) Sync(resource, dst, compare string, del bool) (written, removed int, err error) {
+	n, extras, err := c.sync(resource, dst, compare, del, false)
+	if !del {
+		extras = nil // a copy removes nothing, whatever the terminator listed
+	}
+	return n, len(extras), err
 }
 
 // Preview answers what a transfer *would* do without doing any of it: the delta is

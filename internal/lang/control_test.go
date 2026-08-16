@@ -607,7 +607,7 @@ func TestControl_SyncIsInertInCheckMode(t *testing.T) {
 	resolve := func(string) (Def, bool) { return Def{}, false }
 
 	var synced, previewed bool
-	sync := func(string, string, string, bool) (int, error) { synced = true; return 1, nil }
+	sync := func(string, string, string, bool) (int, int, error) { synced = true; return 1, 0, nil }
 	preview := func(string, string, string) (int, []string, error) { previewed = true; return 1, []string{"gone"}, nil }
 
 	args := map[string]string{"s": "tree", "dst": "/opt/x"}

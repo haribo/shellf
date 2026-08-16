@@ -84,7 +84,7 @@ func TestSync_SecondRunTransfersNothing(t *testing.T) {
 	dst := filepath.Join(t.TempDir(), "delivered")
 	ch := syncPair(t, root)
 
-	n, err := ch.Sync("dir.sync:tree", dst, "meta", false)
+	n, _, err := ch.Sync("dir.sync:tree", dst, "meta", false)
 	if err != nil {
 		t.Fatalf("first transfer: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestSync_SecondRunTransfersNothing(t *testing.T) {
 		t.Fatalf("mode not carried: %v (%v)", info.Mode().Perm(), err)
 	}
 
-	n, err = ch.Sync("dir.sync:tree", dst, "meta", false)
+	n, _, err = ch.Sync("dir.sync:tree", dst, "meta", false)
 	if err != nil {
 		t.Fatalf("second transfer: %v", err)
 	}
@@ -127,14 +127,14 @@ func TestSync_DeleteIsAParameter(t *testing.T) {
 			root := sourceTree(t)
 			dst := filepath.Join(t.TempDir(), "delivered")
 			ch := syncPair(t, root)
-			if _, err := ch.Sync("dir.sync:tree", dst, "meta", false); err != nil {
+			if _, _, err := ch.Sync("dir.sync:tree", dst, "meta", false); err != nil {
 				t.Fatal(err)
 			}
 			extra := filepath.Join(dst, "extra.txt")
 			if err := os.WriteFile(extra, []byte("x"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := ch.Sync("dir.sync:tree", dst, "meta", tc.del); err != nil {
+			if _, _, err := ch.Sync("dir.sync:tree", dst, "meta", tc.del); err != nil {
 				t.Fatal(err)
 			}
 			_, err := os.Stat(extra)
@@ -168,7 +168,7 @@ func TestSync_PastTheOldCeiling(t *testing.T) {
 	dst := filepath.Join(t.TempDir(), "delivered")
 	ch := syncPair(t, root)
 
-	if _, err := ch.Sync("dir.sync:tree", dst, "meta", false); err != nil {
+	if _, _, err := ch.Sync("dir.sync:tree", dst, "meta", false); err != nil {
 		t.Fatalf("a tree above the old ceiling must transfer: %v", err)
 	}
 	got, err := os.Stat(filepath.Join(dst, "big.bin"))
@@ -185,7 +185,7 @@ func TestSync_Sha256SeesWhatMetaCannot(t *testing.T) {
 	dst := filepath.Join(t.TempDir(), "delivered")
 	ch := syncPair(t, root)
 
-	if _, err := ch.Sync("dir.sync:tree", dst, "sha256", false); err != nil {
+	if _, _, err := ch.Sync("dir.sync:tree", dst, "sha256", false); err != nil {
 		t.Fatal(err)
 	}
 	// Corrupt the destination in place, preserving size and mtime exactly.
@@ -201,7 +201,7 @@ func TestSync_Sha256SeesWhatMetaCannot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	n, err := ch.Sync("dir.sync:tree", dst, "meta", false)
+	n, _, err := ch.Sync("dir.sync:tree", dst, "meta", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestSync_Sha256SeesWhatMetaCannot(t *testing.T) {
 		t.Fatalf("meta compares size+mtime: it cannot see this change, got %d re-sent", n)
 	}
 
-	n, err = ch.Sync("dir.sync:tree", dst, "sha256", false)
+	n, _, err = ch.Sync("dir.sync:tree", dst, "sha256", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestSync_InterruptedLeavesNothingBehind(t *testing.T) {
 	waitAttached(t, ch)
 
 	dst := filepath.Join(t.TempDir(), "delivered")
-	if _, err := ch.Sync("dir.sync:tree", dst, "meta", false); err == nil {
+	if _, _, err := ch.Sync("dir.sync:tree", dst, "meta", false); err == nil {
 		t.Fatal("a transfer that never terminates must fail, not report success")
 	}
 	if _, err := os.Stat(filepath.Join(dst, "big.bin")); err == nil {
@@ -326,7 +326,7 @@ func TestSync_RetriesAfterAStaleBridge(t *testing.T) {
 	}()
 
 	dst := filepath.Join(t.TempDir(), "delivered")
-	n, err := ch.Sync("dir.sync:tree", dst, "meta", false)
+	n, _, err := ch.Sync("dir.sync:tree", dst, "meta", false)
 	if err != nil {
 		t.Fatalf("a transfer must survive a bridge left over from a previous session: %v", err)
 	}
@@ -385,7 +385,7 @@ func TestSync_DeleteMakesTheTargetMatch(t *testing.T) {
 	}
 	ch := syncPair(t, root)
 
-	if _, err := ch.Sync("dir.sync:tree", dst, "meta", true); err != nil {
+	if _, _, err := ch.Sync("dir.sync:tree", dst, "meta", true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dst, "stale.txt")); err == nil {

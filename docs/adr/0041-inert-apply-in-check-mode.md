@@ -80,7 +80,11 @@ and it is recorded here because three records now rely on it and none stated it:
 | `~file.read`, `~dir.list` | the contents / the entries |
 | `~file.render` | the substituted content |
 | `~file.write` | the number of files written — `"1"` or `"0"` |
-| `~dir.sync` | the number of files transferred |
+| `~dir.sync` | the number of files it **changed** — written plus removed |
+
+Written **plus** removed, and not written alone: a transfer that only removes has changed
+the target as surely as one that only writes. Counting writes alone made a deletion report
+`ok.already` — a destructive action announced as a no-op (#387).
 
 A count and not a boolean, because `~dir.sync` acts on many files and `~file.write` on
 one: the same question answered in the same shape, and a def reads it the same way
