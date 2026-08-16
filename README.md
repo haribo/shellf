@@ -16,15 +16,17 @@
 shellf runs configuration as plain shell — but structured so every action is
 **idempotent** (skip when already in the desired state), **previewable** (a
 dry-run shows what *would* change, without touching anything), and **fast**. It
-is agentless: a single static binary pushes an **ephemeral agent** over SSH that
-evaluates the plan **on the target**, then vanishes. Nothing stays installed.
+needs nothing installed on the target: a single static binary pushes itself over SSH and
+evaluates the plan **on the target**. The pushed agent stays **resident** between jobs, so
+a second run costs no round trip; after an inactivity TTL (default 2h) it removes its
+workdir and its own binary and exits, leaving nothing behind.
 
-> Status: experimental (0.1.0). Ships a **stdlib of instructions** (`apt.install`,
-> `service.ensure`, `dir.ensure`, `file-*`, `ufw.*`, `docker.*`, …) written as shellf
-> `def`s, plus `file.copy` and a raw **`shell`** form; you write the plan and
-> inventory. User-supplied instruction libraries (imports), cross-distro, and
-> cross-arch agents are not there yet. Debian/systemd targets, `linux/amd64`
-> control host.
+> Status: experimental (0.4.0). Ships a **stdlib of instructions** (`apt.install`,
+> `service.ensure`, `dir.ensure`, `file.*`, `ufw.*`, `docker.*`, …) written as shellf
+> `def`s, plus a raw **`shell`** form; you write the plan and inventory. Instruction
+> libraries can be shared: a local package by path, or a remote module pinned by tag in
+> `shellf.lock`. Cross-distro and cross-arch agents are not there yet. Debian/systemd
+> targets, `linux/amd64` control host.
 
 ## Install
 
@@ -212,11 +214,12 @@ as `current → desired`, without acting.
 ## Instructions
 
 Most instructions are `def`s written in shellf and embedded in the binary; only
-`shell` and `file.copy` are Go builtins. All are idempotent (`observe` skips
+`shell` and five **primitives** — `~file.read`, `~file.write`, `~file.render`,
+`~dir.list`, `~dir.sync` — are built in. All are idempotent (`observe` skips
 `apply` when the desired state already holds).
 
 - **Packages & services** — `apt.install(pkg)` · `apt.update()` · `service.ensure(name, running, enabled)` (running/enabled are `"true"`/`"false"`; a `.timer` unit works as the name) · `service.restart(name)` · `service.reload(name)` · `systemd.daemon-reload()` · `user.group(user, group)` · `user.ensure(name, shell)`
-- **Files & directories** — `file.copy(%"src", dst)` (deliver a file from the control host, binary-safe) · `file.template(%"src", dst)` (render a control-host file's `@{var}` and deliver it — `src` must be marked `%"…"`, an unmarked path is read on the target) · `dir.copy(%"src", dst, compare)` (deliver a control-host tree verbatim, binary-safe; sends only what differs, so a converged tree transfers nothing — `compare` defaults to size+mtime, pass `"sha256"` when a change may preserve both) · `file.write(path, content)` · `file.mode(path, mode)` · `file.replace(path, key, value)` (a `key=value` line) · `file.line(path, line)` · `file.delete(path)` · `file.download(url, dst, sha256)` · `dir.ensure(path)` · `dir.owner(path, owner)` · `archive.extract(src, dst)` · `archive.extract-member(src, dst, member)` (one file out of a tarball) · `git.clone(url, dst)` · `git.sync(url, dst, ref)` (update to a pinned ref)
+- **Files & directories** — `file.copy(%"src", dst)` (deliver a file from the control host, binary-safe) · `file.template(%"src", dst)` (render a control-host file's `@{var}` and deliver it — `src` must be marked `%"…"`, an unmarked path is read on the target) · `dir.copy(%"src", dst, compare)` (deliver a control-host tree verbatim, binary-safe; sends only what differs, so a converged tree transfers nothing — `compare` defaults to size+mtime, pass `"sha256"` when a change may preserve both) · `file.write(path, content)` · `file.mode(path, mode)` · `file.replace(path, key, value)` (a `key=value` line) · `file.line(path, line)` · `file.delete(path)` · `file.download(url, dst, sha256)` · `dir.sync(%"src", dst, compare)` (same transfer, and it **removes** what the source does not have — `--dry-run` names every file it would delete) · `dir.ensure(path)` · `dir.owner(path, owner)` · `archive.extract(src, dst)` · `archive.extract-member(src, dst, member)` (one file out of a tarball) · `git.clone(url, dst)` · `git.sync(url, dst, ref)` (update to a pinned ref)
 - **Questions** (read-only, deterministic in `--dry-run`) — `dir.exists(path)` · `file.exists(path)` · `http.check(url, status)` · `http.wait-for(url, timeout)` (retries until ready)
 - **Validated configs** — `sudo.write(name, content)` (checked with `visudo -cf`, set 0440) · `sshd.config(name, content)` (checked with `sshd -t -f`). The check runs before anything is written, and in `--dry-run` too, so an invalid file is caught before it can lock you out
 - **Firewall** — `ufw.enable()` · `ufw.default(incoming, outgoing)` · `ufw.open(port, proto)`
@@ -284,7 +287,7 @@ shellf run --inventory <hosts.shellf> [flags] <plan.shellf>
 
 ![Isometric view: a control terminal pushes one static binary over SSH arcs to three servers, where it runs as an agent executing the plan locally; the finished agent dissolves into pixels, leaving the machine untouched.](docs/assets/how-it-works.png)
 
-*One static binary. The control host orchestrates; pushed over SSH, it re-runs as an ephemeral agent that executes the plan locally on each target — then vanishes.*
+*One static binary. The control host orchestrates; pushed over SSH, it re-runs as a resident agent that executes the plan locally on each target, and exits after its inactivity TTL.*
 
 Two planes, kept separate. The **orchestration** plane (control host) decides
 which hosts run what, in what order. The **execution** plane is the agent: the

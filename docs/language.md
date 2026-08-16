@@ -102,7 +102,14 @@ type ShellResult {
 
 ### `set -e` by default
 
-shellf injects `set -e` + `set -o pipefail` at the top of every block. `exit` = the code of the **first** failing command (else `0`). Without it, `exit` would be the last command's and a mid-block failure would be masked.
+shellf injects `set -e` at the top of every block, so `exit` is the code of the **first**
+failing command (else `0`). Without it, `exit` would be the last command's and a mid-block
+failure would be masked.
+
+**`set -o pipefail` only under `bash`.** It is a bashism — `dash`, which is `/bin/sh` on a
+Debian target, does not have it. So in a default `sh` block, `cmd | grep x` reports the
+exit code of `grep`, and a failure of `cmd` is invisible. Write `shell(bash) { … }` when a
+pipeline's left-hand side must be able to fail the block.
 
 `shell(raw) { … }` removes the net for the user who wants control.
 
@@ -120,10 +127,11 @@ shell { apt-get install -y "$pkg" }
 
 // captured: read the return
 s = shell { systemctl is-active --quiet "$name" }
-s.ok == want -> ...
+if s { … }                       // `.ok` is exit == 0; `if s` / `if !s` reads it
 
-// one line, explicit tag
-shell { … } -> err.runtime when err
+// tag a failure explicitly: name the outcome the block yields when it fails
+r = shell { … }
+if !r { return err.runtime(r) }
 ```
 
 ### `unsafe shell` — shell a def already does (ADR-0040)
@@ -194,9 +202,9 @@ See [ADR-0003](adr/0003-variable-scoping.md).
 
 ```
 if dir.exists("/opt/app") {     // condition = an instruction; branch on its Result being ok
-  apt-install("nginx")
+  apt.install("nginx")
 } else {
-  apt-install("apache")
+  apt.install("apache")
 }
 ```
 
@@ -256,7 +264,7 @@ See [ADR-0009](adr/0009-error-handling.md).
 
 ```
 if dir.exists("/opt/app") {   // present → then, absent → else — deterministic even in --dry-run
-  apt-install("nginx")
+  apt.install("nginx")
 }
 ```
 
