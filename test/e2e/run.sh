@@ -699,4 +699,39 @@ place >/dev/null || fail "an escalated delivery must still work"
 [ "$(docker exec "$cname" stat -c '%U' /opt/shellf-place/conf.txt)" = "root" ] \
   || fail "the escalated delivery landed as the wrong user"
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic"
+say "17. a link out of assets/ is refused, one inside it is not (#393)"
+# The allow-list check is lexical, so a link at `assets/x` reads as declared. Run against
+# the real target because the consequence is what matters: a file from outside the project
+# arriving on the target is the failure, not the code path that allowed it.
+mkdir -p "$work/link/plans" "$work/link/inventories" "$work/link/assets"
+cp "$work/inventory.shellf" "$work/link/inventories/inv.shellf"
+printf 'CONTROL-HOST-SECRET\n' > "$work/link/secret-outside.txt"
+ln -s "$work/link/secret-outside.txt" "$work/link/assets/leak.txt"
+printf 'INSIDE\n' > "$work/link/assets/real.txt"
+ln -s real.txt "$work/link/assets/alias.txt"
+cat > "$work/link/plans/plan.shellf" <<'EOF'
+on target {
+    file.copy(%"leak.txt", "/tmp/shellf-leak.txt")
+}
+EOF
+link() { "$work/shellf" run --inventory "$work/link/inventories/inv.shellf" --insecure \
+  "$work/link/plans/plan.shellf" 2>&1; }
+
+docker exec "$cname" rm -f /tmp/shellf-leak.txt /tmp/shellf-alias.txt
+rc=0; out="$(link)" || rc=$?
+printf '%s\n' "$out"
+[ "$rc" -ne 0 ] || fail "a link out of assets/ must not be served (#393)"
+printf '%s' "$out" | grep -q "leaves the project's assets" || fail "the refusal must say why"
+printf '%s' "$out" | grep -q 'secret-outside' && fail "the refusal must not name the link's target"
+docker exec "$cname" test -e /tmp/shellf-leak.txt && fail "content from outside the project reached the target"
+
+# A link inside assets/ is an ordinary way to share content between two names.
+cat > "$work/link/plans/plan.shellf" <<'EOF'
+on target {
+    file.copy(%"alias.txt", "/tmp/shellf-alias.txt")
+}
+EOF
+link >/dev/null || fail "a link inside assets/ must still be served"
+docker exec "$cname" grep -qx 'INSIDE' /tmp/shellf-alias.txt || fail "the aliased content did not land"
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained"
