@@ -20,10 +20,19 @@ var removedPhases = map[string]string{
 }
 var categories = map[string]bool{"ok": true, "err": true, "would": true}
 
-// ParseDefs parses a file of `def` declarations.
-func ParseDefs(src string) (defs []Def, err error) {
+// ParseDefs parses a file of `def` declarations written by a user — a project's own
+// defs, or an imported module's (ADR-0016). Its shell blocks are checked (ADR-0040 §2).
+func ParseDefs(src string) (defs []Def, err error) { return parseDefs(src, false) }
+
+// ParseStdlibDefs parses the embedded standard library, which the detector exempts: it is
+// the layer that reaches the system, and `service.ensure` is implemented with the very
+// `systemctl` a rule would forbid (ADR-0040 §6).
+func ParseStdlibDefs(src string) (defs []Def, err error) { return parseDefs(src, true) }
+
+func parseDefs(src string, trusted bool) (defs []Def, err error) {
 	defer catch(&err)
 	p := newParser(src)
+	p.trusted = trusted
 	for p.tok.kind != tEOF {
 		defs = append(defs, p.def())
 	}
@@ -426,7 +435,13 @@ func (p *parser) primary() Expr {
 			p.adv()
 			return BoolLit{Value: v}
 		case "shell":
-			return p.shellExpr()
+			return p.shellExpr(false)
+		case "unsafe": // `unsafe shell { … }` (ADR-0040 §3)
+			p.adv()
+			if !(p.tok.kind == tIdent && p.tok.val == "shell") {
+				p.fail("`unsafe` marks a shell block: write `unsafe shell { … }`")
+			}
+			return p.shellExpr(true)
 		}
 		name := p.tok.val
 		p.adv()
@@ -448,11 +463,16 @@ func (p *parser) primary() Expr {
 	}
 }
 
-func (p *parser) shellExpr() Expr {
+func (p *parser) shellExpr(unsafe bool) Expr {
 	interp := p.shellInterp()         // optional `shell(<interp>)` (ADR-0012)
 	body, err := p.lex.rawShellBody() // lexer sits right after "shell" / its interp
 	if err != nil {
 		panic(parseErr{err})
+	}
+	if !unsafe && !p.trusted {
+		if msg := checkShellBody(body); msg != "" {
+			p.fail("%s", msg)
+		}
 	}
 	p.adv()
 	e := ShellExpr{Cmd: body, Interp: interp}

@@ -33,8 +33,10 @@ def backup(dir: str, keep: str = "3") as root using bash {
     }
 
     apply {
+        # `mkdir -p` in a shell block does not parse (ADR-0040 §2): `dir.ensure` does the
+        # same thing, tolerates being re-run, and says so in the report.
+        dir.ensure("${dir}/../backups")
         r = shell {
-            mkdir -p "$dir/../backups"
             tar czf "$dir/../backups/$(date +%Y%m%d-%H%M%S).tar.gz" -C "$dir" .
             ls -1t "$dir"/../backups/*.tar.gz | tail -n +$((keep + 1)) | xargs -r rm -f
         }
