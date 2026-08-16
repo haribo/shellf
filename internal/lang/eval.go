@@ -708,6 +708,24 @@ func (ev *evaluator) evalSync(c Call, arg value) value {
 	if !ok {
 		ev.fail("~dir.sync reads its source on the control host: mark it %%\"…\"")
 	}
+	// A transfer writes through the agent's own user — `os.MkdirAll`, `os.Rename` and
+	// friends in internal/agent/sync.go — where every other instruction reaches the
+	// filesystem through the executor, which is what carries `as <user>` (ADR-0011). So an
+	// escalation around a transfer was ignored: measured in #390, a tree delivered inside
+	// `as root` landed owned by the connecting user while the run reported `ok.copied`.
+	//
+	// Refused until the escalated transfer of ADR-0044 ships (§6), in check mode too: a
+	// preview announcing a transfer the real run would refuse is the same lie, earlier.
+	//
+	// Read off the concrete executor rather than through a method on the interface: the
+	// interface would gain something ADR-0044 removes again, since an escalated transfer
+	// learns who it runs as from the executor that launches it, never by asking. A test
+	// fake is not a ShellExecutor and cannot escalate, so it is not the case being guarded.
+	if s, ok := ev.ex.(engine.ShellExecutor); ok && s.Become != "" {
+		ev.fail("~dir.sync does not honour `as %s` yet: it writes as the agent's own user, "+
+			"so the tree would land owned by the wrong user (#390, ADR-0044). "+
+			"Deliver it outside the escalated block and set ownership with dir.owner", s.Become)
+	}
 	dst := stringify(ev.evalExpr(c.Args[1]))
 	del := stringify(ev.evalExpr(c.Args[2]))
 	compare := stringify(ev.evalExpr(c.Args[3]))

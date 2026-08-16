@@ -752,4 +752,49 @@ EOF
 link >/dev/null || fail "a link inside assets/ must still be served"
 docker exec "$cname" grep -qx 'INSIDE' /tmp/shellf-alias.txt || fail "the aliased content did not land"
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained"
+say "18. a transfer inside an escalated block refuses rather than lie (#390)"
+# Measured before it was refused: in one `as root` block, `file.write` landed root-owned
+# and `dir.copy` landed owned by the connecting user — with `ok.copied` and exit 0. A
+# transfer writes through the agent's own user, so the escalation never reached it
+# (ADR-0044 §6). Until the escalated transfer ships, this must fail and write nothing.
+#
+# The assertion is on ownership, not on the exit code: the exit code was already 0 while
+# the tree landed wrong, which is exactly what made this survive.
+mkdir -p "$work/escal/plans" "$work/escal/assets/tree" "$work/escal/inventories"
+echo "delivered" > "$work/escal/assets/tree/file.txt"
+cat > "$work/escal/inventories/inv.shellf" <<EOF
+host target = {
+    address: "$ip", user: "deploy", key: "$work/id",
+}
+EOF
+docker exec "$cname" rm -rf /opt/escal
+docker exec "$cname" mkdir -p /opt/escal
+docker exec "$cname" chown deploy:deploy /opt/escal
+cat > "$work/escal/plans/plan.shellf" <<'EOF'
+on target {
+    as root {
+        dir.copy(%"tree", "/opt/escal/delivered")
+    }
+}
+EOF
+rc=0
+out="$("$work/shellf" run --inventory "$work/escal/inventories/inv.shellf" --insecure \
+  "$work/escal/plans/plan.shellf" 2>&1)" || rc=$?
+printf '%s\n' "$out"
+[ "$rc" -ne 0 ] || fail "an escalated transfer must not report success (#390)"
+printf '%s' "$out" | grep -q 'does not honour' || fail "the refusal must name the escalation it cannot honour"
+printf '%s' "$out" | grep -q 'dir.owner' || fail "the refusal must say what to do instead"
+docker exec "$cname" test -e /opt/escal/delivered && fail "a refused transfer still wrote its destination"
+
+# Unescalated, the same delivery works and is owned by the connecting user: the refusal is
+# about the escalation, not about the transfer.
+cat > "$work/escal/plans/plan.shellf" <<'EOF'
+on target {
+    dir.copy(%"tree", "/opt/escal/delivered")
+}
+EOF
+"$work/shellf" run --inventory "$work/escal/inventories/inv.shellf" --insecure \
+  "$work/escal/plans/plan.shellf" >/dev/null 2>&1 || fail "an unescalated transfer must still work"
+docker exec "$cname" test -f /opt/escal/delivered/file.txt || fail "the unescalated delivery did not land"
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer refused"
