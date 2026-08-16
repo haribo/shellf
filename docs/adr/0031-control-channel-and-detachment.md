@@ -104,6 +104,13 @@ the machine holding every key and secret — would answer. A declared set also k
 existing property that a missing file is reported before the first connection rather
 than mid-deploy.
 
+The rule as written above covers an ask that *names* a resource. An ask that *submits*
+one — a template sent up to be substituted — was outside it, and this section read as
+though the channel were bounded either way.
+[ADR-0042](0042-render-a-declared-file.md) brings that second kind under the same rule,
+by making it name a declared path too. The condition stated here is unchanged; what
+changed is that both ask kinds now meet it.
+
 ### 4. Everything else in ADR-0005 is carried over unchanged
 
 Binary cached on disk and reused; agent stays alive between jobs, watching a request

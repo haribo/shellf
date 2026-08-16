@@ -88,6 +88,11 @@ caller's scope, and the control host layers it over the host environment, so the
 local binding wins. Sending only the content renders a `with { }` binding as an
 undefined variable; recorded because the split is not visible from either side alone.
 
+The two-halves rule above is unchanged. What the row for `~file.render` takes is not:
+[ADR-0042](0042-render-a-declared-file.md) narrows the argument from a content to a
+`%"…"` path, so the text being substituted comes from a declared file rather than from
+the target. The caller's scope still travels — that half is the caller's own.
+
 ### 6. `~dir.sync` replaces `dir.copy`; a copy is a parameterised sync
 
 `dir.copy` reads a whole tree into memory, base64-encodes it, and sends it in one
