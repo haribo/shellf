@@ -454,4 +454,39 @@ docker exec "$cname" grep -q 'from a remote module' /tmp/shellf-e2e/from-module 
 [ -f "$work/modproj/shellf.lock" ] || fail "shellf.lock was not written at the project root"
 grep -q 'v1.0.0' "$work/modproj/shellf.lock" || fail "the lock does not pin the imported version"
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, bridge relaunched, every def exercised, examples run, remote module used"
+say "10. a changed source is re-delivered, an unchanged one is not (#378)"
+# Regression test for #378: `file.copy` observed *existence*, which is true forever after
+# the first run, so a source edited between two runs was never delivered — and the run
+# said `ok.already` over the stale file. Convergence and correctness are not the same
+# property; the coverage step checks the first, this one checks the second.
+#
+# It needs a source that changes between two runs, which no other step has: coverage.shellf
+# delivers fixed assets, so it converges whether or not this bug is present.
+mkdir -p "$work/drift/plans" "$work/drift/inventories" "$work/drift/assets"
+cp "$work/inventory.shellf" "$work/drift/inventories/inv.shellf"
+cat > "$work/drift/plans/plan.shellf" <<'EOF'
+on target {
+    dir.ensure("/tmp/shellf-drift")
+    file.copy(%"conf.txt", "/tmp/shellf-drift/conf.txt")
+}
+EOF
+drift() { "$work/shellf" run --inventory "$work/drift/inventories/inv.shellf" --insecure \
+  "$work/drift/plans/plan.shellf" 2>&1; }
+
+printf 'v1\n' > "$work/drift/assets/conf.txt"
+out="$(drift)" || fail "the first delivery failed"
+docker exec "$cname" grep -qx 'v1' /tmp/shellf-drift/conf.txt || fail "the first delivery did not land"
+
+printf 'v2\n' > "$work/drift/assets/conf.txt"
+out="$(drift)" || fail "the second delivery failed"; printf '%s\n' "$out"
+docker exec "$cname" grep -qx 'v2' /tmp/shellf-drift/conf.txt \
+  || fail "a changed source was not re-delivered — the destination is stale (#378)"
+printf '%s' "$out" | grep -qE 'file\.copy.*ok\.copied' \
+  || fail "a changed source must report copied, not already (#378)"
+
+# The other half: fixing the staleness must not cost idempotence.
+out="$(drift)" || fail "the third delivery failed"
+printf '%s' "$out" | grep -qE 'file\.copy.*ok\.already' \
+  || fail "an unchanged source must report already"
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered"
