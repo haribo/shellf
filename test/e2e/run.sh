@@ -409,4 +409,49 @@ docker exec "$appname" grep -q 'blog.example.test' /opt/blog/.env || fail "the b
 docker exec "$appname" sh -c 'docker compose -f /opt/blog/docker-compose.yml ps --status running | grep -q blog' \
   || fail "the blog stack is not running"
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, bridge relaunched, every def exercised, examples run"
+say "9. a remote module is fetched, pinned and used (#357)"
+# `import <alias> "<url>@<version>"` (ADR-0016) was covered by a unit test and had never
+# run against a target. The module is a bare git repo the harness builds here: no network,
+# nothing published, and the mechanism — clone, version pin, shellf.lock, qualified call —
+# is exercised for real.
+#
+# The *example* of a remote import is a different thing and stays absent on purpose: it
+# would need a published module, which is a compatibility promise the language cannot make
+# while its grammar is still moving.
+# A module is a **flat def package** — `.shellf` files at its root, called `alias.def`.
+# Not a project layout: ADR-0038 changed how a *project* is arranged, not a module.
+mkdir -p "$work/module" "$work/modproj/plans" "$work/modproj/inventories"
+cat > "$work/module/greet.shellf" <<'EOF'
+def hello(path: str) {
+    observe { return state(present: shell { test -f "$path" }.exit == 0) }
+    apply {
+        r = shell { printf 'from a remote module\n' > "$path" }
+        if !r { return err.runtime(r) }
+        return ok.written
+    }
+}
+EOF
+( cd "$work/module" && git init -q -b main .   && git config user.email e@x && git config user.name e   && git add -A && git commit -qm module && git tag v1.0.0 ) >/dev/null 2>&1
+git clone -q --bare "$work/module" "$work/module.git" >/dev/null 2>&1
+
+cat > "$work/modproj/plans/plan.shellf" <<EOF
+import m "file://$work/module.git@v1.0.0"
+
+on target {
+    m.hello("/tmp/shellf-e2e/from-module")
+}
+EOF
+cp "$work/inventory.shellf" "$work/modproj/inventories/inv.shellf"
+mkdir -p "$work/modproj/defs" "$work/modproj/assets"
+
+rc=0; out="$("$work/shellf" run --inventory "$work/modproj/inventories/inv.shellf" --insecure \
+  "$work/modproj/plans/plan.shellf" 2>&1)" || rc=$?
+printf '%s\n' "$out"
+[ "$rc" -eq 0 ] || fail "a remote module must resolve and run (exit $rc)"
+docker exec "$cname" grep -q 'from a remote module' /tmp/shellf-e2e/from-module \
+  || fail "the remote module's def did not run on the target"
+# The version is pinned in a lock at the project root, so a second run cannot drift.
+[ -f "$work/modproj/shellf.lock" ] || fail "shellf.lock was not written at the project root"
+grep -q 'v1.0.0' "$work/modproj/shellf.lock" || fail "the lock does not pin the imported version"
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, bridge relaunched, every def exercised, examples run, remote module used"
