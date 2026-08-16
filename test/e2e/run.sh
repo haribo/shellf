@@ -651,4 +651,52 @@ printf '%s' "$out" | grep -qE 'git\.sync.*ref=v1\.0.*ok\.already' || fail "a con
 printf '%s' "$out" | grep -qE 'file\.line.*ok\.already' || fail "an existing line must report already"
 printf '%s' "$out" | grep -qE 'ufw\.open\(port=90,.*ok\.already' || fail "an open port must report already"
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed"
+say "16. a delivered file is replaced, never written through (#389)"
+# The consequence, not the command: the destination's inode must change across a rewrite.
+# Same inode means `cp` wrote into the file in place, which is a window where a reader — a
+# daemon reloading its config — sees it truncated. The unit test asserts the shape; this
+# asserts what the shape buys, on a real filesystem.
+mkdir -p "$work/place/plans" "$work/place/inventories" "$work/place/assets"
+cp "$work/inventory.shellf" "$work/place/inventories/inv.shellf"
+printf 'one\n' > "$work/place/assets/conf.txt"
+cat > "$work/place/plans/plan.shellf" <<'EOF'
+on target {
+    dir.ensure("/tmp/shellf-place")
+    file.copy(%"conf.txt", "/tmp/shellf-place/conf.txt")
+}
+EOF
+place() { "$work/shellf" run --inventory "$work/place/inventories/inv.shellf" --insecure \
+  "$work/place/plans/plan.shellf" 2>&1; }
+
+place >/dev/null || fail "the first placement failed"
+before="$(docker exec "$cname" stat -c '%i' /tmp/shellf-place/conf.txt)"
+# A mode the operator chose: a rewrite must not take it away.
+docker exec "$cname" chmod 640 /tmp/shellf-place/conf.txt
+
+printf 'two\n' > "$work/place/assets/conf.txt"
+place >/dev/null || fail "the second placement failed"
+after="$(docker exec "$cname" stat -c '%i' /tmp/shellf-place/conf.txt)"
+
+[ "$before" != "$after" ] \
+  || fail "the destination was written through (inode $before unchanged) — a reader can see it truncated (#389)"
+docker exec "$cname" grep -qx 'two' /tmp/shellf-place/conf.txt || fail "the new content did not land"
+[ "$(docker exec "$cname" stat -c '%a' /tmp/shellf-place/conf.txt)" = "640" ] \
+  || fail "a rewrite must keep the destination's mode"
+docker exec "$cname" sh -c 'ls /tmp/shellf-place/*.shellf.* 2>/dev/null' \
+  && fail "a staging file was left behind"
+
+# Escalated delivery into a directory the connecting user cannot write: staging beside the
+# destination must go through the executor, or `as root` breaks.
+docker exec "$cname" sh -c 'rm -rf /opt/shellf-place && mkdir -p /opt/shellf-place && chmod 700 /opt/shellf-place'
+cat > "$work/place/plans/plan.shellf" <<'EOF'
+on target {
+    as root {
+        file.copy(%"conf.txt", "/opt/shellf-place/conf.txt")
+    }
+}
+EOF
+place >/dev/null || fail "an escalated delivery must still work"
+[ "$(docker exec "$cname" stat -c '%U' /opt/shellf-place/conf.txt)" = "root" ] \
+  || fail "the escalated delivery landed as the wrong user"
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic"

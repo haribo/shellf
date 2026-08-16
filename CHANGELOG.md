@@ -166,6 +166,16 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A delivered file is now **replaced**, not written through. `~file.write` — and so
+  `file.copy`, `file.template` and every def built on it — ran `cp "$tmp" "$dst"`, which
+  writes into the destination's own inode: measured across a rewrite, 544 → 544. A reader
+  that opens the file mid-copy, a daemon reloading its config, sees it truncated. The
+  `file.write` def has always staged beside the destination and renamed, calling it *"same
+  filesystem, hence atomic"*; the primitive underneath it did not. The staging goes through
+  the executor rather than `os.CreateTemp`, because the agent's own user may not be able to
+  write in a root-owned directory while the escalated executor can — `as root` deliveries
+  keep working, and an existing destination lends its mode and owner to the staging file,
+  so a rewrite no longer needs to be re-`chmod`ed (#389).
 - Three `observe` phases asked a weaker question than their `apply` answers, so each
   reported converged over a host that was not — the shape #378 and #387 already cost.
   `git.sync` resolved its ref **inside the checkout**, comparing it to itself: right after
