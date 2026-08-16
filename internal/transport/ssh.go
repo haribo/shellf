@@ -208,9 +208,13 @@ func donePath(wd, jobid string) string { return fmt.Sprintf("%s/done-%s", wd, jo
 func outPath(wd, jobid string) string  { return fmt.Sprintf("%s/out-%s.json", wd, jobid) }
 
 // pushCmd streams stdin to a temp then renames onto path (atomic, +x).
+// 700 and not `+x`: `chmod +x` keeps whatever the account's umask left, which on a target
+// with umask 0002 is 775 — any member of the SSH user's group can then rewrite the binary
+// shellf is about to execute. It also makes the mode an invariant the cache probe can
+// check, instead of something that varies per account (#391).
 func pushCmd(path string) string {
 	tmp := path + ".tmp"
-	return fmt.Sprintf("cat > %[1]s && chmod +x %[1]s && mv %[1]s %[2]s", tmp, path)
+	return fmt.Sprintf("cat > %[1]s && chmod 700 %[1]s && mv %[1]s %[2]s", tmp, path)
 }
 
 // depositCmd writes the request (stdin) atomically into the workdir. `umask 077`
@@ -273,11 +277,36 @@ func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
 	// The workdir goes on tmpfs so secret plaintext stays off disk (ADR-0025);
 	// probed on this connection since it depends on the target.
 	wd := s.workDir(workBase(cn), bin)
-	if !cached(cn, path) {
+	// Fail closed, and name what was found: a foreign binary at our path is not a cache
+	// miss to paper over by re-pushing — the file is not ours to replace, and executing it
+	// is the whole of #391.
+	sum := sha256.Sum256(bin)
+	st, err := agentState(cn, path, hex.EncodeToString(sum[:]))
+	if err != nil {
+		_ = cn.close()
+		return nil, err
+	}
+	switch {
+	case st == "ok": // ours, unchanged → skip the transfer
+	case strings.HasPrefix(st, "foreign"):
+		_ = cn.close()
+		return nil, fmt.Errorf("refusing to run %s: it is not ours (%s) — remove it on the target",
+			path, strings.TrimSpace(strings.TrimPrefix(st, "foreign")))
+	default: // absent, or ours with different bytes → (re)transfer
 		if err := push(cn, bin, path); err != nil {
 			_ = cn.close()
 			return nil, err
 		}
+	}
+	wst, err := workdirState(cn, wd)
+	if err != nil {
+		_ = cn.close()
+		return nil, err
+	}
+	if strings.HasPrefix(wst, "unsafe") {
+		_ = cn.close()
+		return nil, fmt.Errorf("refusing to use %s: another user can write there (%s) — the agent runs any request it finds",
+			wd, strings.TrimSpace(strings.TrimPrefix(wst, "unsafe")))
 	}
 	if err := deposit(cn, wd, jobid, req); err != nil {
 		_ = cn.close()
@@ -399,11 +428,65 @@ func (s SSH) Clean() error {
 	return nil
 }
 
-// cached reports whether the agent binary is already present and executable on
-// the target (a cache hit → skip the transfer).
-func cached(cn conn, path string) bool {
-	_, err := cn.run(posix("test -x "+path), nil)
-	return err == nil
+// agentStateCmd asks what sits at the cached agent path. `test -x` used to answer this,
+// and it answers none of the questions that matter: the path is
+// `/tmp/shellf-agent-<digest of the binary>-<user>`, both halves public, so any local user
+// can create that file first and have it executed — often to run work under `as root`
+// (#391).
+//
+// Three questions, one round trip. `find … ! -perm /022` is the "nobody else can write
+// it" test; `-user` is the "it is ours" test; the digest is the "it is the binary we would
+// have sent" test. It always exits 0 and answers in a word, so a refusal can name what it
+// found rather than surfacing a shell exit code.
+func agentStateCmd(path, wantSum string) string {
+	return fmt.Sprintf(`if [ ! -e %[1]s ]; then echo absent; exit 0; fi
+if [ -z "$(find %[1]s -maxdepth 0 -type f -user "$(id -un)" ! -perm /022 2>/dev/null)" ]; then
+echo "foreign $(stat -c '%%U:%%a' %[1]s 2>/dev/null)"; exit 0; fi
+s=$(sha256sum %[1]s 2>/dev/null | cut -d' ' -f1)
+if [ "$s" = "%[2]s" ]; then echo ok; else echo "stale $s"; fi`, path, wantSum)
+}
+
+// workdirStateCmd checks the rendezvous directory before a request is deposited in it.
+// The agent runs **any** `req-*.json` it finds there without asking who wrote it
+// (internal/agent/resident.go), so a directory another user can write to is a way to have
+// a request of their choosing executed, `become: root` included. `umask 077` does not
+// cover this: it sets the mode of a directory it *creates*, and both `/tmp` and `/dev/shm`
+// are world-writable, so the path can be pre-created (#391).
+func workdirStateCmd(wd string) string {
+	return fmt.Sprintf(`if [ ! -e %[1]s ]; then echo absent; exit 0; fi
+if [ -z "$(find %[1]s -maxdepth 0 -type d -user "$(id -un)" ! -perm /022 2>/dev/null)" ]; then
+echo "unsafe $(stat -c '%%U:%%a' %[1]s 2>/dev/null)"; exit 0; fi
+echo ok`, wd)
+}
+
+// agentState returns the word agentStateCmd answered: absent | ok | foreign … | stale …
+//
+// A probe that cannot answer refuses. Returning "absent" here would have been the natural
+// reflex and is the wrong one: a guard that fails open reads as protection while granting
+// the same execution, which is worse than having none. The three tools it needs —
+// `find`, `stat -c`, `sha256sum` — are the ones the stdlib already requires of a target.
+func agentState(cn conn, path, wantSum string) (string, error) {
+	out, err := cn.run(posix(agentStateCmd(path, wantSum)), nil)
+	if err != nil {
+		return "", fmt.Errorf("cannot check the cached agent at %s: %w", path, err)
+	}
+	st := strings.TrimSpace(string(out))
+	if st == "" {
+		return "", fmt.Errorf("cannot check the cached agent at %s: the probe answered nothing", path)
+	}
+	return st, nil
+}
+
+func workdirState(cn conn, wd string) (string, error) {
+	out, err := cn.run(posix(workdirStateCmd(wd)), nil)
+	if err != nil {
+		return "", fmt.Errorf("cannot check the workdir %s: %w", wd, err)
+	}
+	st := strings.TrimSpace(string(out))
+	if st == "" {
+		return "", fmt.Errorf("cannot check the workdir %s: the probe answered nothing", wd)
+	}
+	return st, nil
 }
 
 func (s SSH) dial() (*ssh.Client, error) {
