@@ -166,7 +166,20 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- The public surface no longer teaches syntax the binary refuses. The site's hero ran
+- The agent binary and its workdir are verified before use. A cache hit was `test -x`
+  at `/tmp/shellf-agent-<digest of the binary>-<user>` — both halves public, so any local
+  user could create that file first and have shellf execute it, often to run work under
+  `as root`. The probe now checks that the file is **ours**, that nobody else can write
+  it, and that its bytes are the ones we would have sent; a foreign file is refused by
+  name rather than overwritten, because replacing a file we do not own is a race we cannot
+  win. The workdir is checked the same way before a request is deposited: the resident
+  agent runs **any** `req-*.json` it finds without asking who wrote it, and `umask 077`
+  only sets the mode of a directory it *creates* — `/tmp` and `/dev/shm` are both
+  world-writable, so the path can be pre-created. A probe that cannot answer refuses
+  rather than proceeds. The pushed binary is now `chmod 700` and not `chmod +x`: under a
+  target umask of 0002 the latter yields 775, so any member of the SSH user's group could
+  rewrite the binary about to run — found by running the guard against a container, where
+  it refused shellf's own binary while every unit test passed (#391). The site's hero ran
   `shellf run --check … hosts.shellf site.shellf`, which fails twice over: `--check` was
   renamed `--dry-run` (ADR-0035), and a plan must sit in `plans/` beside `inventories/`
   (ADR-0038). It also used `service(…)`, `service-reload(…)` and `template(…)`, all

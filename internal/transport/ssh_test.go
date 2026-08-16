@@ -56,7 +56,7 @@ func TestPaths(t *testing.T) {
 
 func TestCommandBuilders(t *testing.T) {
 	cases := []struct{ got, want string }{
-		{pushCmd("/p"), "cat > /p.tmp && chmod +x /p.tmp && mv /p.tmp /p"},
+		{pushCmd("/p"), "cat > /p.tmp && chmod 700 /p.tmp && mv /p.tmp /p"},
 		{depositCmd("/w", "7"), "umask 077 && mkdir -p /w && cat > /w/req-7.json.tmp && mv /w/req-7.json.tmp /w/req-7.json"},
 		{launchCmd("/p", "/w", 7200), "setsid /p __agent-resident /w 7200 >/dev/null 2>&1 </dev/null &"},
 		{checkDoneCmd("/w", "7"), "if test -f /w/done-7; then cat /w/out-7.json; else printf __NOTDONE__; fi"},

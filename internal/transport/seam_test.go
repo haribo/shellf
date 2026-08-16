@@ -82,8 +82,10 @@ func (f *fakeConn) ran(sub string) bool {
 func doneResponder(payload string) func(string) ([]byte, error) {
 	return func(cmd string) ([]byte, error) {
 		switch {
-		case strings.HasPrefix(cmd, "test -x "): // cache probe → miss
-			return nil, errFake("absent")
+		case strings.Contains(cmd, "sha256sum"): // cache probe → absent (#391)
+			return []byte("absent\n"), nil
+		case strings.Contains(cmd, "-type d -user"): // workdir probe → safe (#391)
+			return []byte("ok\n"), nil
 		case strings.Contains(cmd, "agent.pid"): // agentAlive → dead
 			return nil, errFake("dead")
 		case strings.HasPrefix(cmd, "if test -f "): // checkDone → ready
@@ -119,7 +121,7 @@ func TestRun_HappyPath_PushDepositLaunchPoll(t *testing.T) {
 		t.Fatalf("job payload should pass through: %q", out)
 	}
 	// Full sequence: cache probe → push → deposit → agentAlive → checkDone → rmJob.
-	if !fc.ran("test -x ") || !fc.ran("chmod +x") || !fc.ran("mkdir -p ") ||
+	if !fc.ran("sha256sum") || !fc.ran("chmod 700") || !fc.ran("mkdir -p ") ||
 		!fc.ran("agent.pid") || !fc.ran("if test -f ") || !fc.ran("rm -f ") {
 		t.Fatalf("missing a step in the sequence: %v", fc.runs)
 	}
@@ -131,8 +133,10 @@ func TestRun_HappyPath_PushDepositLaunchPoll(t *testing.T) {
 func TestRun_Cached_SkipsPush(t *testing.T) {
 	fc := &fakeConn{responder: func(cmd string) ([]byte, error) {
 		switch {
-		case strings.HasPrefix(cmd, "test -x "): // cache probe → HIT
-			return nil, nil
+		case strings.Contains(cmd, "sha256sum"): // cache probe → HIT: ours, unchanged (#391)
+			return []byte("ok\n"), nil
+		case strings.Contains(cmd, "-type d -user"): // workdir probe → safe (#391)
+			return []byte("ok\n"), nil
 		case strings.Contains(cmd, "agent.pid"): // agentAlive → alive
 			return nil, nil
 		case strings.HasPrefix(cmd, "if test -f "):
@@ -145,7 +149,7 @@ func TestRun_Cached_SkipsPush(t *testing.T) {
 	if _, err := s.Run(tmpBin(t), []byte(`{}`)); err != nil {
 		t.Fatal(err)
 	}
-	if fc.ran("chmod +x") {
+	if fc.ran("chmod 700") {
 		t.Fatal("a cache hit must skip the push")
 	}
 	if len(fc.starts) != 0 {
@@ -176,8 +180,8 @@ func TestWorkBase_PrefersTmpfsElseTmp(t *testing.T) {
 
 func TestRun_PushError_StopsBeforeDeposit(t *testing.T) {
 	fc := &fakeConn{responder: func(cmd string) ([]byte, error) {
-		if strings.HasPrefix(cmd, "test -x ") {
-			return nil, errFake("absent") // not cached
+		if strings.Contains(cmd, "sha256sum") {
+			return []byte("absent\n"), nil // not cached (#391)
 		}
 		if strings.HasPrefix(cmd, "cat > ") {
 			return nil, errFake("disk full") // push fails

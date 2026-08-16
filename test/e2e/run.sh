@@ -557,4 +557,46 @@ out="$(del)" || fail "the third sync failed"
 printf '%s' "$out" | grep -qE 'dir\.sync.*ok\.already' \
   || fail "a converged sync must still report already"
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported"
+say "14. a foreign agent binary and a writable workdir are refused (#391)"
+# The two assumptions the transport used to make without checking. Both are exercised
+# against the real target because both live in shell — `find … ! -perm /022`, `stat -c` —
+# and a unit test with a fake connection proves only the decision, never the probe. That
+# distinction is not academic here: the first version of this guard refused shellf's *own*
+# binary, because `chmod +x` under the target's umask 0002 yields 775, and every unit test
+# passed.
+id16="$(sha256sum "$work/shellf" | cut -c1-16)"
+agent_path="/tmp/shellf-agent-${id16}-deploy"
+work_path="/dev/shm/shellf-${id16}-deploy"
+
+# Stop the resident agent and clear both paths. `pkill -f agent-resident` runs as its own
+# exec: folded into an `sh -c` it matches its own command line and kills the shell before
+# the rest of the script runs.
+docker exec "$cname" pkill -f agent-resident >/dev/null 2>&1 || true
+docker exec "$cname" sh -c "rm -rf /tmp/shellf-agent-* /dev/shm/shellf-*"
+
+# A binary planted by another user (root here) at the predictable cache path. `test -x`
+# said yes to this and ran it.
+docker exec "$cname" sh -c "printf '#!/bin/sh\necho pwned\n' > $agent_path && chmod 755 $agent_path"
+rc=0; out="$(run 2>&1)" || rc=$?
+printf '%s\n' "$out"
+printf '%s' "$out" | grep -q 'not ours' || fail "a foreign agent binary must be refused (#391)"
+printf '%s' "$out" | grep -q 'root:755' || fail "the refusal must name what it found"
+docker exec "$cname" grep -q pwned "$agent_path" || fail "the planted binary must be left alone, not overwritten"
+
+# A workdir another user can write to: the agent runs any req-*.json it finds there.
+docker exec "$cname" sh -c "rm -f /tmp/shellf-agent-*"
+docker exec "$cname" sh -c "mkdir -p $work_path && chmod 777 $work_path"
+rc=0; out="$(run 2>&1)" || rc=$?
+printf '%s' "$out" | grep -q 'another user can write' || fail "a world-writable workdir must be refused (#391)"
+docker exec "$cname" sh -c "ls $work_path/req-*.json" >/dev/null 2>&1 \
+  && fail "no request may be deposited into an unsafe workdir"
+
+# And the clean path still works, with the modes the guard requires.
+docker exec "$cname" sh -c "rm -rf /dev/shm/shellf-*"
+run >/dev/null 2>&1 || fail "a clean target must still run"
+[ "$(docker exec "$cname" stat -c '%U:%a' "$agent_path")" = "deploy:700" ] \
+  || fail "the pushed agent must be owner-only (chmod 700, not +x — umask 0002 makes that 775)"
+[ "$(docker exec "$cname" stat -c '%U:%a' "$work_path")" = "deploy:700" ] \
+  || fail "the workdir must be owner-only"
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused"
