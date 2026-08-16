@@ -249,6 +249,12 @@ type parser struct {
 	// is *implemented* with systemctl — a rule forbidding that would forbid the
 	// replacement it recommends. An imported module is user code and is checked.
 	trusted bool
+
+	// inDef says the parser is inside a def body, where a `%"…"` is refused: the
+	// allow-list is the operator's declaration, so only a plan writes it (ADR-0043).
+	// Deliberately not paired with `trusted` — the stdlib gets no exemption, having no
+	// literal control path to exempt.
+	inDef bool
 }
 
 // resolveSig looks up an instruction's parameter names and required count: a

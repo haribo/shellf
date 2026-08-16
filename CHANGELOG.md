@@ -8,6 +8,17 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **BREAKING** — a `%"…"` inside a def no longer parses (ADR-0043): only a plan names a
+  file on your machine, and a def receives that path as a parameter. The allow-list is
+  what stops a job from reading the operator's disk, and it was built by scanning the plan
+  **and the def bodies** — so a def could add itself to the list meant to bound it. For an
+  imported def (ADR-0016) that meant guessing a filename, which a public example hands
+  over. The refusal arrives when the plan is read, names the fix, and applies to the
+  standard library too: an exemption would have to be carried and trusted forever, and the
+  stdlib has no literal control path to exempt. Nothing in this repository needed changing
+  — every real occurrence already sat in a plan, which is the shape the rule now enforces.
+  It bounds *which* files a def can obtain, not what it does with them: a def still runs
+  shell on the target (#403).
 - **BREAKING** — `~file.render` renders a **declared file** instead of content handed to
   it (ADR-0042): `~file.render(~file.read(src))` becomes `~file.render(src)`, and `src`
   must be marked `%"…"` at the call site as it already had to be. `file.template(%"…", …)`

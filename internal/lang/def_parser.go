@@ -51,6 +51,13 @@ func (p *parser) def() Def {
 	}
 	d := Def{Name: p.expect(tIdent, "def name").val, Params: p.params(), Override: override}
 
+	// Everything below is the def's body, where a control-host path is refused
+	// (ADR-0043). Restored rather than cleared: a def written inline in a plan file
+	// returns to plan context, where `%"…"` is exactly how a path is declared.
+	outer := p.inDef
+	p.inDef = true
+	defer func() { p.inDef = outer }()
+
 	// Optional `as <user>` (ADR-0011) and `using <interp>` (ADR-0012), either order.
 	for p.tok.kind == tIdent && (p.tok.val == "as" || p.tok.val == "using") {
 		kw := p.tok.val
@@ -374,6 +381,15 @@ func (p *parser) controlPathLit() Expr {
 				p.tok.val, controlPrimitiveList())
 		}
 		p.fail("%% must be followed by a path string, got %q", p.tok.val)
+	}
+	// Checked after the two form errors above, so `%file.read(…)` in a def still gets the
+	// ADR-0036 spelling message rather than this one: what is wrong there is the marker,
+	// not where it sits.
+	if p.inDef {
+		// ADR-0043: the allow-list is derived from the plan, so a def naming a file on
+		// the operator's machine was adding itself to the set that bounds it (#403). The
+		// message names the fix, since the def is one parameter away from correct.
+		p.fail("%%\"…\" belongs in a plan, not in a def: take the path as a parameter and let the plan pass it marked (ADR-0043)")
 	}
 	v := p.tok.val
 	p.adv()

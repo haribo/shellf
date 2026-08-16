@@ -2,10 +2,11 @@ package lang
 
 import (
 	"errors"
-
-	"shellf/internal/engine"
 	"strings"
 	"testing"
+
+	"shellf/internal/engine"
+	"shellf/internal/proto"
 )
 
 // parseDef is a thin helper: parse one def and hand back the error, if any.
@@ -23,7 +24,6 @@ func TestControl_PercentOnlyBeforeAPrimitive(t *testing.T) {
 		`def t(p: str) { apply { x = ~file.read(p) return ok.done } }`,
 		`def t(p: str) { apply { x = ~file.render(p) return ok.done } }`,
 		`def t(d: str) { apply { x = ~dir.list(d) return ok.done } }`,
-		`def t() { apply { x = %"conf.j2" return ok.done } }`,
 	}
 	for _, src := range ok {
 		if err := parseDef(src); err != nil {
@@ -179,19 +179,21 @@ func TestControl_RenderSendsTheCallerScope(t *testing.T) {
 		got = vars
 		return []byte("rendered"), nil
 	}
-	defs, err := ParseDefs(`def t(p: str) { apply { x = ~file.render(%"body.j2") return ok.done } }`)
+	defs, err := ParseDefs(`def t(p: str, port: str) { apply { x = ~file.render(p) return ok.done } }`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := EvalDefWith(defs[0], map[string]string{"p": "c.j2"},
-		map[string]string{"greeting": "hello-with"}, noopExec{}, engine.Apply, nil, nil, fetch); err != nil {
+	// `p` is the template's path, marked at the call site; `port` is an ordinary
+	// parameter, and it is what a template names.
+	if _, err := EvalDefFull(defs[0], map[string]string{"p": "c.j2", "port": "8080"},
+		map[string]string{"greeting": "hello-with"}, []string{"p"}, noopExec{}, engine.Apply, nil, nil, fetch, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got["greeting"] != "hello-with" {
 		t.Fatalf("a `with` override must reach the renderer, got %q", got["greeting"])
 	}
-	if got["p"] != "c.j2" {
-		t.Fatalf("a def parameter must reach the renderer, got %q", got["p"])
+	if got["port"] != "8080" {
+		t.Fatalf("a def parameter must reach the renderer, got %q", got["port"])
 	}
 }
 
@@ -216,39 +218,46 @@ func TestControl_NoFetcherFails(t *testing.T) {
 	}
 }
 
-// A control-host path literal is data until a primitive reads it.
+// A control-host path literal interpolates like any string, so a plan can name a file per
+// host. Written in a plan, which is the only place a `%"…"` may now sit (ADR-0043).
 func TestControl_PathLiteralIsInterpolated(t *testing.T) {
-	var asked string
-	fetch := func(r string, _ []byte, _ map[string]string) ([]byte, error) { asked = r; return []byte("x"), nil }
-	_, err := evalWithFetch(t, `def t(name: str) { apply { x = ~file.read(%"conf/${name}.j2") return ok.done } }`, "t",
-		map[string]string{"name": "web"}, fetch)
+	sig := func(string) ([]string, int, bool) { return []string{"src", "dst"}, 2, true }
+	plan, err := ParsePlanWithVars(`on web { deliver(%"conf/${name}.j2", "/etc/app.conf") }`,
+		map[string]string{"name": "web"}, nil, sig)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if asked != "file.read:conf/web.j2" {
-		t.Fatalf("a control path must interpolate like any string: %q", asked)
+	got := ControlResources(plan[0].Steps)
+	found := false
+	for _, r := range got {
+		if r == "file.read:conf/web.j2" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("a control path must interpolate like any string: %v", got)
 	}
 }
 
 // ADR-0034 §5: `%` occurrences are syntactic, which is what lets the control host build
 // ADR-0031's allow-list before sending. If this misses one, the job is refused at
 // runtime for a resource it legitimately needs.
+//
+// The occurrences are the plan's: a def may not write one (#403, ADR-0043), so the def
+// half of this test moved to TestControl_DefMayNotDeclareAPath, where those same three
+// bodies are now refusals.
 func TestControl_ResourcesAreExtractable(t *testing.T) {
-	defs, err := ParseDefs(`
-def a(dst: str) { apply { x = ~file.render(~file.read(%"conf.j2")) return ok.done } }
-def b() { observe { return state(there: ~file.read(%"other.txt")) } }
-def c(p: str) { apply { if ~dir.list(%"tree") { shell { echo hi } } return ok.done } }
-`)
-	if err != nil {
-		t.Fatal(err)
+	steps := []proto.Step{
+		{Instruction: "deliver", Args: map[string]string{"src": "conf.j2"}, Control: []string{"src"}},
+		{Instruction: "mirror", Args: map[string]string{"tree": "tree"}, Control: []string{"tree"}},
 	}
-	byName := map[string]Def{}
-	for _, d := range defs {
-		byName[d.Name] = d
+	got := ControlResources(steps)
+	want := []string{
+		"dir.list:conf.j2", "dir.list:tree",
+		"dir.sync:conf.j2", "dir.sync:tree",
+		"file.read:conf.j2", "file.read:tree",
+		"file.render:conf.j2", "file.render:tree",
 	}
-
-	got := ControlResources(byName, nil)
-	want := []string{"dir.list:tree", "file.read:conf.j2", "file.read:other.txt"}
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -259,15 +268,42 @@ def c(p: str) { apply { if ~dir.list(%"tree") { shell { echo hi } } return ok.do
 	}
 }
 
+// #403, ADR-0043 — the allow-list is the operator's declaration, so only the plan writes
+// it. A def naming a control-host file in its own body was adding itself to the list that
+// bounds it; it is now a parse error, before the run rather than during it.
+func TestControl_DefMayNotDeclareAPath(t *testing.T) {
+	refused := map[string]string{
+		"in an apply":     `def t() { apply { x = ~file.read(%"conf.j2") return ok.done } }`,
+		"in an observe":   `def t() { observe { return state(v: ~file.read(%"conf.j2")) } }`,
+		"in a condition":  `def t() { apply { if ~dir.list(%"tree") { shell { echo hi } } return ok.done } }`,
+		"calling a def":   `def t() { apply { file.copy(%"conf.j2", "/etc/x") return ok.done } }`,
+		"a bare literal":  `def t() { apply { x = %"conf.j2" return ok.done } }`,
+		"in a delegation": `def t(dst: str) { file.copy(%"conf.j2", dst) }`,
+	}
+	for name, src := range refused {
+		t.Run(name, func(t *testing.T) {
+			err := parseDef(src)
+			if err == nil {
+				t.Fatal("a def may not name a control-host file: the plan declares, the def receives")
+			}
+			if !strings.Contains(err.Error(), "parameter") {
+				t.Fatalf("the refusal must say what to write instead: %v", err)
+			}
+		})
+	}
+
+	// The same paths, written where they belong: unchanged.
+	if err := parseDef(`def t(src: str) { apply { x = ~file.read(src) return ok.done } }`); err != nil {
+		t.Fatalf("a def taking its path as a parameter must parse: %v", err)
+	}
+}
+
 // A path the target computes cannot be known before the run, so it is not in the set —
 // and the request it makes is refused by name rather than silently served.
 func TestControl_ComputedPathIsNotDeclared(t *testing.T) {
-	defs, err := ParseDefs(`def a(p: str) { apply { x = ~file.read(p) return ok.done } }`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	byName := map[string]Def{"a": defs[0]}
-	if got := ControlResources(byName, nil); len(got) != 0 {
+	// No `Control` marking: the plan passed an ordinary string, so nothing is declared.
+	steps := []proto.Step{{Instruction: "deliver", Args: map[string]string{"src": "/tmp/x"}}}
+	if got := ControlResources(steps); len(got) != 0 {
 		t.Fatalf("a computed path must not enter the allow-list: %v", got)
 	}
 }
@@ -298,7 +334,7 @@ func TestControl_PlanArgumentIsDeclared(t *testing.T) {
 	// Every read primitive is declared for a marked path: the plan says the file is its
 	// to serve, and which primitive reads it is the def's business — `file.template`
 	// reads it, `dir.copy` syncs it (#335). Sorted, so the set is comparable.
-	got := ControlResources(nil, plan[0].Steps)
+	got := ControlResources(plan[0].Steps)
 	want := []string{"dir.list:conf.j2", "dir.sync:conf.j2", "file.read:conf.j2", "file.render:conf.j2"}
 	if len(got) != len(want) {
 		t.Fatalf("a marked plan argument must enter the allow-list: %v", got)
@@ -318,7 +354,7 @@ func TestControl_UnmarkedPlanArgumentIsNotDeclared(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := ControlResources(nil, plan[0].Steps); len(got) != 0 {
+	if got := ControlResources(plan[0].Steps); len(got) != 0 {
 		t.Fatalf("an unmarked argument must not be served: %v", got)
 	}
 }
@@ -341,7 +377,7 @@ on web {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := ControlResources(nil, plan[0].Steps)
+	got := ControlResources(plan[0].Steps)
 	for _, want := range []string{
 		"file.read:in-block.j2", "file.read:in-parallel.j2",
 		"file.read:in-then.j2", "file.read:in-else.j2",
@@ -364,7 +400,8 @@ on web {
 func TestControl_RenderRequiresAControlPath(t *testing.T) {
 	fetch := func(string, []byte, map[string]string) ([]byte, error) { return []byte("x"), nil }
 
-	if _, err := evalWithFetch(t, `def t() { apply { x = ~file.render(%"conf.j2") return ok.done } }`, "t", nil, fetch); err != nil {
+	if _, err := evalWithFetchControl(t, `def t(src: str) { apply { x = ~file.render(src) return ok.done } }`, "t",
+		map[string]string{"src": "conf.j2"}, []string{"src"}, fetch); err != nil {
 		t.Fatalf("a marked template is what render takes: %v", err)
 	}
 
@@ -539,7 +576,7 @@ func TestControl_UsesPrimitiveWalksTheTree(t *testing.T) {
 		want bool
 	}{
 		"direct":        {`def t(p: str) { apply { x = ~file.render(p) return ok.done } }`, true},
-		"nested in arg": {`def t() { apply { x = ~file.render(%"c.j2") return ok.done } }`, true},
+		"nested in arg": {`def t(p: str) { apply { x = ~file.write("/tmp/x", ~file.render(p)) return ok.done } }`, true},
 		"inside an if":  {`def t(p: str) { apply { if p { x = ~file.render(p) } return ok.done } }`, true},
 		"in observe":    {`def t(p: str) { observe { return state(v: ~file.render(p)) } }`, true},
 		"another one":   {`def t(p: str) { apply { x = ~file.read(p) return ok.done } }`, false},
