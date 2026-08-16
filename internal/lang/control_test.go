@@ -591,9 +591,11 @@ func TestControl_SyncArity(t *testing.T) {
 // wrote it in an `apply` would be the worst kind of surprise, and no phase placement
 // should be load-bearing for that.
 func TestControl_SyncIsInertInCheckMode(t *testing.T) {
-	// A `preview` phase, because that is the one that *runs* in check mode: `apply` is
-	// never evaluated there, so the primitive is unreachable from it. The guard exists for
-	// the phases that do run — preview today, and anything else tomorrow.
+	// Both phases hold the primitive, and both reach it in check mode: `preview` runs
+	// there by definition, and since ADR-0041 so does an `apply` that cannot act — which
+	// this one is. That is the point. Inertness is a property of the primitive, not of
+	// where it was written, so a change to which phases run in which mode must not be able
+	// to turn a `--dry-run` into a deletion.
 	src := `def d(s: str, dst: str) {
 		preview { ~dir.sync(s, dst, "true", "meta") }
 		apply { x = ~dir.sync(s, dst, "true", "meta") return ok.x }

@@ -74,6 +74,10 @@ write `~/.ssh/authorized_keys`.
 | `~dir.list(path)` | returns the entries | control host if `%"…"`, else the target |
 | `~dir.sync(src, dst, delete, compare)` | transfers a tree | control host to target |
 
+What each primitive *returns* is recorded in
+[ADR-0041](0041-inert-apply-in-check-mode.md) §4 — the table above says what they do and
+where, which is this record's decision and stays unchanged.
+
 `shell { }` stays a language block, not a call, so it carries no marker.
 
 `~file.render` substitutes over **both** halves of a template's namespace: the host's
