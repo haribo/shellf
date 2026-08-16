@@ -33,6 +33,15 @@ Rules must be concise. One rule per line when possible.
 - If the design is silent on a needed behavior, write the design first, then the code
 - Anchor a confirmed non-obvious decision — especially one where an alternative was rejected — in the design docs or an ADR before building on it
 
+## Implementing an issue
+
+- **No issue is trusted** — not one written a year ago, not one written an hour ago, not one you wrote yourself. Age is not the criterion: #387 describes code written the same day and its central claim still had to be read in the file
+- Verify every claim **in the files** before acting, and cite `file:line` for each. "I read the code" is not verification; a citation the reader can re-open is
+- Say explicitly what you could **not** confirm, and record a claim that turns out false **in the issue itself** — a wrong claim dropped in silence is raised again six months later
+- Also check the issue is still current: close it with evidence if already delivered, post an audit comment if the architecture drifted under it
+- **Then, before touching anything**, explain the problem **simply and concisely** — an example when an example is what makes it clear. The user validates *that explanation*, not the issue. Build after
+- Exempt: trivial changes (typo, formatting, dep bump), the same boundary that exempts them from needing an issue. Friction that buys nothing is how a rule gets routed around
+
 ## Discipline (user-requested)
 
 - Do NOT design imports / ecosystem / sharing yet (phase 3).
@@ -75,4 +84,3 @@ Rules must be concise. One rule per line when possible.
 - Every change starts with a GitHub issue except trivial ones (typo, formatting, dep bump).
 - For commits, PRs, merges, issues, releases: invoke `/git-commit`, `/gh-pr-create`, `/gh-merge-develop`, `/gh-issue`, `/release` via the Skill tool — do not run `git commit` / `gh pr create` / `gh pr merge` / `gh issue create` directly. `/release` stops at two human-approval gates (main merge, tag) — never bypass them.
 - Conventional commits, single line, **no AI references**. Never commit/push without explicit approval.
-- Before implementing an issue older than ~1 month, audit it against current code and design: close with evidence if already delivered, post an audit comment refreshing stale references/scope if the architecture drifted, implement as-is only if still accurate
