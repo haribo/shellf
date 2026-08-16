@@ -166,6 +166,19 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The public surface no longer teaches syntax the binary refuses. The site's hero ran
+  `shellf run --check … hosts.shellf site.shellf`, which fails twice over: `--check` was
+  renamed `--dry-run` (ADR-0035), and a plan must sit in `plans/` beside `inventories/`
+  (ADR-0038). It also used `service(…)`, `service-reload(…)` and `template(…)`, all
+  renamed in ADR-0032, and advertised v0.3.1. `README.md` claimed the agent "vanishes,
+  nothing stays installed" while its own *How it works* section said it stays resident,
+  put the version at 0.1.0, said imports were "not there yet" three releases after they
+  shipped, and called `file.copy` a Go builtin — it has been a def since #332.
+  `docs/language.md`, which calls itself *current by definition*, documented
+  `apt-install(…)` and a `-> … when err` form that the parser has never accepted (`->` is
+  lexed and never parsed; `when` does not exist), and promised `set -o pipefail` in
+  **every** shell block when it is a bashism deliberately kept out of POSIX blocks — a
+  documented safety net that is not there under the default `sh` (#394).
 - `dir.sync` no longer reports `ok.already` after deleting files. The transfer counted the
   files it **wrote**, and the agent discarded the removal list on the way back
   (`Sync` returned `n, _, err`), so a run over a converged tree holding one intruder

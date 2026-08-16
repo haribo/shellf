@@ -257,7 +257,7 @@
       <a href="#how">architecture</a>
       <a href="#start">install</a>
       <a href="https://github.com/haribo/shellf" target="_blank" rel="noopener">github</a>
-      <a href="#" class="ver">v0.3.1</a>
+      <a href="#" class="ver">v0.4.0</a>
     </nav>
   </div>
 </header>
@@ -285,19 +285,19 @@
           <span class="term-title">deploy@control ~/infra</span>
         </div>
         <div class="term-body">
-<span class="l" style="animation-delay:.05s"><span class="prompt">$</span> shellf run <span class="flag">--check</span> <span class="flag">--inventory</span> hosts.shellf site.shellf</span>
+<span class="l" style="animation-delay:.05s"><span class="prompt">$</span> shellf run <span class="flag">--dry-run</span> <span class="flag">--inventory</span> inventories/hosts.shellf plans/site.shellf</span>
 <span class="l" style="animation-delay:.35s"><span class="cmt">on web:</span></span>
 <span class="l" style="animation-delay:.5s">  <span class="grp">web1</span>:</span>
 <span class="l" style="animation-delay:.65s">    apt.install(nginx)            <span class="tag-would">would.installed</span></span>
 <span class="l" style="animation-delay:.8s">    file.write(/etc/nginx/…)      <span class="tag-would">would.written</span></span>
-<span class="l" style="animation-delay:.95s">    service(nginx)                <span class="tag-would">would.converged</span></span>
-<span class="l" style="animation-delay:1.3s"><span class="prompt">$</span> shellf run <span class="flag">--inventory</span> hosts.shellf site.shellf</span>
+<span class="l" style="animation-delay:.95s">    service.ensure(nginx)         <span class="tag-would">would.converged</span></span>
+<span class="l" style="animation-delay:1.3s"><span class="prompt">$</span> shellf run <span class="flag">--inventory</span> inventories/hosts.shellf plans/site.shellf</span>
 <span class="l" style="animation-delay:1.5s">    apt.install(nginx)            <span class="tag-ok">ok.installed</span></span>
 <span class="l" style="animation-delay:1.62s">    file.write(/etc/nginx/…)      <span class="tag-ok">ok.written</span></span>
-<span class="l" style="animation-delay:1.74s">    service(nginx)                <span class="tag-ok">ok.converged</span></span>
-<span class="l" style="animation-delay:2.05s"><span class="prompt">$</span> shellf run <span class="flag">--inventory</span> hosts.shellf site.shellf <span class="cmt"># re-run</span></span>
+<span class="l" style="animation-delay:1.74s">    service.ensure(nginx)         <span class="tag-ok">ok.converged</span></span>
+<span class="l" style="animation-delay:2.05s"><span class="prompt">$</span> shellf run <span class="flag">--inventory</span> inventories/hosts.shellf plans/site.shellf <span class="cmt"># re-run</span></span>
 <span class="l" style="animation-delay:2.2s">    apt.install(nginx)            <span class="tag-skip">ok.already</span></span>
-<span class="l" style="animation-delay:2.32s">    service(nginx)                <span class="tag-skip">ok.already</span> <span class="cur">▏</span></span>
+<span class="l" style="animation-delay:2.32s">    service.ensure(nginx)         <span class="tag-skip">ok.already</span> <span class="cur">▏</span></span>
         </div>
       </div>
     </div>
@@ -310,9 +310,9 @@
       <div class="feat">
         <div class="cell"><div class="c-k"><span class="mk">▸</span>Packages &amp; services</div><p><code>apt.install</code>, <code>service</code>, files, dirs — installed, running, owned as declared.</p></div>
         <div class="cell"><div class="c-k"><span class="mk">▸</span>Config, per host</div><p><code>template</code> fills <code>@{vars}</code> from the inventory, rendered per host.</p></div>
-        <div class="cell"><div class="c-k"><span class="mk">▸</span>Containers</div><p><code>docker.compose-up</code>, <code>docker.network</code> — <code>--check</code> previews the recreate.</p></div>
+        <div class="cell"><div class="c-k"><span class="mk">▸</span>Containers</div><p><code>docker.compose-up</code>, <code>docker.network</code> — <code>--dry-run</code> previews the recreate.</p></div>
         <div class="cell"><div class="c-k"><span class="mk">▸</span>Firewall</div><p><code>ufw.open</code> / <code>default</code> / <code>enable</code> — only the ports you list.</p></div>
-        <div class="cell"><div class="c-k"><span class="mk">▸</span>Files &amp; trees</div><p><code>dir-copy</code> byte-for-byte (binary-safe), <code>file-download</code> sha256-checked.</p></div>
+        <div class="cell"><div class="c-k"><span class="mk">▸</span>Files &amp; trees</div><p><code>dir.copy</code> byte-for-byte (binary-safe), <code>file.download</code> sha256-checked.</p></div>
         <div class="cell"><div class="c-k"><span class="mk">▸</span>Raw shell</div><p>A <code>shell { }</code> block, gated by the same contract.</p></div>
       </div>
       <p class="build-note">Also: secrets off disk, hash-verified modules, ssh-agent auth, <code>for</code> / <code>with { }</code>.</p>
@@ -338,16 +338,16 @@
 <span class="kw">group</span> web  = [web1]</pre></div>
         </div>
         <div class="term filecard code">
-          <div class="fname">site.shellf</div>
+          <div class="fname">plans/site.shellf</div>
           <div class="term-body"><pre>
 <span class="kw">on</span> web {
     <span class="fn">apt.install</span>(<span class="str">"nginx"</span>)
-    <span class="fn">template</span>(<span class="str">"nginx.conf"</span>, <span class="str">"/etc/nginx/nginx.conf"</span>)
-    <span class="fn">service</span>(<span class="str">"nginx"</span>, <span class="str">"true"</span>, <span class="str">"true"</span>)   <span class="cmt"># running, enabled</span>
+    <span class="fn">file.template</span>(%<span class="str">"nginx.conf"</span>, <span class="str">"/etc/nginx/nginx.conf"</span>)
+    <span class="fn">service.ensure</span>(<span class="str">"nginx"</span>, <span class="str">"true"</span>, <span class="str">"true"</span>)   <span class="cmt"># running, enabled</span>
 
     <span class="cmt"># raw shell — still gated by the same contract</span>
     <span class="kw">if</span> !<span class="fn">shell</span> { nginx -t } {
-        <span class="fn">service-reload</span>(<span class="str">"nginx"</span>)
+        <span class="fn">service.reload</span>(<span class="str">"nginx"</span>)
     }
 }</pre></div>
         </div>
@@ -360,12 +360,12 @@
             <span class="term-title">shellf status — current vs. desired</span>
           </div>
           <div class="term-body">
-<span class="l"><span class="prompt">$</span> shellf status <span class="flag">--inventory</span> hosts.shellf site.shellf</span>
+<span class="l"><span class="prompt">$</span> shellf status <span class="flag">--inventory</span> inventories/hosts.shellf plans/site.shellf</span>
 <span class="l"><span class="cmt">on web:</span></span>
 <span class="l">  <span class="grp">web1</span>:</span>
 <span class="l">    apt.install(nginx)      installed: <span class="tag-ok">true</span></span>
 <span class="l">    file.write(/etc/…)      synced: <span class="arrowdiff">false → true</span></span>
-<span class="l">    service(nginx)          running: <span class="arrowdiff">false → true</span>   enabled: <span class="tag-ok">true</span></span>
+<span class="l">    service.ensure(nginx)   running: <span class="arrowdiff">false → true</span>   enabled: <span class="tag-ok">true</span></span>
           </div>
         </div>
       </div>
@@ -385,7 +385,7 @@
         </div>
         <div class="pill">
           <div class="k">previewable</div>
-          <p><code>--check</code> shows what would change; <code>status</code> diffs current vs. desired. Touches nothing.</p>
+          <p><code>--dry-run</code> shows what would change; <code>status</code> diffs current vs. desired. Touches nothing.</p>
         </div>
         <div class="pill">
           <div class="k">fast</div>
@@ -437,9 +437,9 @@
 <span class="l"><span class="prompt">$</span> curl -fsSL https://github.com/haribo/shellf/releases/latest/download/shellf-linux-amd64 <span class="flag">-o</span> shellf &amp;&amp; chmod +x shellf</span>
 <span class="l"> </span>
 <span class="l"><span class="cmt"># preview, apply, check state — flags before the plan</span></span>
-<span class="l"><span class="prompt">$</span> ./shellf run <span class="flag">--check --inventory</span> hosts.shellf site.shellf</span>
-<span class="l"><span class="prompt">$</span> ./shellf run <span class="flag">--inventory</span> hosts.shellf site.shellf</span>
-<span class="l"><span class="prompt">$</span> ./shellf status <span class="flag">--inventory</span> hosts.shellf site.shellf <span class="cur">▏</span></span>
+<span class="l"><span class="prompt">$</span> ./shellf run <span class="flag">--dry-run --inventory</span> inventories/hosts.shellf plans/site.shellf</span>
+<span class="l"><span class="prompt">$</span> ./shellf run <span class="flag">--inventory</span> inventories/hosts.shellf plans/site.shellf</span>
+<span class="l"><span class="prompt">$</span> ./shellf status <span class="flag">--inventory</span> inventories/hosts.shellf plans/site.shellf <span class="cur">▏</span></span>
         </div>
       </div>
 
@@ -460,7 +460,7 @@
       <span class="dom">shellf.org</span>
       <a href="https://github.com/haribo/shellf" target="_blank" rel="noopener">github ↗</a>
     </div>
-    <p class="disclaimer"># experimental · v0.3.1 · Debian/systemd · linux/amd64 control host</p>
+    <p class="disclaimer"># experimental · v0.4.0 · Debian/systemd · linux/amd64 control host</p>
   </div>
 </footer>
 
