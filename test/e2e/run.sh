@@ -470,7 +470,7 @@ on target {
     file.copy(%"conf.txt", "/tmp/shellf-drift/conf.txt")
 }
 EOF
-drift() { "$work/shellf" run --inventory "$work/drift/inventories/inv.shellf" --insecure \
+drift() { "$work/shellf" run "$@" --inventory "$work/drift/inventories/inv.shellf" --insecure \
   "$work/drift/plans/plan.shellf" 2>&1; }
 
 printf 'v1\n' > "$work/drift/assets/conf.txt"
@@ -512,4 +512,19 @@ sed -i 's/    shell {/    unsafe shell {/' "$work/rules/plans/plan.shellf"
   "$work/rules/plans/plan.shellf" >/dev/null 2>&1 || fail "unsafe shell must run"
 docker exec "$cname" test -d /tmp/shellf-rules || fail "unsafe shell did not run the command"
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced"
+say "12. a converged host previews as already, a drifted one as would (#380)"
+# The step 10 project again, and deliberately: it is the only one whose source can be made
+# to drift between runs. Reusing it also means this assertion sits next to the one that
+# proved the delivery itself, where a reader comparing them will find both.
+out="$(drift --dry-run)" || fail "the dry-run failed"
+printf '%s' "$out" | grep -qE 'file\.copy.*ok\.already' \
+  || fail "a converged host must preview as already, not would (#380)"
+
+printf 'v3\n' > "$work/drift/assets/conf.txt"
+out="$(drift --dry-run)"; printf '%s\n' "$out"
+printf '%s' "$out" | grep -qE 'file\.copy.*would' \
+  || fail "a drifted source must still preview as would"
+docker exec "$cname" grep -qx 'v2' /tmp/shellf-drift/conf.txt \
+  || fail "the dry-run wrote to the target — it must decide without acting"
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest"
