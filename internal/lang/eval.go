@@ -127,7 +127,21 @@ func EvalDefFull(def Def, args, with map[string]string, control []string, ex eng
 	}
 
 	if mode == engine.Check {
-		r := engine.Would(retTag(def))
+		// ADR-0041: when check mode cannot make this apply act, evaluate it and let the
+		// primitives' own answers decide. Announcing `would` on a host where nothing
+		// would change is what the whole "readable before it happens" claim rests on.
+		tag := retTag(def)
+		if ap, ok := inertApply(def); ok {
+			ev.acted = false
+			o := ev.evalPhase(ap)
+			if !ev.acted {
+				return engine.Ok("already"), nil // nothing would change
+			}
+			if o != nil && o.Category == "ok" && o.Tag != "" {
+				tag = o.Tag // the tag of the return the apply actually reached
+			}
+		}
+		r := engine.Would(tag)
 		r.Changed = true // it would act
 		// A `preview` phase describes what apply would do, read-only, best-effort
 		// (ADR-0029). It never gates convergence; a failing preview yields none.
@@ -716,6 +730,13 @@ func (ev *evaluator) evalSync(c Call, arg value) value {
 		n, extras, err := ev.preview(resourceKey("dir.sync", string(src)), dst, compare)
 		if err != nil {
 			ev.fail("%v", err)
+		}
+		// In check mode `acted` means *would* act — which is what ADR-0041 reads to
+		// decide between `already` and `would.<tag>`. Leaving it unset here made a
+		// drifted tree report `already` in `--dry-run`: the transfer knew, and said
+		// nothing.
+		if n > 0 || (del == "true" && len(extras) > 0) {
+			ev.acted = true
 		}
 		return syncSummary(n, extras, del == "true")
 	}

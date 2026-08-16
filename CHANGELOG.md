@@ -166,7 +166,18 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- `file.copy` delivers a changed source. Its `observe` asked whether the destination
+- `--dry-run` stops announcing writes that would not happen. On a converged host
+  `file.copy`, `dir.copy` and `dir.sync` reported `would.copied` / `would.synced` — and
+  `dir.sync` contradicted its own verdict in the preview line below it (*0 file(s) would
+  be transferred*). An operator who learns that `would` means "maybe" stops reading it,
+  which is the whole claim of a tool whose thesis is that a run is readable before it
+  happens. The information was never missing: `engine.Run` runs an instruction's guard
+  *before* deciding, so a converged `~file.write` already answers `already` and
+  `~dir.sync` counts without writing a byte — it was produced inside `apply`, which check
+  mode never ran. ADR-0041 runs it there when it cannot act: no `observe`, and an `apply`
+  holding only primitives, control flow and `return`. The alternative — give those defs an
+  `observe` — is the #378 bug, deliberately reintroduced. A `shell { }` in the apply
+  disqualifies it silently and keeps the conservative verdict (#380). Its `observe` asked whether the destination
   *existed*, which is true forever after the first run, so an edited source was never
   re-delivered — and the run reported `ok.already` over a stale file. Worse than a
   failure, which at least stops the plan. The `observe` is gone rather than repaired:

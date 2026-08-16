@@ -32,12 +32,23 @@ A `def` declares phases; a run picks a mode. Which phases a mode runs (ADR-0035)
 | Mode | `check` | `observe` | `preview` | `apply` |
 |---|---|---|---|---|
 | `shellf run` | yes | yes | no | yes |
-| `shellf run --dry-run` | yes | yes | yes | **no** |
+| `shellf run --dry-run` | yes | yes | yes | **no**, except below |
 | `shellf status` | yes | yes | no | no |
 
 `check` decides before acting — its outcome wins and halts. `observe` reports current
 state; equal to the desired one means the apply is skipped. `preview` describes what the
 apply would do and runs only in `--dry-run`. `apply` acts.
+
+**The exception (ADR-0041).** A def with no `observe` whose `apply` contains only
+primitives, control flow and `return` *is* evaluated in `--dry-run` — every primitive is
+inert there, so nothing can happen. The verdict then comes from what the primitives found:
+`ok.already` when nothing would change, `would.<tag>` when something would. This is how
+`file.copy`, `dir.copy` and `dir.sync` report honestly on a converged host instead of
+announcing writes that would not happen.
+
+Put a `shell { }` in that apply and the exception lapses — a shell can do anything, so the
+def falls back to `would.<tag>` on every dry-run. That is the cost of reaching for the
+shell where a primitive would do, and it is the only place the choice shows.
 
 An `apply` **must end with a `return`** naming what it did (ADR-0037 §1):
 
