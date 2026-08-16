@@ -599,4 +599,56 @@ run >/dev/null 2>&1 || fail "a clean target must still run"
 [ "$(docker exec "$cname" stat -c '%U:%a' "$work_path")" = "deploy:700" ] \
   || fail "the workdir must be owner-only"
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused"
+say "15. three observes that used to answer a weaker question (#388)"
+# Each of these reported converged over a host that was not, so each is exercised on the
+# *second* run — the one that used to lie. A fake executor cannot catch any of them: it
+# answers whatever the test asks, and what was wrong here is the question itself.
+mkdir -p "$work/weak/plans" "$work/weak/inventories" "$work/weak/assets"
+cp "$work/inventory.shellf" "$work/weak/inventories/inv.shellf"
+
+# A repository whose branch moves under the checkout, and an annotated tag beside it.
+docker exec -u deploy "$cname" sh -c '
+  rm -rf /tmp/weak && mkdir -p /tmp/weak/origin && cd /tmp/weak/origin &&
+  git init -q -b main . && git config user.email e@x && git config user.name e &&
+  echo v1 > f.txt && git add -A && git commit -qm v1 && git tag -a v1.0 -m release &&
+  printf "foobar\n" > /tmp/weak/lines.txt'
+
+cat > "$work/weak/plans/plan.shellf" <<'EOF'
+on target {
+    git.sync("/tmp/weak/origin", "/tmp/weak/clone", "main")
+    git.sync("/tmp/weak/origin", "/tmp/weak/tagged", "v1.0")
+    file.line("/tmp/weak/lines.txt", "foo")
+    ufw.open("9090", "tcp")
+    ufw.open("90", "tcp")
+}
+EOF
+weak() { "$work/shellf" run --inventory "$work/weak/inventories/inv.shellf" --insecure \
+  "$work/weak/plans/plan.shellf" 2>&1; }
+
+weak >/dev/null || fail "the first weak-observe run failed"
+
+# 1. file.line: the file held `foobar`, so a substring match reported `foo` present and
+# never appended it.
+docker exec "$cname" grep -qx 'foo' /tmp/weak/lines.txt \
+  || fail "file.line did not append a line that a substring match hid (#388)"
+
+# 2. ufw.open: `90/tcp` must exist in its own right, not be satisfied by `9090/tcp`.
+docker exec "$cname" sh -c "ufw status | awk '\$1 == \"90/tcp\" { f = 1 } END { exit !f }'" \
+  || fail "ufw.open(90) did not open the port a substring match claimed was open (#388)"
+
+# 3. git.sync: the branch moves on the remote. The observe used to compare the checkout to
+# itself, so it reported converged forever and the fetch never ran again.
+docker exec -u deploy "$cname" sh -c 'cd /tmp/weak/origin && echo v2 > f.txt && git commit -qam v2'
+out="$(weak)"; printf '%s\n' "$out"
+docker exec "$cname" grep -qx 'v2' /tmp/weak/clone/f.txt \
+  || fail "git.sync did not follow a branch that moved on the remote (#388)"
+
+# …and the fix must not cost idempotence, on a branch or on an annotated tag — whose
+# object is never what a checkout's HEAD holds.
+out="$(weak)"
+printf '%s' "$out" | grep -qE 'git\.sync.*ref=main.*ok\.already' || fail "a converged branch must report already"
+printf '%s' "$out" | grep -qE 'git\.sync.*ref=v1\.0.*ok\.already' || fail "a converged annotated tag must report already"
+printf '%s' "$out" | grep -qE 'file\.line.*ok\.already' || fail "an existing line must report already"
+printf '%s' "$out" | grep -qE 'ufw\.open\(port=90,.*ok\.already' || fail "an open port must report already"
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed"

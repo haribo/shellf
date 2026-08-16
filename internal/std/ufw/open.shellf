@@ -1,5 +1,9 @@
+# The rule is matched on `ufw status`'s first column, exactly. A plain `grep` matches a
+# substring, so `ufw.open("80", "tcp")` reported `allowed` on a host where only `8080/tcp`
+# was open — a port believed open that is not, which is the dangerous direction for a
+# firewall to be wrong in (#388).
 def open(port: str, proto: str) as root {
-    observe { return state(allowed: shell { ufw status | grep -q "$port/$proto" }.exit == 0) }
+    observe { return state(allowed: shell { ufw status | awk -v p="$port/$proto" '$1 == p { found = 1 } END { exit !found }' }.exit == 0) }
     apply {
         r = shell { ufw allow "$port/$proto" }
         if !r { return err.runtime(r) }

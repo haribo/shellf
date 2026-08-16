@@ -16,19 +16,45 @@ def clone(url: str, dst: str) {
 # Converged when HEAD already resolves to `ref`. Warning: `checkout --force`
 # discards local changes in `dst` — intended for a deploy checkout, not a workdir.
 def sync(url: str, dst: str, ref: str) {
+    # The ref is resolved on the **remote**, not locally. Resolving `$ref` inside `$dst`
+    # compares the checkout to itself: right after a checkout the local branch equals HEAD,
+    # so a moving `ref` such as `main` reported converged forever and the fetch in `apply`
+    # never ran again (#388).
+    #
+    # `ls-remote` and not `fetch`: an observe must decide without acting, and a fetch
+    # writes to `$dst/.git`.
+    #
+    # The peel is **asked for**, not hoped for: `ls-remote <url> v1.0` answers with the tag
+    # object alone, and an annotated tag's object is never what a checkout's HEAD holds — so
+    # asking only for `$ref` made every tagged sync report drift forever. Adding `$ref^{}`
+    # to the query makes the remote answer both lines, and the peeled one wins where there
+    # is one. A `ref` that is a raw SHA has no remote ref at all and is compared as it
+    # stands.
     observe {
         return state(atRef: shell {
-            test -d "$dst/.git" && test "$(git -C "$dst" rev-parse HEAD 2>/dev/null)" = "$(git -C "$dst" rev-parse "$ref^{commit}" 2>/dev/null)"
+            test -d "$dst/.git" || exit 1
+            want=$(git ls-remote "$url" "$ref" "$ref^{}" 2>/dev/null | awk '$2 ~ /\^\{\}$/ { p = $1 } NR == 1 { f = $1 } END { print (p != "" ? p : f) }')
+            [ -n "$want" ] || want="$ref"
+            test "$(git -C "$dst" rev-parse HEAD 2>/dev/null)" = "$want"
         }.exit == 0)
     }
     apply {
         r = shell {
             if [ -d "$dst/.git" ]; then
-                git -C "$dst" fetch --all --tags --quiet
+                git -C "$dst" fetch --all --tags --prune --quiet
             else
                 git clone --quiet "$url" "$dst"
             fi
-            git -C "$dst" checkout --quiet --force "$ref"
+            # A moving `ref` must resolve to what the *remote* has. `checkout --force main`
+            # re-checks-out the **local** branch, which a fetch does not fast-forward, so
+            # the working tree stayed where it was and this def never delivered the update
+            # it exists for. Detached, because HEAD is then the commit the observe compares
+            # against — and because this is a deploy checkout, not a workdir (#388).
+            target="$ref"
+            if git -C "$dst" rev-parse --verify --quiet "refs/remotes/origin/$ref" >/dev/null; then
+                target="origin/$ref"
+            fi
+            git -C "$dst" checkout --quiet --force --detach "$target"
         }
         if !r { return err.runtime(r) }
         return ok.synced

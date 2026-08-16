@@ -83,8 +83,11 @@ def write(path: str, content: str) {
     }
 }
 
+# `-x` and not merely `-F`: without it the observe matches a **substring**, so adding
+# `foo` to a file already holding `foobar` reports `present` and the line is never
+# appended. `file.replace` above has always had the `-x`; this one did not (#388).
 def line(path: str, line: str) {
-    observe { return state(present: shell { grep -qF -- "$line" "$path" }.exit == 0) }
+    observe { return state(present: shell { grep -qxF -- "$line" "$path" }.exit == 0) }
     apply {
         r = shell { printf '%s\n' "$line" >> "$path" }
         if !r { return err.runtime(r) }
