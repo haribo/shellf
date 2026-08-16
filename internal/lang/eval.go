@@ -234,7 +234,11 @@ type ControlFetcher func(resource string, payload []byte, vars map[string]string
 // TreeSyncer drives a tree transfer and returns how many files were written (ADR-0039).
 // Separate from ControlFetcher because the answer is a sequence, not one payload: the
 // agent writes files as they arrive rather than holding a tree in memory to return it.
-type TreeSyncer func(resource, dst, compare string, del bool) (int, error)
+// TreeSyncer transfers a tree and reports the work it did: files written, and files
+// removed. Both, because a sync that only removes has changed the target as surely as one
+// that only writes — returning the write count alone made a deletion report `ok.already`
+// (#387).
+type TreeSyncer func(resource, dst, compare string, del bool) (written, removed int, err error)
 
 // TreePreviewer answers what a transfer would do without doing it: how many files it
 // would write, and which it would remove (#373).
@@ -740,12 +744,14 @@ func (ev *evaluator) evalSync(c Call, arg value) value {
 		}
 		return syncSummary(n, extras, del == "true")
 	}
-	n, err := ev.sync(resourceKey("dir.sync", string(src)), dst, compare, del == "true")
+	written, removed, err := ev.sync(resourceKey("dir.sync", string(src)), dst, compare, del == "true")
 	if err != nil {
 		ev.fail("%v", err)
 	}
-	// A transfer that wrote nothing changed nothing: this is what makes a converged tree
-	// report `already` instead of claiming an action (ADR-0039 §1).
+	// The count is the work done — written *plus* removed. A transfer that changed nothing
+	// returns 0, which is what makes a converged tree report `already` (ADR-0039 §1); one
+	// that only removed files must not join it, which is what it used to do (#387).
+	n := written + removed
 	if n > 0 {
 		ev.acted = true
 	}
