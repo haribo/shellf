@@ -83,15 +83,20 @@ Les confondre, c'est perdre soit l'idempotence, soit la prévisualisation.
 
 ## 02 · Trous ouverts
 
-### 🔴 Composite non-atomique — échec partiel
+### 🟠 Composite non-atomique — échec partiel
 
-Une action multi-étapes (`git-clone; build; install`) n'est pas transactionnelle. Si
-`build` échoue, le dépôt est cloné : relance → l'observation dit « pas installé » →
-re-clone dans un dossier existant → erreur. **Une observation unique en tête ne rend PAS
-un composite idempotent.** Le rollback n'est pas résolu, et il ne faut pas prétendre que
-l'observation suffit. Piste : chaque sous-instruction porte la sienne — ce que la
-délégation ([ADR-0037](adr/0037-explicit-verdict.md)) rend possible pour un appel, pas
-encore pour une suite.
+Une action multi-étapes n'est pas transactionnelle : si l'étape 2 échoue, l'étape 1 a
+agi. **Une observation unique en tête ne rend PAS un composite idempotent**, et le
+rollback n'est pas résolu — il ne le sera pas, [ADR-0040](adr/0040-rerunnable-steps-and-unsafe-shell.md)
+dit pourquoi.
+
+Ce que shellf garantit à la place est plus faible et tenable : un run échoué laisse
+l'hôte dans un état d'où un run suivant peut repartir. Cela tient exactement quand chaque
+étape supporte d'être rejouée — et c'est refusé à l'écriture, pas espéré : le shell qu'une
+def sait déjà faire ne parse pas, sauf sous `unsafe shell`.
+
+Reste ouvert : l'atomicité elle-même. Un état partiel survit, visible et rejouable, mais
+il survit.
 
 ### 🔴 Le vrai mur : l'écosystème, pas la technique
 
