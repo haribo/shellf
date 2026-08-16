@@ -166,6 +166,22 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Three `observe` phases asked a weaker question than their `apply` answers, so each
+  reported converged over a host that was not — the shape #378 and #387 already cost.
+  `git.sync` resolved its ref **inside the checkout**, comparing it to itself: right after
+  a checkout the local branch equals HEAD, so `ref = "main"` was converged forever and the
+  fetch in `apply` never ran again. It now asks the remote (`ls-remote`, which reads
+  without writing to `.git` as a fetch would) and asks for the peel too — `ls-remote <url>
+  v1.0` answers with the tag *object*, which is never what a checkout's HEAD holds.
+  `file.line` used `grep -qF` without `-x`, so adding `foo` to a file holding `foobar`
+  reported `present` and never appended — `file.replace`, four lines above it, has always
+  had the `-x`. `ufw.open` matched its rule anywhere in `ufw status`, so
+  `ufw.open("80", "tcp")` reported `allowed` on a host where only `8080/tcp` was open; it
+  now matches the port column exactly. Fixing `git.sync`'s observe exposed a fourth defect
+  in its `apply` — `checkout --force main` re-checks-out the **local** branch, which a
+  fetch does not fast-forward, so the def never delivered the update it exists for. It now
+  checks out the remote-tracking ref, detached, which is what a deploy checkout wants
+  anyway (#388).
 - The agent binary and its workdir are verified before use. A cache hit was `test -x`
   at `/tmp/shellf-agent-<digest of the binary>-<user>` — both halves public, so any local
   user could create that file first and have shellf execute it, often to run work under
