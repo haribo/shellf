@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"shellf/internal/proto"
@@ -209,8 +210,24 @@ type stagedFile struct {
 	mtime           int64
 }
 
+// underDst reports whether a manifest-relative path stays inside the destination.
+// `filepath.Join` *cleans* what it joins, so `../../etc/x` produces a path outside `dst`
+// rather than an error. The control host is the one composing these paths and is the
+// trusted party, so this is not reachable today — it is the invariant that keeps it that
+// way the day a transfer accepts a manifest from anywhere else (#393).
+func underDst(dst, final string) bool {
+	rel, err := filepath.Rel(dst, final)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 func openStaged(dst, rel, mode string, mtime int64) (*stagedFile, error) {
 	final := filepath.Join(dst, filepath.FromSlash(rel))
+	if !underDst(dst, final) {
+		return nil, fmt.Errorf("dir.sync: refusing to write outside the destination: %s", rel)
+	}
 	if err := os.MkdirAll(filepath.Dir(final), 0o755); err != nil {
 		return nil, fmt.Errorf("dir.sync: %v", err)
 	}
@@ -278,7 +295,11 @@ func fileSum(path string) (string, error) {
 // transfer, so an interrupted one never removes anything (ADR-0039 §5).
 func removeExtras(dst string, extras []string) error {
 	for _, rel := range extras {
-		if err := os.Remove(filepath.Join(dst, filepath.FromSlash(rel))); err != nil && !os.IsNotExist(err) {
+		victim := filepath.Join(dst, filepath.FromSlash(rel))
+		if !underDst(dst, victim) {
+			return fmt.Errorf("dir.sync: refusing to remove outside the destination: %s", rel)
+		}
+		if err := os.Remove(victim); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("dir.sync: removing %s: %v", rel, err)
 		}
 	}

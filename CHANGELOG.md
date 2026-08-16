@@ -166,6 +166,19 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A symlink in `assets/` no longer reaches outside the project. The allow-list's
+  containment check is lexical — a path that reads as `assets/x` passes it — and a symlink
+  is not a lexical thing, so a link at `assets/leak.txt` pointing at a file elsewhere was
+  declared, allow-listed and served: measured, its contents landed on the target under an
+  `ok.copied`. The path is now resolved before it is read, which also covers a link in an
+  intermediate directory, and what lands outside `assets/` is refused by name — the
+  *resource's* name, never the link's target, since teaching the target a path on the
+  operator's machine is what refusing is for. A link **inside** `assets/` keeps working.
+  `dir.copy` was never affected: the tree walk has always skipped non-regular files, which
+  is the asymmetry that made this worth finding. The transfer also now asserts that every
+  manifest path stays under the destination, on the write and on the removal side — not
+  reachable today, since the control host composes those paths, and asserted so it stays
+  that way (#393).
 - A delivered file is now **replaced**, not written through. `~file.write` — and so
   `file.copy`, `file.template` and every def built on it — ran `cp "$tmp" "$dst"`, which
   writes into the destination's own inode: measured across a rewrite, 544 → 544. A reader

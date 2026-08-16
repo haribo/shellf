@@ -23,6 +23,12 @@ import (
 type Allowed struct {
 	paths map[string]string // as written in the plan → absolute path on disk
 
+	// root is `assets/` resolved. Kept because the allow-list's check is *lexical* — a
+	// path that reads as `assets/x` passes it — and a symlink is not a lexical thing.
+	// Containment is therefore re-established at read time, against links that may not
+	// have existed when the list was built (#393).
+	root string
+
 	// Render substitutes `@{var}` over this host's environment (ADR-0024), with `scope`
 	// — the variables in scope where the call was made — layered on top. It lives here
 	// because rendering needs the operator's variables, which never leave the control
@@ -50,6 +56,13 @@ func NewAllowed(assetsDir string, declared []string) *Allowed {
 	rootAbs, err := filepath.Abs(assetsDir)
 	if err != nil {
 		return a
+	}
+	// The root itself is resolved, so a project whose `assets/` *is* a symlink still
+	// matches the resolved paths compared against it below.
+	if r, err := filepath.EvalSymlinks(rootAbs); err == nil {
+		a.root = r
+	} else {
+		a.root = rootAbs
 	}
 	for _, d := range declared {
 		primitive, path, ok := strings.Cut(d, ":")
@@ -145,6 +158,25 @@ func readResource(allow *Allowed, resource string) ([]byte, error) {
 		// Naming the resource is deliberate: a refusal the operator cannot read is a
 		// support ticket. Naming it is safe — the requester already knows what it asked.
 		return nil, fmt.Errorf("refused: %q was not declared by the plan", resource)
+	}
+	// A symlink is not a lexical thing, and the allow-list's check is lexical: a link at
+	// `assets/x` pointing at `~/.ssh/id_ed25519` reads as declared and was served. Resolve
+	// the path — which also covers a link in an intermediate directory — and refuse what
+	// lands outside `assets/`. `dir.sync` has always skipped non-regular files, so the two
+	// halves of the same question answered differently (#393).
+	if allow.root != "" {
+		real, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil, fmt.Errorf("no such file on the control host")
+			}
+			return nil, fmt.Errorf("refused: %q cannot be resolved on the control host", resource)
+		}
+		if !underRoot(allow.root, real) {
+			// Name the resource, never what it pointed at: the target must not learn a
+			// path on the operator's machine, which is the whole point of refusing.
+			return nil, fmt.Errorf("refused: %q leaves the project's assets — a link out is not a declaration", resource)
+		}
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
