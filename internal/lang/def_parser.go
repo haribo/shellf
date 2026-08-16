@@ -438,7 +438,7 @@ func (p *parser) primary() Expr {
 			return p.shellExpr(false)
 		case "unsafe": // `unsafe shell { … }` (ADR-0040 §3)
 			p.adv()
-			if !(p.tok.kind == tIdent && p.tok.val == "shell") {
+			if p.tok.kind != tIdent || p.tok.val != "shell" {
 				p.fail("`unsafe` marks a shell block: write `unsafe shell { … }`")
 			}
 			return p.shellExpr(true)

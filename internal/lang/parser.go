@@ -540,7 +540,7 @@ func (p *parser) step() proto.Step {
 	// from the detector, and it is what `grep -r 'unsafe shell'` finds.
 	if p.tok.kind == tIdent && p.tok.val == "unsafe" {
 		p.adv()
-		if !(p.tok.kind == tIdent && p.tok.val == "shell") {
+		if p.tok.kind != tIdent || p.tok.val != "shell" {
 			p.fail("`unsafe` marks a shell block: write `unsafe shell { … }`")
 		}
 		return p.shellStep(true)
@@ -618,7 +618,7 @@ func (p *parser) condition() (*proto.Step, *proto.ResultRef, bool) {
 	// not reach every position is a hole, not a hatch.
 	if p.tok.kind == tIdent && p.tok.val == "unsafe" {
 		p.adv()
-		if !(p.tok.kind == tIdent && p.tok.val == "shell") {
+		if p.tok.kind != tIdent || p.tok.val != "shell" {
 			p.fail("`unsafe` marks a shell block: write `unsafe shell { … }`")
 		}
 		s := p.shellStep(true)
