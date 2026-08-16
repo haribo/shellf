@@ -25,13 +25,13 @@ func TestTemplateDef_RendersPerHost(t *testing.T) {
 
 	for _, host := range []struct{ name, who string }{{"web1", "one"}, {"web2", "two"}} {
 		t.Run(host.name, func(t *testing.T) {
-			ch := wire(t, planDir, []string{"file.read:" + src}, map[string]string{"who": host.who})
+			ch := wire(t, planDir, []string{"file.render:" + src}, map[string]string{"who": host.who})
 			f := newComp()
 			f.set(`printf '%s' "$c"`, 0)
 			resp := serveCompCh(t, f, ch, proto.Request{
 				Mode: "apply",
 				Defs: map[string]string{
-					"t": `def t(src: str) { apply { c = ~file.render(~file.read(src)) shell { printf '%s' "$c" } return ok.done } }`,
+					"t": `def t(src: str) { apply { c = ~file.render(src) shell { printf '%s' "$c" } return ok.done } }`,
 				},
 				Steps: []proto.Step{{Instruction: "t", Args: map[string]string{"src": src}, Control: []string{"src"}}},
 			})
@@ -53,12 +53,12 @@ func TestTemplateDef_UndefinedVariableFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := filepath.Join(planDir, "x.tmpl")
-	ch := wire(t, planDir, []string{"file.read:" + src}, map[string]string{"other": "1"})
+	ch := wire(t, planDir, []string{"file.render:" + src}, map[string]string{"other": "1"})
 
 	resp := serveCompCh(t, newComp(), ch, proto.Request{
 		Mode: "apply",
 		Defs: map[string]string{
-			"t": `def t(src: str) { apply { c = ~file.render(~file.read(src)) return ok.done } }`,
+			"t": `def t(src: str) { apply { c = ~file.render(src) return ok.done } }`,
 		},
 		Steps: []proto.Step{{Instruction: "t", Args: map[string]string{"src": src}, Control: []string{"src"}}},
 	})
@@ -82,14 +82,14 @@ func TestTemplateDef_CaptureAndCaught(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := filepath.Join(planDir, "c.tmpl")
-	ch := wire(t, planDir, []string{"file.read:" + src}, nil)
+	ch := wire(t, planDir, []string{"file.render:" + src}, nil)
 
 	f := newComp()
 	f.set(`echo handler`, 0)
 	resp := serveCompCh(t, f, ch, proto.Request{
 		Mode: "apply",
 		Defs: map[string]string{
-			"t": `def t(src: str, dst: str) { apply { ~file.write(dst, ~file.render(~file.read(src))) return ok.written } }`,
+			"t": `def t(src: str, dst: str) { apply { ~file.write(dst, ~file.render(src)) return ok.written } }`,
 		},
 		Steps: []proto.Step{
 			{Instruction: "t", Bind: "r", Args: map[string]string{

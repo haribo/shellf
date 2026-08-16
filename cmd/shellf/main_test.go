@@ -574,23 +574,10 @@ func TestRemovedFlag(t *testing.T) {
 	}
 }
 
-// A plan that renders needs the channel even when it declares no `%"…"` path of its
-// own — the content may come from the target. Missing this leaves ~file.render with no
-// renderer at runtime.
-func TestUsesRender(t *testing.T) {
-	renders := parseDefsFor(map[string]string{
-		"t": `def t(c: str) { apply { x = ~file.render(c) return ok.done } }`,
-	})
-	if !usesRender(renders) {
-		t.Fatal("a def calling ~file.render must require the channel")
-	}
-	plain := parseDefsFor(map[string]string{
-		"t": `def t(p: str) { apply { shell { echo "$p" } return ok.done } }`,
-	})
-	if usesRender(plain) {
-		t.Fatal("a def that never renders must not force a channel open")
-	}
-}
+// TestUsesRender stood here, guarding the case where a plan rendered without declaring a
+// single `%"…"` path: the content came from the target, so nothing else opened the
+// channel. A render now names a declared template (#392, ADR-0042), so a non-empty
+// allow-list is the only condition left and `usesRender` went with the case.
 
 func TestMergeVars(t *testing.T) {
 	// ADR-0022 precedence: --set wins over the host, the host wins over globals.

@@ -21,7 +21,7 @@ func parseDef(src string) error {
 func TestControl_PercentOnlyBeforeAPrimitive(t *testing.T) {
 	ok := []string{
 		`def t(p: str) { apply { x = ~file.read(p) return ok.done } }`,
-		`def t(c: str) { apply { x = ~file.render(c) return ok.done } }`,
+		`def t(p: str) { apply { x = ~file.render(p) return ok.done } }`,
 		`def t(d: str) { apply { x = ~dir.list(d) return ok.done } }`,
 		`def t() { apply { x = %"conf.j2" return ok.done } }`,
 	}
@@ -142,18 +142,19 @@ func TestControl_ReadAsksTheControlHost(t *testing.T) {
 func TestControl_RenderSubstitutesTheDefScope(t *testing.T) {
 	// The control host is what substitutes (ADR-0036 §5), over the scope the ask
 	// carries; this stands in for it, so the assertion is on the substitution itself
-	// rather than on the def merely finishing.
+	// rather than on the def merely finishing. Since #392 it also reads the template,
+	// so the ask names it and carries no content (ADR-0042 §1).
 	var rendered string
-	fetch := func(resource string, payload []byte, vars map[string]string) ([]byte, error) {
-		if resource != "file.render:" {
-			return []byte("port = @{port}"), nil // the template, read from the control host
+	fetch := func(resource string, _ []byte, vars map[string]string) ([]byte, error) {
+		if resource != "file.render:c.j2" {
+			return nil, errors.New("unexpected resource " + resource)
 		}
-		rendered = strings.ReplaceAll(string(payload), "@{port}", vars["port"])
+		rendered = strings.ReplaceAll("port = @{port}", "@{port}", vars["port"])
 		return []byte(rendered), nil
 	}
 	// `p` is marked as a control-host path, as a plan writing `%"c.j2"` would: unmarked,
-	// `~file.read` reads the target and the render receives nothing to substitute.
-	src := `def t(p: str, port: str) { apply { x = ~file.render(~file.read(p)) return ok.done } }`
+	// the render is refused rather than handed a path read on the target.
+	src := `def t(p: str, port: str) { apply { x = ~file.render(p) return ok.done } }`
 	res, err := evalWithFetchControl(t, src, "t", map[string]string{"p": "c.j2", "port": "8080"},
 		[]string{"p"}, fetch)
 	if err != nil {
@@ -169,15 +170,16 @@ func TestControl_RenderSubstitutesTheDefScope(t *testing.T) {
 
 // #334: the caller's scope travels with the ask. A template names variables from both
 // sides — the host's, which stay on the control host, and the call site's params and
-// `with` override, which exist only here — so sending the content alone renders a
-// `with { }` binding as an undefined variable.
+// `with` override, which exist only here — so an ask carrying the resource alone renders
+// a `with { }` binding as an undefined variable. The scope is what an ask still brings
+// once the content stops travelling (#392).
 func TestControl_RenderSendsTheCallerScope(t *testing.T) {
 	var got map[string]string
-	fetch := func(_ string, payload []byte, vars map[string]string) ([]byte, error) {
+	fetch := func(_ string, _ []byte, vars map[string]string) ([]byte, error) {
 		got = vars
-		return payload, nil
+		return []byte("rendered"), nil
 	}
-	defs, err := ParseDefs(`def t(p: str) { apply { x = ~file.render("body") return ok.done } }`)
+	defs, err := ParseDefs(`def t(p: str) { apply { x = ~file.render(%"body.j2") return ok.done } }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +299,7 @@ func TestControl_PlanArgumentIsDeclared(t *testing.T) {
 	// to serve, and which primitive reads it is the def's business — `file.template`
 	// reads it, `dir.copy` syncs it (#335). Sorted, so the set is comparable.
 	got := ControlResources(nil, plan[0].Steps)
-	want := []string{"dir.list:conf.j2", "dir.sync:conf.j2", "file.read:conf.j2"}
+	want := []string{"dir.list:conf.j2", "dir.sync:conf.j2", "file.read:conf.j2", "file.render:conf.j2"}
 	if len(got) != len(want) {
 		t.Fatalf("a marked plan argument must enter the allow-list: %v", got)
 	}
@@ -356,13 +358,22 @@ on web {
 	}
 }
 
-// ~file.render accepts content from a shell — the case that motivated splitting read
-// from render, and that neither Go transformation could do.
-func TestControl_RenderRejectsAPath(t *testing.T) {
+// #392, ADR-0042 — the reverse of what this test asserted until then. `~file.render` took
+// content, which let an imported def submit `"@{db_password}"` and be answered by the
+// machine holding it; it now names a declared template, and content is refused.
+func TestControl_RenderRequiresAControlPath(t *testing.T) {
 	fetch := func(string, []byte, map[string]string) ([]byte, error) { return []byte("x"), nil }
-	_, err := evalWithFetch(t, `def t() { apply { x = ~file.render(%"conf.j2") return ok.done } }`, "t", nil, fetch)
+
+	if _, err := evalWithFetch(t, `def t() { apply { x = ~file.render(%"conf.j2") return ok.done } }`, "t", nil, fetch); err != nil {
+		t.Fatalf("a marked template is what render takes: %v", err)
+	}
+
+	_, err := evalWithFetch(t, `def t() { apply { x = ~file.render("host = @{db_password}") return ok.done } }`, "t", nil, fetch)
 	if err == nil {
-		t.Fatal("render takes content, not a control-host path: passing one must fail")
+		t.Fatal("content submitted by the target must be refused, not substituted")
+	}
+	if !strings.Contains(err.Error(), `%`) {
+		t.Fatalf("the refusal must name the fix: %v", err)
 	}
 }
 
@@ -518,19 +529,19 @@ func TestControl_WriteRefusesTheControlHost(t *testing.T) {
 	}
 }
 
-// A plan may need the channel without declaring a single `%"…"` path: `~file.render`
-// can be handed content read from the target. Detecting that from the parsed defs is
-// what decides whether a channel is opened at all — a text search on Def.Source does
-// not work, since ParseDefs leaves it empty.
+// UsesPrimitive answers "does any def call this primitive", wherever the call sits — in
+// a nested argument, inside an `if`, in an `observe`. It walks the parsed defs and not
+// their source text, since ParseDefs leaves Def.Source empty and a text search silently
+// answered "no".
 func TestControl_UsesPrimitiveWalksTheTree(t *testing.T) {
 	cases := map[string]struct {
 		src  string
 		want bool
 	}{
-		"direct":        {`def t(c: str) { apply { x = ~file.render(c) return ok.done } }`, true},
-		"nested in arg": {`def t(p: str) { apply { x = ~file.render(~file.read(p)) return ok.done } }`, true},
-		"inside an if":  {`def t(c: str) { apply { if c { x = ~file.render(c) } return ok.done } }`, true},
-		"in observe":    {`def t(c: str) { observe { return state(v: ~file.render(c)) } }`, true},
+		"direct":        {`def t(p: str) { apply { x = ~file.render(p) return ok.done } }`, true},
+		"nested in arg": {`def t() { apply { x = ~file.render(%"c.j2") return ok.done } }`, true},
+		"inside an if":  {`def t(p: str) { apply { if p { x = ~file.render(p) } return ok.done } }`, true},
+		"in observe":    {`def t(p: str) { observe { return state(v: ~file.render(p)) } }`, true},
 		"another one":   {`def t(p: str) { apply { x = ~file.read(p) return ok.done } }`, false},
 		"none":          {`def t(p: str) { apply { shell { echo "$p" } return ok.done } }`, false},
 	}

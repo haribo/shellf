@@ -212,7 +212,9 @@ func controlChannel(planPath string, plan []orchestrator.Block, defsSrc map[stri
 	}
 	defs := parseDefsFor(defsSrc)
 	declared := lang.ControlResources(defs, allSteps)
-	needsChannel := len(declared) > 0 || usesRender(defs)
+	// A render names a declared template since #392, so the allow-list answers on its
+	// own: nothing asks the control host for anything when it is empty.
+	needsChannel := len(declared) > 0
 
 	// One channel per host: rendering substitutes over *that host's* environment
 	// (ADR-0024), and the variables never leave the control host (ADR-0018).
@@ -254,14 +256,6 @@ func mergeVars(base, host, set map[string]string) map[string]string {
 		}
 	}
 	return out
-}
-
-// usesRender reports whether any def calls ~file.render, which needs the channel even
-// when the plan declares no `%"…"` path of its own.
-func usesRender(defs map[string]lang.Def) bool {
-	// Walks the parsed defs, not their source text: ParseDefs does not populate Source,
-	// so a text search silently reported "no render" and left the run without a channel.
-	return lang.UsesPrimitive(defs, "file.render")
 }
 
 // parseDefsFor re-parses the shipped def sources so their `%` occurrences can be

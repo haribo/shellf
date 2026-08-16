@@ -67,7 +67,7 @@ arguments: the callee's own phases run, in every mode.
 
 ```
 def template(src: str, dst: str) {
-    file.write(dst, ~file.render(~file.read(src)))
+    file.write(dst, ~file.render(src))
 }
 ```
 

@@ -219,7 +219,7 @@ Most instructions are `def`s written in shellf and embedded in the binary; only
 `apply` when the desired state already holds).
 
 - **Packages & services** — `apt.install(pkg)` · `apt.update()` · `service.ensure(name, running, enabled)` (running/enabled are `"true"`/`"false"`; a `.timer` unit works as the name) · `service.restart(name)` · `service.reload(name)` · `systemd.daemon-reload()` · `user.group(user, group)` · `user.ensure(name, shell)`
-- **Files & directories** — `file.copy(%"src", dst)` (deliver a file from the control host, binary-safe) · `file.template(%"src", dst)` (render a control-host file's `@{var}` and deliver it — `src` must be marked `%"…"`, an unmarked path is read on the target) · `dir.copy(%"src", dst, compare)` (deliver a control-host tree verbatim, binary-safe; sends only what differs, so a converged tree transfers nothing — `compare` defaults to size+mtime, pass `"sha256"` when a change may preserve both) · `file.write(path, content)` · `file.mode(path, mode)` · `file.replace(path, key, value)` (a `key=value` line) · `file.line(path, line)` · `file.delete(path)` · `file.download(url, dst, sha256)` · `dir.sync(%"src", dst, compare)` (same transfer, and it **removes** what the source does not have — `--dry-run` names every file it would delete) · `dir.ensure(path)` · `dir.owner(path, owner)` · `archive.extract(src, dst)` · `archive.extract-member(src, dst, member)` (one file out of a tarball) · `git.clone(url, dst)` · `git.sync(url, dst, ref)` (update to a pinned ref)
+- **Files & directories** — `file.copy(%"src", dst)` (deliver a file from the control host, binary-safe) · `file.template(%"src", dst)` (render a control-host file's `@{var}` and deliver it — `src` must be marked `%"…"`, an unmarked path is refused) · `dir.copy(%"src", dst, compare)` (deliver a control-host tree verbatim, binary-safe; sends only what differs, so a converged tree transfers nothing — `compare` defaults to size+mtime, pass `"sha256"` when a change may preserve both) · `file.write(path, content)` · `file.mode(path, mode)` · `file.replace(path, key, value)` (a `key=value` line) · `file.line(path, line)` · `file.delete(path)` · `file.download(url, dst, sha256)` · `dir.sync(%"src", dst, compare)` (same transfer, and it **removes** what the source does not have — `--dry-run` names every file it would delete) · `dir.ensure(path)` · `dir.owner(path, owner)` · `archive.extract(src, dst)` · `archive.extract-member(src, dst, member)` (one file out of a tarball) · `git.clone(url, dst)` · `git.sync(url, dst, ref)` (update to a pinned ref)
 - **Questions** (read-only, deterministic in `--dry-run`) — `dir.exists(path)` · `file.exists(path)` · `http.check(url, status)` · `http.wait-for(url, timeout)` (retries until ready)
 - **Validated configs** — `sudo.write(name, content)` (checked with `visudo -cf`, set 0440) · `sshd.config(name, content)` (checked with `sshd -t -f`). The check runs before anything is written, and in `--dry-run` too, so an invalid file is caught before it can lock you out
 - **Firewall** — `ufw.enable()` · `ufw.default(incoming, outgoing)` · `ufw.open(port, proto)`
@@ -227,14 +227,15 @@ Most instructions are `def`s written in shellf and embedded in the binary; only
 
 **Primitives** (ADR-0036) — `~` marks an engine primitive (no phases, no override), and
 `%` marks a path on your machine: `~file.read(path)` reads — on your machine if the path is marked, on the target
-otherwise — `~file.write(path, bytes)` writes on the target, `~file.render(content)`
-substitutes its `@{var}`, and `~dir.list(path)` lists a directory. Only those four names
-may carry a `~`; anything else is a parse error, and the control host serves only the
-paths the plan marked.
+otherwise — `~file.write(path, bytes)` writes on the target, `~file.render(%"path")`
+reads a template on your machine and substitutes its `@{var}` there, and
+`~dir.list(path)` lists a directory. Only those four names may carry a `~`; anything else
+is a parse error, and the control host serves only the paths the plan marked — a render
+included, which is why it names a file rather than carrying one.
 
 ```
 def deliver(src: str, dst: str) {
-  apply { file.write(dst, ~file.render(~file.read(src))) }
+  apply { file.write(dst, ~file.render(src)) }
 }
 ```
 ```

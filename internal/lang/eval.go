@@ -668,28 +668,24 @@ func (ev *evaluator) evalControlCall(c Call) value {
 
 	case "file.render":
 		// Rendering happens on the control host: the host's variables live there and
-		// never travel (ADR-0024, ADR-0018). The agent sends content and receives the
-		// substituted result — which is what lets a template whose source is on the
-		// *target* be rendered too: `~file.render(shell { cat … })`.
-		var content string
-		switch t := arg.(type) {
-		case Bytes:
-			content = string(t)
-		case string:
-			content = t
-		case engine.ShellResult:
-			content = t.Stdout
-		default:
-			ev.fail("~file.render expects content")
+		// never travel (ADR-0024, ADR-0018). What is rendered is a *declared* template,
+		// read there too — the agent names it and receives the substituted result.
+		//
+		// It used to send the content, which is how an imported def obtained a secret it
+		// was never given: text it composed itself was substituted over this host's
+		// variables, and the allow-list saw no file to refuse (#392, ADR-0042).
+		src, ok := arg.(controlPath)
+		if !ok {
+			ev.fail("~file.render renders a control-host template: mark it %%\"…\"")
 		}
 		if ev.fetch == nil {
 			ev.fail("~file.render: no control host channel available for this run")
 		}
-		// The scope travels with the content: a template names variables that live on
-		// the control host (host vars, secrets) *and* variables that live here (the
-		// def's params, a `with` override at the call site). Rendering with only one of
-		// the two would fail on the other's names.
-		out, err := ev.fetch("file.render:", []byte(content), ev.renderScope())
+		// The scope still travels: a template names variables that live on the control
+		// host (host vars, secrets) *and* variables that live here (the def's params, a
+		// `with` override at the call site). Rendering with only one of the two would
+		// fail on the other's names, and those are the caller's own values.
+		out, err := ev.fetch(resourceKey("file.render", string(src)), nil, ev.renderScope())
 		if err != nil {
 			ev.fail("%v", err)
 		}

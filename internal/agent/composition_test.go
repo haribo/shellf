@@ -45,13 +45,9 @@ func (c *compExec) Using(string) engine.Executor { return c }
 
 func (c *compExec) set(script string, exit int) { c.exits[script] = exit }
 
-// stdout makes a script return content, for a def that reads a shell's output.
-func (c *compExec) stdout(script, out string) {
-	if c.outs == nil {
-		c.outs = map[string]string{}
-	}
-	c.outs[script] = out
-}
+// A `stdout` helper stood here, making a script return content for a def that read a
+// shell's output. Its only caller was the `~file.render(shell { cat … })` test removed
+// in #392; `outs` stays, since Shell above reads it.
 
 func (c *compExec) called(script string) bool {
 	for _, s := range c.seen {
