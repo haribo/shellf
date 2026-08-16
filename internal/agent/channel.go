@@ -99,9 +99,10 @@ func (c *Channel) Close() error { return c.ln.Close() }
 // the operator looking at the target when the missing piece is on their own machine.
 func (c *Channel) Ask(resource string) ([]byte, error) { return c.AskWith(resource, nil, nil) }
 
-// AskWith is Ask with an input for the primitive — `file.render` sends the content to
-// substitute and the variables in scope at the call site, where `file.read` sends
-// nothing and names a path.
+// AskWith is Ask with the variables in scope at the call site, which `file.render` needs
+// so a `with { }` override reaches the renderer; `file.read` sends none. Both name a
+// declared resource and send no content — the text a render substitutes is read on the
+// control host, never submitted from here (#392, ADR-0042).
 func (c *Channel) AskWith(resource string, payload []byte, vars map[string]string) ([]byte, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

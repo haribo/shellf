@@ -41,6 +41,7 @@ func scanSteps(steps []proto.Step, seen map[string]bool) {
 		for _, arg := range s.Control {
 			if p, ok := s.Args[arg]; ok {
 				seen[resourceKey("file.read", p)] = true
+				seen[resourceKey("file.render", p)] = true
 				seen[resourceKey("dir.list", p)] = true
 				seen[resourceKey("dir.sync", p)] = true
 			}
@@ -101,10 +102,11 @@ func scanExpr(e Expr, seen map[string]bool) {
 	}
 }
 
-// UsesPrimitive reports whether any def calls the named primitive. `~file.render` needs
-// the control-host channel even when the plan declares no `%"…"` path — the content it
-// renders may come from the target — so the caller cannot rely on the resource set
-// alone to decide whether to open one.
+// UsesPrimitive reports whether any def calls the named primitive, wherever the call
+// sits. It existed for `~file.render`, which used to need the channel with no `%"…"`
+// path declared, since the content came from the target; that stopped being true in #392
+// and the question — does this set of defs reach for this primitive — is general enough
+// to keep.
 func UsesPrimitive(defs map[string]Def, name string) bool {
 	found := false
 	var walkE func(Expr)

@@ -56,14 +56,14 @@ func TestPrimitives_ReadReachesTheControlHost(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(planDir, "conf.j2"), []byte("port = @{port}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ch := wire(t, planDir, []string{"file.read:" + filepath.Join(planDir, "conf.j2")}, map[string]string{"port": "8080"})
+	ch := wire(t, planDir, []string{"file.render:" + filepath.Join(planDir, "conf.j2")}, map[string]string{"port": "8080"})
 
 	f := newComp()
 	f.set(`printf '%s' "$out"`, 0)
 	resp := serveCompCh(t, f, ch, proto.Request{
 		Mode: "apply",
 		Defs: map[string]string{
-			"deliver": `def deliver(src: str, port: str) { apply { out = ~file.render(~file.read(src)) shell { printf '%s' "$out" } return ok.done } }`,
+			"deliver": `def deliver(src: str, port: str) { apply { out = ~file.render(src) shell { printf '%s' "$out" } return ok.done } }`,
 		},
 		Steps: []proto.Step{{Instruction: "deliver", Args: map[string]string{
 			"src": filepath.Join(planDir, "conf.j2"), "port": "8080",
@@ -73,7 +73,7 @@ func TestPrimitives_ReadReachesTheControlHost(t *testing.T) {
 		t.Fatalf("the primitive chain must run: %+v", resp.Results[0])
 	}
 	if got := f.envFor(`printf '%s' "$out"`)["out"]; got != "port = 8080" {
-		t.Fatalf("read + render must yield the rendered template, got %q", got)
+		t.Fatalf("the declared template must come back rendered, got %q", got)
 	}
 }
 
@@ -128,26 +128,12 @@ func serveCompCh(t *testing.T, c *compExec, ch *Channel, req proto.Request) prot
 	return runRequest(req, c, ch)
 }
 
-// ~file.render takes content, not a path — which is what lets a template whose source
-// lives on the *target* be rendered. Neither Go transformation could do this.
-func TestPrimitives_RenderContentFromTheTarget(t *testing.T) {
-	f := newComp()
-	f.set(`cat /etc/model.j2`, 0)
-	f.stdout(`cat /etc/model.j2`, "host = @{h}")
-	resp := serveCompCh(t, f, wire(t, t.TempDir(), nil, map[string]string{"h": "web1"}), proto.Request{
-		Mode: "apply",
-		Defs: map[string]string{
-			"r": `def r(h: str) { apply { out = ~file.render(shell { cat /etc/model.j2 }) shell { echo "$out" } return ok.done } }`,
-		},
-		Steps: []proto.Step{{Instruction: "r", Args: map[string]string{"h": "web1"}}},
-	})
-	if resp.Results[0].Category != "ok" {
-		t.Fatalf("rendering target-side content must work: %+v", resp.Results[0])
-	}
-	if got := f.envFor(`echo "$out"`)["out"]; got != "host = web1" {
-		t.Fatalf("got %q", got)
-	}
-}
+// TestPrimitives_RenderContentFromTheTarget stood here: `~file.render(shell { cat … })`
+// rendered a template living on the target. That case is gone with the content form of
+// the primitive — text the target composed was substituted over the control host's
+// variables, secrets included, with no allow-list entry to refuse it (#392). ADR-0042
+// records that it returns as its own decision if it is ever wanted, with a bound on the
+// text it accepts.
 
 // Bytes are opaque (ADR-0034 §4): interpolating them would turn binary into text and
 // corrupt a delivered file without a word.

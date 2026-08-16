@@ -177,26 +177,20 @@ func TestAllowed_ClimbingOutOfAssetsIsRefused(t *testing.T) {
 	}
 }
 
-// #334: rendering runs here, on the control host, because the host's variables live
-// here and never travel. The agent sends content and gets the substituted result.
+// #334: rendering runs here, on the control host, because the host's variables live here
+// and never travel. Since #392 the template is read here too — the agent names a declared
+// file and gets the substituted result (ADR-0042 §1).
 func TestServe_Render(t *testing.T) {
-	allow := NewAllowed(t.TempDir(), nil)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "conf.j2"), []byte("host = @{who}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	allow := NewAllowed(dir, []string{"file.render:conf.j2"})
 	allow.Render = func(content string, _ map[string]string) (string, error) {
 		return strings.ReplaceAll(content, "@{who}", "web1"), nil
 	}
 
-	agent, control, done := chanPair()
-	defer done()
-	go func() { _ = Serve(control, allow) }()
-
-	payload := base64.StdEncoding.EncodeToString([]byte("host = @{who}"))
-	if err := agent.Send(proto.Msg{Kind: proto.KindAsk, ID: "1", Resource: "file.render:", Data: payload}); err != nil {
-		t.Fatal(err)
-	}
-	m, err := agent.Recv()
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := ask(t, allow, "file.render:conf.j2")
 	if m.Error != "" {
 		t.Fatalf("render must answer: %s", m.Error)
 	}
@@ -206,11 +200,15 @@ func TestServe_Render(t *testing.T) {
 	}
 }
 
-// #334: an ask carries the scope of the call site alongside the content, and Serve must
-// hand it to the renderer. Dropping it here loses every `with { }` override, which the
-// control host has no other way to learn.
+// #334: an ask carries the scope of the call site, and Serve must hand it to the
+// renderer. Dropping it here loses every `with { }` override, which the control host has
+// no other way to learn. The scope is the one thing an ask still brings with it (#392).
 func TestServe_RenderReceivesTheAskScope(t *testing.T) {
-	allow := NewAllowed(t.TempDir(), nil)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "conf.j2"), []byte("host = @{who}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	allow := NewAllowed(dir, []string{"file.render:conf.j2"})
 	allow.Render = func(content string, scope map[string]string) (string, error) {
 		return strings.ReplaceAll(content, "@{who}", scope["who"]), nil
 	}
@@ -219,9 +217,8 @@ func TestServe_RenderReceivesTheAskScope(t *testing.T) {
 	defer done()
 	go func() { _ = Serve(control, allow) }()
 
-	payload := base64.StdEncoding.EncodeToString([]byte("host = @{who}"))
-	if err := agent.Send(proto.Msg{Kind: proto.KindAsk, ID: "1", Resource: "file.render:",
-		Data: payload, Vars: map[string]string{"who": "from-the-call-site"}}); err != nil {
+	if err := agent.Send(proto.Msg{Kind: proto.KindAsk, ID: "1", Resource: "file.render:conf.j2",
+		Vars: map[string]string{"who": "from-the-call-site"}}); err != nil {
 		t.Fatal(err)
 	}
 	m, err := agent.Recv()
@@ -237,34 +234,61 @@ func TestServe_RenderReceivesTheAskScope(t *testing.T) {
 // A run whose plan never renders has no renderer; asking anyway must say so rather than
 // answer empty content, which would deliver a blank file and report success.
 func TestServe_RenderWithoutRendererFails(t *testing.T) {
-	agent, control, done := chanPair()
-	defer done()
-	go func() { _ = Serve(control, NewAllowed(t.TempDir(), nil)) }()
-
-	_ = agent.Send(proto.Msg{Kind: proto.KindAsk, ID: "1", Resource: "file.render:", Data: ""})
-	m, err := agent.Recv()
-	if err != nil {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "conf.j2"), []byte("host = @{who}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// Declared, so the refusal can only come from the missing renderer.
+	m := ask(t, NewAllowed(dir, []string{"file.render:conf.j2"}), "file.render:conf.j2")
 	if m.Error == "" {
 		t.Fatal("a render with no renderer must fail, not answer empty")
+	}
+	if !strings.Contains(m.Error, "renderer") {
+		t.Fatalf("the failure must name what is missing: %q", m.Error)
 	}
 }
 
 // A renderer that fails — an undefined variable — surfaces as an error, so the job
 // halts instead of writing a file with a hole in it.
 func TestServe_RenderErrorSurfaces(t *testing.T) {
-	allow := NewAllowed(t.TempDir(), nil)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "conf.j2"), []byte("v = @{nope}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	allow := NewAllowed(dir, []string{"file.render:conf.j2"})
 	allow.Render = func(string, map[string]string) (string, error) { return "", errors.New(`undefined variable "nope"`) }
 
-	agent, control, done := chanPair()
-	defer done()
-	go func() { _ = Serve(control, allow) }()
-
-	_ = agent.Send(proto.Msg{Kind: proto.KindAsk, ID: "1", Resource: "file.render:",
-		Data: base64.StdEncoding.EncodeToString([]byte("v = @{nope}"))})
-	m, _ := agent.Recv()
+	m := ask(t, allow, "file.render:conf.j2")
 	if m.Error == "" || !strings.Contains(m.Error, "nope") {
 		t.Fatalf("the failure must name the variable: %q", m.Error)
 	}
 }
+
+// #392 — the regression test for the hole ADR-0042 closes. A render whose resource the
+// plan never declared must be refused like every other ask. Before the fix the control
+// host substituted whatever text the target sent, so an imported def asked for
+// `@{db_password}` and was answered by the machine holding it.
+func TestServe_RefusesAnUndeclaredRender(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "secret.tmpl"), []byte("p = @{db_password}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	allow := NewAllowed(dir, []string{"file.render:conf.j2"})
+	allow.Render = func(content string, _ map[string]string) (string, error) {
+		return strings.ReplaceAll(content, "@{db_password}", "s3cr3t"), nil
+	}
+
+	m := ask(t, allow, "file.render:secret.tmpl")
+	if m.Error == "" {
+		t.Fatal("an undeclared template must be refused, not rendered")
+	}
+	if !strings.Contains(m.Error, "secret.tmpl") {
+		t.Fatalf("the refusal must name the resource: %q", m.Error)
+	}
+	if strings.Contains(m.Data, base64.StdEncoding.EncodeToString([]byte("s3cr3t"))) {
+		t.Fatal("a refused render must carry no substituted value")
+	}
+}
+
+// The served half of the same question lives in TestServe_Render, which now reads a
+// declared file: the two together say what the allow-list means for this primitive.

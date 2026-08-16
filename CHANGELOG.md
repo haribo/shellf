@@ -8,6 +8,19 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **BREAKING** — `~file.render` renders a **declared file** instead of content handed to
+  it (ADR-0042): `~file.render(~file.read(src))` becomes `~file.render(src)`, and `src`
+  must be marked `%"…"` at the call site as it already had to be. `file.template(%"…", …)`
+  is written exactly as before, so a plan that uses the def changes nothing. The reason is
+  not tidiness: the text being substituted came *from the target*, and the control host
+  substituted its own variables into it — so an imported def (ADR-0016) could send
+  `"@{db_password}"` and be answered with the secret by the machine holding it, while the
+  allow-list that exists to stop precisely that saw no file to refuse. A render is now an
+  ask like any other, resolved against what the plan declared and refused by name
+  otherwise. It also removes a round trip: the raw template used to be sent to the target
+  and sent straight back to be rendered; only the result travels now. The one case that
+  disappears with the content form is rendering a template that lives on the target
+  (`~file.render(shell { cat … })`), used by no plan, example or stdlib def (#392).
 - **BREAKING** — a `shell { }` block whose command has an exact def equivalent no longer
   parses (ADR-0040). Two rules: `mkdir` names `dir.ensure`, `cp` names `file.copy` for a
   file and `dir.copy` for a tree — and says that neither carries mode or ownership, since

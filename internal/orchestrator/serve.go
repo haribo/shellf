@@ -32,11 +32,11 @@ type Allowed struct {
 	// Render substitutes `@{var}` over this host's environment (ADR-0024), with `scope`
 	// — the variables in scope where the call was made — layered on top. It lives here
 	// because rendering needs the operator's variables, which never leave the control
-	// host; the agent sends content plus its scope and receives the result.
+	// host; the agent names a declared template plus its scope, and receives the result.
 	//
-	// The content may come from the target (`~file.render(shell { cat … })`), so what a
-	// plan hands to rendering is the plan author's business: the substituted values are
-	// this host's, secrets included.
+	// The content substituted into is read here, from the allow-list, never taken from
+	// the ask: the substituted values are this host's, secrets included, so text the
+	// target composed would be a way to ask for them by name (#392, ADR-0042).
 	Render func(content string, scope map[string]string) (string, error)
 }
 
@@ -132,16 +132,20 @@ func Serve(ch *proto.Conn, allow *Allowed) error {
 	}
 }
 
-// answer dispatches an ask: `file.render` is a computation over the message's payload,
-// everything else names a file to read.
+// answer dispatches an ask: every resource names a file to read, and `file.render` reads
+// one and substitutes over it before answering.
 func answer(allow *Allowed, m proto.Msg) ([]byte, error) {
 	if strings.HasPrefix(m.Resource, "file.render:") {
 		if allow.Render == nil {
 			return nil, fmt.Errorf("no renderer configured on the control host")
 		}
-		content, err := base64.StdEncoding.DecodeString(m.Data)
+		// Read through the same door as every other ask, so an undeclared template is
+		// refused by name. The ask brings a resource and its scope, never the text: that
+		// text was substituted over this host's variables, which made the render an
+		// unbounded read of them (#392, ADR-0042).
+		content, err := readResource(allow, m.Resource)
 		if err != nil {
-			return nil, fmt.Errorf("file.render: unreadable content")
+			return nil, err
 		}
 		out, err := allow.Render(string(content), m.Vars)
 		if err != nil {
