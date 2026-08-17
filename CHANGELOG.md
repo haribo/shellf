@@ -92,6 +92,16 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **BREAKING** — `unless { … }` in a def no longer parses. It was accepted and **silently
+  ignored**: a def doing `shell { touch "$p" } unless { true }` created the file, guard or
+  no guard. The clause was stored on the AST and read by nothing — the engine's guard is
+  only ever filled from a plan step, and plans have refused the keyword since it was
+  removed from them, so it survived in exactly one place, where it did nothing. The refusal
+  gives the plan's message, naming `if !shell { <guard> } { <cmd> }`, whatever follows the
+  keyword: an unbraced `unless` used to complain about a missing brace, which sent the
+  author to fix the punctuation of a construct that does not exist. No def in this
+  repository used it (#415).
+
 - `dir.copy(%"src", dst, "sha256")` parses. The third argument has been documented in
   `docs/language.md` and the README since `dir.copy` became a def over `~dir.sync`
   (ADR-0039 §6), and was refused with `dir.copy expects 2 argument(s), got 3`: a stale Go
