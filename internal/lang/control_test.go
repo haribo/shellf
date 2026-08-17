@@ -609,43 +609,45 @@ func TestControl_SyncRequiresAMarkedSource(t *testing.T) {
 	}
 }
 
-// #390, ADR-0044 §6 — a transfer writes through the agent's own user, so an `as <user>`
-// around it was ignored: the tree landed owned by the connecting user and the run reported
-// `ok.copied`. Until the escalated transfer ships, it refuses instead of lying, in both
-// modes — a `--dry-run` announcing a transfer the real run would refuse is the same lie
-// one step earlier.
-func TestControl_SyncRefusesUnderEscalation(t *testing.T) {
-	src := `def d(s: str, dst: str) { apply { x = ~dir.sync(s, dst, "false", "meta") return ok.x } }`
+// #390, ADR-0044 — the escalation must reach the transfer. It could not: a transfer wrote
+// from the agent's own process, so a tree delivered inside `as root` landed owned by the
+// connecting user while the run reported `ok.copied`. It now places files through a child
+// launched by the executor, so what this asserts is that the executor handed to the
+// transfer is the escalated one.
+//
+// This test replaces the interim refusal of ADR-0044 §6, which asserted the opposite.
+func TestControl_SyncReceivesTheEscalatedExecutor(t *testing.T) {
+	src := `def d(s: str, dst: str) as root { apply { x = ~dir.sync(s, dst, "false", "meta") return ok.x } }`
 	defs, err := ParseDefs(src)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A real ShellExecutor, escalated: the refusal reads the executor, which is where
-	// `as <user>` lives (ADR-0011). No shell runs — the refusal comes first.
-	ex := engine.ShellExecutor{}.As("root")
-	sync := func(string, string, string, bool) (int, int, error) {
-		t.Fatal("an escalated transfer must not reach the channel")
-		return 0, 0, nil
-	}
-	preview := func(string, string, string) (int, []string, error) {
-		t.Fatal("an escalated transfer must not reach the channel in check mode either")
-		return 0, nil, nil
-	}
-
-	// A channel is wired, so the refusal cannot be the "no channel" one.
 	fetch := func(string, []byte, map[string]string) ([]byte, error) { return nil, nil }
 
-	for _, mode := range []engine.Mode{engine.Apply, engine.Check} {
-		_, err := EvalDefFull(defs[0], map[string]string{"s": "tree", "dst": "/opt/x"}, nil,
-			[]string{"s"}, ex, mode, nil, []string{"d"}, fetch, sync, preview)
-		if err == nil {
-			t.Fatalf("%v: an escalated transfer must be refused, not silently unescalated", mode)
+	var gotSync, gotPreview engine.Executor
+	sync := func(ex engine.Executor, _, _, _ string, _ bool) (int, int, error) {
+		gotSync = ex
+		return 1, 0, nil
+	}
+	preview := func(ex engine.Executor, _, _, _ string) (int, []string, error) {
+		gotPreview = ex
+		return 1, nil, nil
+	}
+
+	for _, c := range []struct {
+		mode engine.Mode
+		got  *engine.Executor
+	}{{engine.Apply, &gotSync}, {engine.Check, &gotPreview}} {
+		if _, err := EvalDefFull(defs[0], map[string]string{"s": "tree", "dst": "/opt/x"}, nil,
+			[]string{"s"}, engine.ShellExecutor{}, c.mode, nil, []string{"d"}, fetch, sync, preview); err != nil {
+			t.Fatalf("%v: %v", c.mode, err)
 		}
-		if !strings.Contains(err.Error(), "root") {
-			t.Fatalf("%v: the refusal must name the escalation it cannot honour: %v", mode, err)
+		se, ok := (*c.got).(engine.ShellExecutor)
+		if !ok {
+			t.Fatalf("%v: the transfer must receive the run's executor, got %T", c.mode, *c.got)
 		}
-		if !strings.Contains(err.Error(), "dir.owner") {
-			t.Fatalf("%v: the refusal must say what to do instead: %v", mode, err)
+		if se.Become != "root" {
+			t.Fatalf("%v: the transfer must be told who it runs as, got %q", c.mode, se.Become)
 		}
 	}
 }
@@ -696,8 +698,11 @@ func TestControl_SyncIsInertInCheckMode(t *testing.T) {
 	resolve := func(string) (Def, bool) { return Def{}, false }
 
 	var synced, previewed bool
-	sync := func(string, string, string, bool) (int, int, error) { synced = true; return 1, 0, nil }
-	preview := func(string, string, string) (int, []string, error) { previewed = true; return 1, []string{"gone"}, nil }
+	sync := func(engine.Executor, string, string, string, bool) (int, int, error) { synced = true; return 1, 0, nil }
+	preview := func(engine.Executor, string, string, string) (int, []string, error) {
+		previewed = true
+		return 1, []string{"gone"}, nil
+	}
 
 	args := map[string]string{"s": "tree", "dst": "/opt/x"}
 	// A non-nil fetcher: the agent supplies all three together, and the generic

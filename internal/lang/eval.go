@@ -238,11 +238,17 @@ type ControlFetcher func(resource string, payload []byte, vars map[string]string
 // removed. Both, because a sync that only removes has changed the target as surely as one
 // that only writes — returning the write count alone made a deletion report `ok.already`
 // (#387).
-type TreeSyncer func(resource, dst, compare string, del bool) (written, removed int, err error)
+// The executor comes first because it is what decides *who* writes: a transfer places
+// files through an escalated child of the agent, so `as <user>` reaches it the way it
+// reaches every other instruction (ADR-0044). Without it, an escalated delivery landed
+// owned by the connecting user and reported success (#390).
+type TreeSyncer func(ex engine.Executor, resource, dst, compare string, del bool) (written, removed int, err error)
 
 // TreePreviewer answers what a transfer would do without doing it: how many files it
-// would write, and which it would remove (#373).
-type TreePreviewer func(resource, dst, compare string) (int, []string, error)
+// would write, and which it would remove (#373). It takes the executor for the same reason
+// a transfer does — reading the destination to compute the delta can itself need the
+// escalation, and a preview that cannot read reports a delta it invented.
+type TreePreviewer func(ex engine.Executor, resource, dst, compare string) (int, []string, error)
 
 func (ev *evaluator) fail(format string, a ...any) {
 	panic(evalErr{fmt.Errorf(format, a...)})
@@ -708,24 +714,6 @@ func (ev *evaluator) evalSync(c Call, arg value) value {
 	if !ok {
 		ev.fail("~dir.sync reads its source on the control host: mark it %%\"…\"")
 	}
-	// A transfer writes through the agent's own user — `os.MkdirAll`, `os.Rename` and
-	// friends in internal/agent/sync.go — where every other instruction reaches the
-	// filesystem through the executor, which is what carries `as <user>` (ADR-0011). So an
-	// escalation around a transfer was ignored: measured in #390, a tree delivered inside
-	// `as root` landed owned by the connecting user while the run reported `ok.copied`.
-	//
-	// Refused until the escalated transfer of ADR-0044 ships (§6), in check mode too: a
-	// preview announcing a transfer the real run would refuse is the same lie, earlier.
-	//
-	// Read off the concrete executor rather than through a method on the interface: the
-	// interface would gain something ADR-0044 removes again, since an escalated transfer
-	// learns who it runs as from the executor that launches it, never by asking. A test
-	// fake is not a ShellExecutor and cannot escalate, so it is not the case being guarded.
-	if s, ok := ev.ex.(engine.ShellExecutor); ok && s.Become != "" {
-		ev.fail("~dir.sync does not honour `as %s` yet: it writes as the agent's own user, "+
-			"so the tree would land owned by the wrong user (#390, ADR-0044). "+
-			"Deliver it outside the escalated block and set ownership with dir.owner", s.Become)
-	}
 	dst := stringify(ev.evalExpr(c.Args[1]))
 	del := stringify(ev.evalExpr(c.Args[2]))
 	compare := stringify(ev.evalExpr(c.Args[3]))
@@ -745,7 +733,7 @@ func (ev *evaluator) evalSync(c Call, arg value) value {
 		if ev.preview == nil {
 			ev.fail("~dir.sync: no control host channel available for this run")
 		}
-		n, extras, err := ev.preview(resourceKey("dir.sync", string(src)), dst, compare)
+		n, extras, err := ev.preview(ev.ex, resourceKey("dir.sync", string(src)), dst, compare)
 		if err != nil {
 			ev.fail("%v", err)
 		}
@@ -758,7 +746,7 @@ func (ev *evaluator) evalSync(c Call, arg value) value {
 		}
 		return syncSummary(n, extras, del == "true")
 	}
-	written, removed, err := ev.sync(resourceKey("dir.sync", string(src)), dst, compare, del == "true")
+	written, removed, err := ev.sync(ev.ex, resourceKey("dir.sync", string(src)), dst, compare, del == "true")
 	if err != nil {
 		ev.fail("%v", err)
 	}

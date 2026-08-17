@@ -32,6 +32,12 @@ func syncPair(t *testing.T, assets string) *Channel {
 	}
 	t.Cleanup(func() { _ = c.Close() })
 
+	// The placement runs in a child of the agent, launched through the executor
+	// (ADR-0044). A test binary cannot be that child — it knows no `__sync-commit` — so
+	// the verbs are called in-process here. They are the same functions; what the fork
+	// and the escalation add is the e2e harness's to assert.
+	ch.child = inProcessChild
+
 	allow := orchestrator.NewAllowed(assets, []string{"dir.sync:tree"})
 	go func() {
 		conn := proto.NewConn(c)
@@ -84,7 +90,7 @@ func TestSync_SecondRunTransfersNothing(t *testing.T) {
 	dst := filepath.Join(t.TempDir(), "delivered")
 	ch := syncPair(t, root)
 
-	n, _, err := ch.Sync("dir.sync:tree", dst, "meta", false)
+	n, _, err := ch.Sync(noEscalation{}, "dir.sync:tree", dst, "meta", false)
 	if err != nil {
 		t.Fatalf("first transfer: %v", err)
 	}
@@ -104,7 +110,7 @@ func TestSync_SecondRunTransfersNothing(t *testing.T) {
 		t.Fatalf("mode not carried: %v (%v)", info.Mode().Perm(), err)
 	}
 
-	n, _, err = ch.Sync("dir.sync:tree", dst, "meta", false)
+	n, _, err = ch.Sync(noEscalation{}, "dir.sync:tree", dst, "meta", false)
 	if err != nil {
 		t.Fatalf("second transfer: %v", err)
 	}
@@ -127,14 +133,14 @@ func TestSync_DeleteIsAParameter(t *testing.T) {
 			root := sourceTree(t)
 			dst := filepath.Join(t.TempDir(), "delivered")
 			ch := syncPair(t, root)
-			if _, _, err := ch.Sync("dir.sync:tree", dst, "meta", false); err != nil {
+			if _, _, err := ch.Sync(noEscalation{}, "dir.sync:tree", dst, "meta", false); err != nil {
 				t.Fatal(err)
 			}
 			extra := filepath.Join(dst, "extra.txt")
 			if err := os.WriteFile(extra, []byte("x"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := ch.Sync("dir.sync:tree", dst, "meta", tc.del); err != nil {
+			if _, _, err := ch.Sync(noEscalation{}, "dir.sync:tree", dst, "meta", tc.del); err != nil {
 				t.Fatal(err)
 			}
 			_, err := os.Stat(extra)
@@ -168,7 +174,7 @@ func TestSync_PastTheOldCeiling(t *testing.T) {
 	dst := filepath.Join(t.TempDir(), "delivered")
 	ch := syncPair(t, root)
 
-	if _, _, err := ch.Sync("dir.sync:tree", dst, "meta", false); err != nil {
+	if _, _, err := ch.Sync(noEscalation{}, "dir.sync:tree", dst, "meta", false); err != nil {
 		t.Fatalf("a tree above the old ceiling must transfer: %v", err)
 	}
 	got, err := os.Stat(filepath.Join(dst, "big.bin"))
@@ -185,7 +191,7 @@ func TestSync_Sha256SeesWhatMetaCannot(t *testing.T) {
 	dst := filepath.Join(t.TempDir(), "delivered")
 	ch := syncPair(t, root)
 
-	if _, _, err := ch.Sync("dir.sync:tree", dst, "sha256", false); err != nil {
+	if _, _, err := ch.Sync(noEscalation{}, "dir.sync:tree", dst, "sha256", false); err != nil {
 		t.Fatal(err)
 	}
 	// Corrupt the destination in place, preserving size and mtime exactly.
@@ -201,7 +207,7 @@ func TestSync_Sha256SeesWhatMetaCannot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	n, _, err := ch.Sync("dir.sync:tree", dst, "meta", false)
+	n, _, err := ch.Sync(noEscalation{}, "dir.sync:tree", dst, "meta", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +215,7 @@ func TestSync_Sha256SeesWhatMetaCannot(t *testing.T) {
 		t.Fatalf("meta compares size+mtime: it cannot see this change, got %d re-sent", n)
 	}
 
-	n, _, err = ch.Sync("dir.sync:tree", dst, "sha256", false)
+	n, _, err = ch.Sync(noEscalation{}, "dir.sync:tree", dst, "sha256", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +265,7 @@ func TestSync_InterruptedLeavesNothingBehind(t *testing.T) {
 	waitAttached(t, ch)
 
 	dst := filepath.Join(t.TempDir(), "delivered")
-	if _, _, err := ch.Sync("dir.sync:tree", dst, "meta", false); err == nil {
+	if _, _, err := ch.Sync(noEscalation{}, "dir.sync:tree", dst, "meta", false); err == nil {
 		t.Fatal("a transfer that never terminates must fail, not report success")
 	}
 	if _, err := os.Stat(filepath.Join(dst, "big.bin")); err == nil {
@@ -296,6 +302,7 @@ func TestSync_RetriesAfterAStaleBridge(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = ch.Close() }()
+	ch.child = inProcessChild // as in syncPair: a test binary cannot be the escalated child
 	sock := filepath.Join(wd, SockName)
 
 	// A bridge from a session that has already ended: it greets, then dies.
@@ -326,7 +333,7 @@ func TestSync_RetriesAfterAStaleBridge(t *testing.T) {
 	}()
 
 	dst := filepath.Join(t.TempDir(), "delivered")
-	n, _, err := ch.Sync("dir.sync:tree", dst, "meta", false)
+	n, _, err := ch.Sync(noEscalation{}, "dir.sync:tree", dst, "meta", false)
 	if err != nil {
 		t.Fatalf("a transfer must survive a bridge left over from a previous session: %v", err)
 	}
@@ -353,7 +360,7 @@ func TestSync_PreviewTouchesNothing(t *testing.T) {
 	}
 	ch := syncPair(t, root)
 
-	n, extras, err := ch.Preview("dir.sync:tree", dst, "meta")
+	n, extras, err := ch.Preview(noEscalation{}, "dir.sync:tree", dst, "meta")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,7 +392,7 @@ func TestSync_DeleteMakesTheTargetMatch(t *testing.T) {
 	}
 	ch := syncPair(t, root)
 
-	if _, _, err := ch.Sync("dir.sync:tree", dst, "meta", true); err != nil {
+	if _, _, err := ch.Sync(noEscalation{}, "dir.sync:tree", dst, "meta", true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dst, "stale.txt")); err == nil {
