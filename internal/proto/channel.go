@@ -151,4 +151,12 @@ type Entry struct {
 	Size  int64  `json:"size"`
 	MTime int64  `json:"mtime"` // Unix seconds; second precision is what a tar or a copy preserves
 	SHA   string `json:"sha,omitempty"`
+
+	// Kind is empty for a regular file and "irregular" for anything else the destination
+	// holds — a symlink, a fifo, a socket. A transfer carries regular files only, so these
+	// were left out of the manifest entirely and were therefore never "extra": a link
+	// standing where a directory must go could not be removed, by `delete` or otherwise,
+	// and the delivery wrote through it (#412). They are listed now so the source can call
+	// them extra; they are never compared as content.
+	Kind string `json:"kind,omitempty"`
 }

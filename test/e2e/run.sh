@@ -821,4 +821,58 @@ escal >/dev/null || fail "a root-only destination must be reachable under as roo
   || fail "the delivery into a root-only directory landed as the wrong user"
 printf '%s' "$(escal)" | grep -q 'ok.already' || fail "the escalated scan must see the destination it wrote"
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured"
+say "19. a link inside the destination never carries a write out of it (#412)"
+# `underDst` compares path text, and a symlink is not a lexical thing: a link *inside* the
+# destination sent the write outside it, with `ok.copied` in the report. Since ADR-0044 the
+# placement runs under sudo when the block is `as root`, so the ceiling moved from the
+# connecting user's reach to the machine — which is why this runs escalated here.
+mkdir -p "$work/link412/plans" "$work/link412/assets/tree/sub" "$work/link412/inventories"
+echo "PAYLOAD" > "$work/link412/assets/tree/sub/x.txt"
+cat > "$work/link412/inventories/inv.shellf" <<EOF
+host target = {
+    address: "$ip", user: "deploy", key: "$work/id",
+}
+EOF
+docker exec "$cname" rm -rf /opt/l412 /opt/l412-escape
+docker exec "$cname" mkdir -p /opt/l412 /opt/l412-escape
+docker exec "$cname" ln -s /opt/l412-escape /opt/l412/sub
+
+cat > "$work/link412/plans/plan.shellf" <<'EOF'
+on target {
+    as root {
+        dir.copy(%"tree", "/opt/l412")
+    }
+}
+EOF
+l412() { "$work/shellf" run --inventory "$work/link412/inventories/inv.shellf" --insecure \
+  "$work/link412/plans/plan.shellf" 2>&1; }
+
+rc=0; out="$(l412)" || rc=$?
+printf '%s\n' "$out"
+[ "$rc" -ne 0 ] || fail "a copy through a link out of the destination must be refused (#412)"
+printf '%s' "$out" | grep -q 'leads out of it' || fail "the refusal must say what is wrong"
+# It must not hand the caller a path from the other side of the deployment (#393's rule).
+printf '%s' "$out" | grep -q 'l412-escape' && fail "the refusal must not name the link's target"
+docker exec "$cname" test -e /opt/l412-escape/x.txt && fail "the copy wrote through the link, as root"
+
+# `dir.sync` may delete what the source does not have — the link included — so it clears
+# the way and delivers. The removal is announced by name in --dry-run first.
+cat > "$work/link412/plans/plan.shellf" <<'EOF'
+on target {
+    as root {
+        dir.sync(%"tree", "/opt/l412")
+    }
+}
+EOF
+out="$("$work/shellf" run --inventory "$work/link412/inventories/inv.shellf" --insecure --dry-run \
+  "$work/link412/plans/plan.shellf" 2>&1)"
+printf '%s' "$out" | grep -q 'REMOVED' || fail "a link that will be removed must be named in --dry-run"
+docker exec "$cname" test -L /opt/l412/sub || fail "--dry-run removed the link"
+
+l412 >/dev/null || fail "a sync must clear the link and deliver"
+docker exec "$cname" test -f /opt/l412/sub/x.txt || fail "the file did not land inside the destination"
+[ "$(docker exec "$cname" stat -c '%U' /opt/l412/sub/x.txt)" = "root" ] \
+  || fail "the escalated delivery landed as the wrong user"
+docker exec "$cname" test -e /opt/l412-escape/x.txt && fail "something was written through the link"
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out"

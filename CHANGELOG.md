@@ -92,6 +92,19 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A symlink **inside** a transfer's destination no longer carries the write out of it. The
+  containment check compared path text, and a link is not a lexical thing: with
+  `/opt/site/sub → /etc`, delivering `sub/x` wrote `/etc/x` and the run reported
+  `ok.copied`. Since the escalated transfer landed (ADR-0044) that write happens under
+  `sudo` inside an `as root` block, so the ceiling moved from the connecting user's reach
+  to the machine. Each destination directory is now resolved before anything is created —
+  a destination that *is* a link keeps working, since the operator named that path — and a
+  component leading out is refused, naming the path without naming what the link pointed
+  at. `dir.sync` gains the way out: a non-regular entry now appears in the destination's
+  manifest, so a link the source does not have is **extra** like any other, named in
+  `--dry-run` and removed before the delivery it was blocking. `dir.copy` still removes
+  nothing and refuses, pointing at `dir.sync` (#412).
+
 - Passing the bytes of `~file.read` where a string is expected is **refused** instead of
   silently becoming `""`. `file.write(dst, ~file.read(src))` delivered a **0-byte file**
   and reported `ok.done`: `file.write` is a def taking `content: str`, bytes are opaque by

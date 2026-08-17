@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -58,6 +59,11 @@ func childVerbAt(self string, ex engine.Executor, args ...string) (string, error
 		}
 		if msg == "" {
 			msg = fmt.Sprintf("exit %d", r.Exit)
+		}
+		// The child names the primitive itself when it fails on its own terms; prefixing
+		// again would print `dir.sync: dir.sync: …`, which reads like two failures.
+		if strings.HasPrefix(msg, "dir.sync:") {
+			return "", errors.New(msg)
 		}
 		return "", fmt.Errorf("dir.sync: %s", msg)
 	}

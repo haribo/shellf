@@ -135,6 +135,12 @@ func same(have, want proto.Entry, compare string) bool {
 	if have.Path == "" {
 		return false
 	}
+	// Anything that is not a regular file is never "the same" as a file the source has:
+	// a link with the right size and mtime would otherwise be taken for the content and
+	// the real file would never be sent (#412).
+	if have.Kind != "" {
+		return false
+	}
 	if compare == "sha256" {
 		return have.SHA != "" && have.SHA == want.SHA
 	}
