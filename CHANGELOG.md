@@ -6,438 +6,65 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Changed
+### Added
 
-- A tree transfer inside an escalated block (`as root { dir.copy(…) }`) now **honours the
-  escalation** (ADR-0044). It never did: every other instruction reaches the filesystem
-  through the executor, which is what carries `as <user>`, while a transfer wrote from the
-  agent's own process — so the tree landed owned by the connecting user and the run
-  reported `ok.copied` with exit 0, measured side by side with a `file.write` in the same
-  block that did land root-owned. Into a directory the connecting user could not write, it
-  failed on permissions instead. The agent now stages what it receives in a directory it
-  owns, then re-invokes itself through the executor to place the files, so the same Go code
-  runs as the right user rather than being reimplemented in shell. Reading the destination
-  to compute the delta is escalated too, so a `0700 root` destination works and a second run
-  still converges. Before escalating, the agent binary is re-verified — owner, and nobody
-  else writable, directories included — and a failure refuses instead of falling back to an
-  unescalated write, which is the wrong-owner success this fixes (#390, #409).
-- **BREAKING** — a `%"…"` inside a def no longer parses (ADR-0043): only a plan names a
-  file on your machine, and a def receives that path as a parameter. The allow-list is
-  what stops a job from reading the operator's disk, and it was built by scanning the plan
-  **and the def bodies** — so a def could add itself to the list meant to bound it. For an
-  imported def (ADR-0016) that meant guessing a filename, which a public example hands
-  over. The refusal arrives when the plan is read, names the fix, and applies to the
-  standard library too: an exemption would have to be carried and trusted forever, and the
-  stdlib has no literal control path to exempt. Nothing in this repository needed changing
-  — every real occurrence already sat in a plan, which is the shape the rule now enforces.
-  It bounds *which* files a def can obtain, not what it does with them: a def still runs
-  shell on the target (#403).
-- **BREAKING** — `~file.render` renders a **declared file** instead of content handed to
-  it (ADR-0042): `~file.render(~file.read(src))` becomes `~file.render(src)`, and `src`
-  must be marked `%"…"` at the call site as it already had to be. `file.template(%"…", …)`
-  is written exactly as before, so a plan that uses the def changes nothing. The reason is
-  not tidiness: the text being substituted came *from the target*, and the control host
-  substituted its own variables into it — so an imported def (ADR-0016) could send
-  `"@{db_password}"` and be answered with the secret by the machine holding it, while the
-  allow-list that exists to stop precisely that saw no file to refuse. A render is now an
-  ask like any other, resolved against what the plan declared and refused by name
-  otherwise. It also removes a round trip: the raw template used to be sent to the target
-  and sent straight back to be rendered; only the result travels now. The one case that
-  disappears with the content form is rendering a template that lives on the target
-  (`~file.render(shell { cat … })`), used by no plan, example or stdlib def (#392).
-- **BREAKING** — a `shell { }` block whose command has an exact def equivalent no longer
-  parses (ADR-0040). Two rules: `mkdir` names `dir.ensure`, `cp` names `file.copy` for a
-  file and `dir.copy` for a tree — and says that neither carries mode or ownership, since
-  `cp -p` does. `unsafe shell { … }` keeps the shell, runs identically, and composes with
-  the interpreter override and with `if !`. The point is not style: a def tolerates being
-  re-run, and a step that does not is what wedges a host after a partial failure —
-  measured in #377, where the same def written with `mkdir` blamed the wrong step forever
-  and the one written with `dir.ensure` converged as soon as the cause was fixed.
-  `unsafe` means **"no def covers this"**, not "dangerous": an atomic `mkdir` lock is
-  irreproachable and is marked, which is what keeps `grep -r 'unsafe shell'` — the list of
-  every place shellf's guarantees stop, imported modules included — worth reading. The
-  detector is a heuristic and says so: `$CMD`, `eval`, `xargs` and `find -exec` go through
-  it, and each of the two rules carries its written justification because both were found
-  inexact on first reading. The standard library is exempt — it is the layer that reaches
-  the system (#382).
-- **BREAKING** — `dir.copy` is a def over the new `~dir.sync` primitive (ADR-0039), and
-  its source must be marked: `dir.copy("tree", …)` becomes `dir.copy(%"tree", …)`. The
-  tree is read on the control host, and since #332 that is what `%` says — the marker was
-  absent only because the copy used to be expanded before the plan was sent. The 32 MB
-  ceiling is gone, files stream in chunks, and the transfer sends **only what differs**:
-  a converged tree transfers zero bytes and reports `already`, where the old expansion
-  inlined the whole tree into the request on every run. A third argument, `compare`,
-  chooses size+mtime (default) or `"sha256"`; the default cannot see a change that
-  preserves both, which is stated in `language.md` rather than left to be discovered.
-  With it goes the last control-side transformation — `file.template` lost its own
-  in #334 (#335).
-- **BREAKING** — a project is laid out by type (ADR-0038): `plans/` holds what a run
-  invokes, `defs/<package>/` the reusable instructions, `assets/` the content a plan
-  delivers, `inventories/` the hosts. The anchor moves from the invoked plan's directory
-  to the project root, so a def is addressed by name (`defs/toto/` → `toto.write`) and a
-  content path is relative to `assets/` — `%"toto/tutu/titi.txt"`, with no `../` from
-  wherever the plan happens to sit. A plan's siblings are no longer defs, and a control-
-  host path resolving outside `assets/` is refused. Running a plan from outside a project
-  fails naming the layout. `shellf.lock` moves to the project root, where it belongs: it
-  pins what the project depends on (#355).
-- **BREAKING** — an `apply` must end with a `return` naming what it did (ADR-0037 §1,
-  reversing ADR-0007 §4). The implicit tag-less `ok` made a forgotten `return` and a
-  deliberate "nothing to declare" report identically, so an omission read as a success.
-  No stdlib def relied on it — all 31 `apply` blocks already returned — and the error
-  names the fix.
-- **BREAKING** — `~` now marks a primitive and `%` marks a control-host path
-  (ADR-0036); `%file.read(…)` becomes `~file.read(…)`. One marker could not express a
-  primitive that writes on the target, which is what `~file.write` does. The old
-  spelling is refused, naming the new one (#332).
+- Control-host primitives: `~file.read`, `~file.render` and `~dir.list` read from the machine running shellf, and `%"path"` marks a path as living there (ADR-0034). A def can reach a template or a tree on the operator's disk without a Go transformation (#317).
+- `bytes`, an opaque value type for content read from the control host: it can be handed to an instruction and nothing else, so binary is never mangled into text (#317).
+- A def may call another instruction, so the stdlib composes instead of every def being an island (ADR-0030). Call cycles are refused with their chain (#296).
+- `${…}` is interpolated in a def body against the def's own scope, as a plan does against globals (#296).
+- A subdirectory of a package is a sub-package, one level deep, and its defs are qualified `<dir>.<def>` (ADR-0033). This is how a stdlib instruction is overridden (#306).
+- `~file.write(path, bytes)` writes on the target, and `~file.read` reads either side — the control host when marked `%"…"`, the target otherwise. A plan can now deliver a single binary file (#332).
+- `sudo.write(name, content)` and `sshd.config(name, content)` deliver a drop-in validated by `visudo -cf` / `sshd -t -f` in the `check` phase, at the mode each daemon requires (#328).
+- `~file.render` runs on the control host over each host's variables, so `file.template` becomes an ordinary def instead of a Go transformation (#334).
+- A `~file.render` ask carries the variables in scope at the call site, so a `with { }` override or a def parameter reaches the template (#334).
+- `shellf status` opens the control channel, which an `observe` calling a primitive needs (#334).
+- A def can **delegate**: one call outside every phase, and the def *is* that def with rebound arguments (ADR-0037 §2). The callee's phases then run in every mode (#339).
+- A `preview` phase can describe a primitive, not only a shell — what previewing a destructive one requires (#373).
+- `dir.sync(%"src", dst)` makes the target match the source: it delivers, and it removes what the source does not have. `--dry-run` names every file it would delete (#373).
+- The shipped examples exercise 24 of the 25 constructs a reader can meet, up from 8, and the e2e harness runs each one against a real target (#357).
 
 ### Changed
 
-- **BREAKING** — a parameter's declared type is now checked (ADR-0045). The annotation had
-  never been read: `def t(p: banana)` parsed and ran, and `service.ensure("cron", "yes",
-  "true")` reported `ok.converged` while **stopping** the service — the `apply` tests
-  `[ "$running" = true ]`, so anything that is not exactly `"true"` means stop, and the
-  `observe` compared `"yes"` against `true`/`false`, so the def never converged and stopped
-  it again on every run. The type vocabulary is now closed to `str` and `bool`, and a
-  `bool` parameter takes a boolean **value** however it is written: `true`, `"true"`, or a
-  variable holding one all pass, while `"yes"`, `"1"` and `"True"` are refused when the
-  plan is read — before a host is contacted. `service.ensure` and `docker.compose-up`
-  declare `bool` where they took a string; every existing call keeps working, since
-  `"true"` is still a boolean (#418).
+- **BREAKING** — every stdlib instruction belongs to a package: `file-write` is `file.write`, `template` is `file.template`, and so on for 25 names (ADR-0032). An old name fails naming its replacement (#305).
+- **BREAKING** — content validation is no longer a parameter of `file.write` / `file.template`: it belongs in the `check` phase of an instruction that knows the format (ADR-0030), where it also runs in `--dry-run` (#323).
+- **BREAKING** — phase and mode vocabulary (ADR-0035): `pre-check` folds into `check`, `post` is removed, and `--check` becomes `--dry-run`. Each removed name is refused naming its replacement (#326).
+- **BREAKING** — `~` marks a primitive and `%` marks a control-host path (ADR-0036); `%file.read(…)` becomes `~file.read(…)`. The old spelling is refused, naming the new one (#332).
+- **BREAKING** — an `apply` must end with a `return` naming what it did (ADR-0037 §1). The implicit `ok` made a forgotten `return` read as a deliberate success (#339).
+- **BREAKING** — a project is laid out by type: `plans/`, `defs/<package>/`, `assets/`, `inventories/` (ADR-0038). Paths anchor at the project root, and `shellf.lock` moves there (#355).
+- **BREAKING** — `dir.copy` is a def over the new `~dir.sync` primitive and its source must be marked `%"…"` (ADR-0039). The 32 MB ceiling is gone, files stream, and only what differs is sent (#335).
+- **BREAKING** — a `shell { }` whose command has an exact def equivalent no longer parses: `mkdir` names `dir.ensure`, `cp` names `file.copy` / `dir.copy` (ADR-0040). `unsafe shell { … }` keeps the shell and marks where shellf's guarantees stop (#382).
+- **BREAKING** — `~file.render` renders a declared file instead of content handed to it (ADR-0042): `~file.render(~file.read(src))` becomes `~file.render(src)`. An imported def could otherwise send `"@{db_password}"` and be answered with the secret (#392).
+- **BREAKING** — a `%"…"` inside a def no longer parses (ADR-0043): only a plan names a file on your machine, and a def receives that path as a parameter. A def could add itself to the allow-list meant to bound it (#403).
+- **BREAKING** — a parameter's declared type is checked, by value (ADR-0045). `service.ensure("cron", "yes", "true")` reported `ok.converged` while stopping the service; `"yes"` is now refused when the plan is read, while `true`, `"true"` and a variable holding one all pass (#418).
+- A tree transfer inside `as root { … }` honours the escalation (ADR-0044). It used to write from the agent's own process, so the tree landed owned by the connecting user under `ok.copied` (#390, #409).
 
 ### Fixed
 
-- **BREAKING** — `unless { … }` in a def no longer parses. It was accepted and **silently
-  ignored**: a def doing `shell { touch "$p" } unless { true }` created the file, guard or
-  no guard. The clause was stored on the AST and read by nothing — the engine's guard is
-  only ever filled from a plan step, and plans have refused the keyword since it was
-  removed from them, so it survived in exactly one place, where it did nothing. The refusal
-  gives the plan's message, naming `if !shell { <guard> } { <cmd> }`, whatever follows the
-  keyword: an unbraced `unless` used to complain about a missing brace, which sent the
-  author to fix the punctuation of a construct that does not exist. No def in this
-  repository used it (#415).
-
-- `dir.copy(%"src", dst, "sha256")` parses. The third argument has been documented in
-  `docs/language.md` and the README since `dir.copy` became a def over `~dir.sync`
-  (ADR-0039 §6), and was refused with `dir.copy expects 2 argument(s), got 3`: a stale Go
-  builtin entry shadowed the def's real signature. `dir.sync` was never in that table,
-  which is why the same call always worked there. The table is gone — a signature written
-  in two places is a signature that drifts, and the code's own comment already said
-  signatures live with the defs (#414).
-
-- The workdir on the target is now **created exclusively**, in the same command that checks
-  it. It used to be probed first and created after, by a `mkdir -p` that succeeds on a
-  directory somebody else made in between and changes neither its owner nor its mode — so
-  the probe's `absent`, which is the ordinary answer on a first run, after the agent's TTL
-  erased the directory, or after `shellf clean`, opened a window. The path is calculable
-  (the published binary's digest plus the SSH user), so winning that window is a matter of
-  looping until a deployment starts; the winner then owns a directory into which the agent
-  runs every `req-*.json` it finds, `as root` steps included. A bare `mkdir` closes it:
-  whoever creates the directory owns it, and on the sticky `/dev/shm` or `/tmp` nobody can
-  remove ours to substitute theirs. The resident agent also refuses to serve from a workdir
-  that is not its own, rather than trusting the check that launched it (#413).
-
-- A symlink **inside** a transfer's destination no longer carries the write out of it. The
-  containment check compared path text, and a link is not a lexical thing: with
-  `/opt/site/sub → /etc`, delivering `sub/x` wrote `/etc/x` and the run reported
-  `ok.copied`. Since the escalated transfer landed (ADR-0044) that write happens under
-  `sudo` inside an `as root` block, so the ceiling moved from the connecting user's reach
-  to the machine. Each destination directory is now resolved before anything is created —
-  a destination that *is* a link keeps working, since the operator named that path — and a
-  component leading out is refused, naming the path without naming what the link pointed
-  at. `dir.sync` gains the way out: a non-regular entry now appears in the destination's
-  manifest, so a link the source does not have is **extra** like any other, named in
-  `--dry-run` and removed before the delivery it was blocking. `dir.copy` still removes
-  nothing and refuses, pointing at `dir.sync` (#412).
-
-- Passing the bytes of `~file.read` where a string is expected is **refused** instead of
-  silently becoming `""`. `file.write(dst, ~file.read(src))` delivered a **0-byte file**
-  and reported `ok.done`: `file.write` is a def taking `content: str`, bytes are opaque by
-  decision (ADR-0034 §4), and the conversion between them had no case — so the content was
-  emptied at the parameter boundary, before the body ran. The same check already existed
-  one call away, for interpolating bytes into a string; it simply was not applied here, nor
-  to `~dir.sync`'s own arguments, where bytes resolved to an empty destination. The refusal
-  names the parameter and points at `file.copy`, which is the instruction for delivering a
-  file. `file.write(path, "inline text")` is unchanged. This was not hypothetical: a
-  shipped example — `examples/defs/blog/deliver.shellf` — carried the pattern and had been
-  delivering an empty file, which the e2e harness could not see because it asserted the
-  file's presence and not its content. Both are fixed (#411).
-
-### Added
-
-- The shipped examples now exercise the language rather than a corner of it: 24 of the 25
-  constructs a reader can meet appear in `examples/`, up from 8. `parallel { }`, `else`,
-  `.changed`, `with { }`, a triple-quoted raw string, a local `import`, a delegating def
-  and a def with `check`/`preview`/`using bash`/`shell(sh)`/a defaulted parameter — each
-  where it belongs, a def-authoring feature in a def and never in a plan to tick a box.
-  The e2e harness runs every example against the real target, so a construct that stops
-  working fails the build instead of misleading a reader. The 25th, `import` of a remote
-  module, is proven by the harness — which builds a bare repository, tags it, imports it
-  by URL and checks the resulting `shellf.lock` — and left out of the examples until a
-  published module exists to point at (#357).
-- `dir.sync(%"src", dst)` makes the target *match* the source: it delivers, and it
-  **removes** what the source does not have. One word apart from `dir.copy` — the
-  primitive already took the flag — which is why ADR-0039 refused to add it as a side
-  effect and why it lands with a `preview` phase: `--dry-run` names every file it would
-  delete, one per line, before deleting any. A destructive instruction whose dry-run says
-  nothing tells the operator what they lost only afterwards. The primitive is inert in
-  check mode by construction, so previewing costs a manifest exchange and touches nothing
-  (#373).
-- A `preview` phase can describe a **primitive**, not only a shell. It collected shell
-  stdout alone, so a primitive had no way to say what it would do — which is exactly what
-  previewing a destructive one requires (#373).
-- A def can **delegate**: one call outside every phase, and the def *is* that def with
-  rebound arguments (ADR-0037 §2). The callee's own phases then run in every mode, which
-  an `apply` cannot do — `apply` is skipped in `--dry-run`, so a wrapper calling from
-  there lost the callee's `check` and `observe` and previewed a write on a host it would
-  not touch. `file.template` is the form's first user: three lines, and it sheds the
-  `observe` it had to grow in #334 to re-decide what `file.write` already knew. Exactly
-  one call, only `check` beside it, and no `shell` in its arguments — each a parse error
-  naming the rule (#339).
-- `~file.render` now runs on the control host, over the target's own variable set, so a
-  template substitutes per host as before (ADR-0024). `file.template` is therefore an
-  ordinary def over `~file.read` + `~file.render` + `~file.write`, and the Go
-  transformation that rewrote it is gone — one of the two remaining special cases in the
-  engine (#334).
-- A `~file.render` ask carries the variables in scope at the call site, so a template
-  substitutes over the host's variables *and* the caller's — a `with { }` override
-  (ADR-0022) or a def parameter. The control host layers the call site on top: the most
-  local binding wins (#334).
-- `shellf status` opens the control channel too. An `observe` may call a primitive —
-  `file.template` renders there to decide whether the destination is in sync — and
-  without the channel every template reported `err.agent` (#334).
-- `sudo.write(name, content)` and `sshd.config(name, content)` deliver a validated
-  drop-in: `visudo -cf` and `sshd -t -f` run in the `check` phase, on the def's own
-  temporary, so a refused content never reaches the write — and since `check` runs in
-  `--dry-run`, a broken config is caught before any real run. Both set the mode the
-  daemon requires (0440, 0600): sudo *ignores* a drop-in with any other mode, so a rule
-  written 644 looks installed and does nothing. `sudo.write` also rejects a drop-in name
-  containing a dot, which sudo silently skips (#328).
-- `~file.write(path, bytes)` writes on the target, and `~file.read` now reads **either
-  side**: the control host when its argument is marked `%"…"`, the target otherwise.
-  Together they close a gap — until now no plan could deliver a single binary file, only
-  a whole directory through `dir.copy`. `file.copy` is now an ordinary def over the two
-  (#332).
-
-- **BREAKING** — phase and mode vocabulary (ADR-0035). `pre-check` is folded into
-  `check`, which now also runs under `status` — a def refusing its arguments refuses
-  them there too. `post` is removed: nothing declared it and its meaning was never
-  settled. The `--check` flag becomes `--dry-run`, because `check` the phase and
-  `--check` the mode named different things: the mode ran four phases, while the phase
-  also ran during a real apply. Both removed phases and the removed flag are refused
-  naming their replacement. `docs/language.md` gains the mode/phase table whose absence
-  let the confusion last (#326).
-- Content validation is no longer a parameter of `file.write` / `file.template`. It
-  belongs in the `check` phase of an instruction that knows the format — a `sudo.write`
-  writing its own temporary and running `visudo` there — which then calls `file.write`
-  in its `apply` (ADR-0030). `check` runs before any `apply` and its outcome wins, so a
-  refused content is never written; and since `check` also runs in check mode, a bad
-  config is caught before any real run. `file.write` stays within its own scope:
-  whether the bytes are valid sudoers is not its business (#323).
-
-- **BREAKING** — every stdlib instruction now belongs to a package: `file-write` is
-  `file.write`, `wait-for` is `http.wait-for`, `template` is `file.template`, and so
-  on for 25 names (ADR-0032). The dot separates the package, the dash separates words
-  inside the action; exactly one dot per name. There is no alias and no transition
-  period: a plan using an old name fails, but the error names its replacement —
-  `unknown instruction "file-write" — renamed to "file.write" (ADR-0032)`. Three
-  renames are not mechanical: `service` became `service.ensure`, `wait-for` became
-  `http.wait-for`, `template` became `file.template` (#305).
-
-### Added
-
-- Control-host primitives (ADR-0034): `~file.read`, `~file.render` and `~dir.list` read
-  from the machine running shellf, and `%"path"` marks a path as living there. One rule
-  — `%` means my machine — for a call and for a path alike. A def can therefore reach a
-  template or a tree on the operator's disk, which is what `file.template` and
-  `dir.copy` did in Go, unreadably. `%` before anything but those three primitives is a
-  parse error: a def can run shell, and shell prefixed by `%` would run where every SSH
-  key lives. The control host serves only what the plan declared and refuses the rest by
-  name, so an imported package cannot read `~/.ssh` (#317).
-- `bytes`, an opaque value type for content read from the control host. It can be handed
-  to an instruction and nothing else: interpolating it or putting it in a shell variable
-  is refused rather than silently mangling binary into text (#317).
-- A def may call another instruction (ADR-0030), so the stdlib composes instead of
-  every def being an island: a `def sudoers(...)` reuses `file.write` rather than
-  reimplementing a file write in shell. The callee sees its own arguments only,
-  inherits the caller's escalation unless it declares its own, halts the caller on
-  `err`, and is evaluated in the caller's mode so nothing effectful runs in `--check`.
-  A call cycle is refused with its chain (`a -> b -> a`). `changed` now means a shell
-  ran or a callee itself reported changed, so a def whose apply only calls an
-  already-converged instruction no longer claims to have acted (#296).
-- `${…}` is interpolated in a def body against the def's own scope, matching what a
-  plan does against globals (#296).
-- A subdirectory of a package is a sub-package: its defs are qualified `<dir>.<def>`,
-  one level deep (ADR-0033). This is how a stdlib instruction is overridden now that
-  they all carry a package — create `dir/` and declare `override def ensure(...)`
-  in it. A dot is never valid inside a def name: the directory names, the author does
-  not. A directory holding no `.shellf` file is content, not code, and is ignored; one
-  nesting a further directory is refused rather than silently skipped (#306).
-
-### Fixed
-
-- A symlink in `assets/` no longer reaches outside the project. The allow-list's
-  containment check is lexical — a path that reads as `assets/x` passes it — and a symlink
-  is not a lexical thing, so a link at `assets/leak.txt` pointing at a file elsewhere was
-  declared, allow-listed and served: measured, its contents landed on the target under an
-  `ok.copied`. The path is now resolved before it is read, which also covers a link in an
-  intermediate directory, and what lands outside `assets/` is refused by name — the
-  *resource's* name, never the link's target, since teaching the target a path on the
-  operator's machine is what refusing is for. A link **inside** `assets/` keeps working.
-  `dir.copy` was never affected: the tree walk has always skipped non-regular files, which
-  is the asymmetry that made this worth finding. The transfer also now asserts that every
-  manifest path stays under the destination, on the write and on the removal side — not
-  reachable today, since the control host composes those paths, and asserted so it stays
-  that way (#393).
-- A delivered file is now **replaced**, not written through. `~file.write` — and so
-  `file.copy`, `file.template` and every def built on it — ran `cp "$tmp" "$dst"`, which
-  writes into the destination's own inode: measured across a rewrite, 544 → 544. A reader
-  that opens the file mid-copy, a daemon reloading its config, sees it truncated. The
-  `file.write` def has always staged beside the destination and renamed, calling it *"same
-  filesystem, hence atomic"*; the primitive underneath it did not. The staging goes through
-  the executor rather than `os.CreateTemp`, because the agent's own user may not be able to
-  write in a root-owned directory while the escalated executor can — `as root` deliveries
-  keep working, and an existing destination lends its mode and owner to the staging file,
-  so a rewrite no longer needs to be re-`chmod`ed (#389).
-- Three `observe` phases asked a weaker question than their `apply` answers, so each
-  reported converged over a host that was not — the shape #378 and #387 already cost.
-  `git.sync` resolved its ref **inside the checkout**, comparing it to itself: right after
-  a checkout the local branch equals HEAD, so `ref = "main"` was converged forever and the
-  fetch in `apply` never ran again. It now asks the remote (`ls-remote`, which reads
-  without writing to `.git` as a fetch would) and asks for the peel too — `ls-remote <url>
-  v1.0` answers with the tag *object*, which is never what a checkout's HEAD holds.
-  `file.line` used `grep -qF` without `-x`, so adding `foo` to a file holding `foobar`
-  reported `present` and never appended — `file.replace`, four lines above it, has always
-  had the `-x`. `ufw.open` matched its rule anywhere in `ufw status`, so
-  `ufw.open("80", "tcp")` reported `allowed` on a host where only `8080/tcp` was open; it
-  now matches the port column exactly. Fixing `git.sync`'s observe exposed a fourth defect
-  in its `apply` — `checkout --force main` re-checks-out the **local** branch, which a
-  fetch does not fast-forward, so the def never delivered the update it exists for. It now
-  checks out the remote-tracking ref, detached, which is what a deploy checkout wants
-  anyway (#388).
-- The agent binary and its workdir are verified before use. A cache hit was `test -x`
-  at `/tmp/shellf-agent-<digest of the binary>-<user>` — both halves public, so any local
-  user could create that file first and have shellf execute it, often to run work under
-  `as root`. The probe now checks that the file is **ours**, that nobody else can write
-  it, and that its bytes are the ones we would have sent; a foreign file is refused by
-  name rather than overwritten, because replacing a file we do not own is a race we cannot
-  win. The workdir is checked the same way before a request is deposited: the resident
-  agent runs **any** `req-*.json` it finds without asking who wrote it, and `umask 077`
-  only sets the mode of a directory it *creates* — `/tmp` and `/dev/shm` are both
-  world-writable, so the path can be pre-created. A probe that cannot answer refuses
-  rather than proceeds. The pushed binary is now `chmod 700` and not `chmod +x`: under a
-  target umask of 0002 the latter yields 775, so any member of the SSH user's group could
-  rewrite the binary about to run — found by running the guard against a container, where
-  it refused shellf's own binary while every unit test passed (#391). The site's hero ran
-  `shellf run --check … hosts.shellf site.shellf`, which fails twice over: `--check` was
-  renamed `--dry-run` (ADR-0035), and a plan must sit in `plans/` beside `inventories/`
-  (ADR-0038). It also used `service(…)`, `service-reload(…)` and `template(…)`, all
-  renamed in ADR-0032, and advertised v0.3.1. `README.md` claimed the agent "vanishes,
-  nothing stays installed" while its own *How it works* section said it stays resident,
-  put the version at 0.1.0, said imports were "not there yet" three releases after they
-  shipped, and called `file.copy` a Go builtin — it has been a def since #332.
-  `docs/language.md`, which calls itself *current by definition*, documented
-  `apt-install(…)` and a `-> … when err` form that the parser has never accepted (`->` is
-  lexed and never parsed; `when` does not exist), and promised `set -o pipefail` in
-  **every** shell block when it is a bashism deliberately kept out of POSIX blocks — a
-  documented safety net that is not there under the default `sh` (#394).
-- `dir.sync` no longer reports `ok.already` after deleting files. The transfer counted the
-  files it **wrote**, and the agent discarded the removal list on the way back
-  (`Sync` returned `n, _, err`), so a run over a converged tree holding one intruder
-  removed it and announced that nothing had changed — a destructive action reported as a
-  no-op, which is worse than an error since an error at least stops the plan. `~dir.sync`
-  now returns the work it did, written **plus** removed. The check-mode half of this same
-  defect was fixed in #384 and this one was left behind, so the dry-run told the truth
-  while the real run did not — the inversion of what an operator expects. `dir.copy` is
-  unaffected: it passes `delete = "false"` and removes nothing. Found by an external audit;
-  the e2e coverage plan cannot produce the case, because it creates its extra file and
-  delivers a tree in the same call, so the harness grew the one that can (#387). On a converged host
-  `file.copy`, `dir.copy` and `dir.sync` reported `would.copied` / `would.synced` — and
-  `dir.sync` contradicted its own verdict in the preview line below it (*0 file(s) would
-  be transferred*). An operator who learns that `would` means "maybe" stops reading it,
-  which is the whole claim of a tool whose thesis is that a run is readable before it
-  happens. The information was never missing: `engine.Run` runs an instruction's guard
-  *before* deciding, so a converged `~file.write` already answers `already` and
-  `~dir.sync` counts without writing a byte — it was produced inside `apply`, which check
-  mode never ran. ADR-0041 runs it there when it cannot act: no `observe`, and an `apply`
-  holding only primitives, control flow and `return`. The alternative — give those defs an
-  `observe` — is the #378 bug, deliberately reintroduced. A `shell { }` in the apply
-  disqualifies it silently and keeps the conservative verdict (#380). Its `observe` asked whether the destination
-  *existed*, which is true forever after the first run, so an edited source was never
-  re-delivered — and the run reported `ok.already` over a stale file. Worse than a
-  failure, which at least stops the plan. The `observe` is gone rather than repaired:
-  `~file.write` is already idempotent by content sha256, so the def was asking a second,
-  weaker version of a question the primitive answers exactly — the same duplication
-  `file.template` removed in #334, and the same drift. The verdict now comes from the
-  work itself, as in `dir.copy`, which is why `~file.write` returns the number of files
-  it wrote (`"1"` or `"0"`) the way `~dir.sync` already did for a tree. Binary safety is
-  untouched: the bytes still travel through the primitive, never through a shell
-  variable. The e2e harness grew the case that catches this class — a source edited
-  *between* two runs, which no fixed asset can exercise (#378).
-- An error caught with `?` no longer fails the run. The plan handles it and carries on —
-  that is what `?` is for (ADR-0009) — yet shellf exited 1, so `shellf run … && …` never
-  succeeded for any plan using the language's own error handling, and a CI job saw a
-  failure where there was none. The report now carries the caught flag the agent already
-  had, and only an *uncaught* error fails the run (#356).
-- `dir.owner` converges. Its `observe` read `stat -c '%U:%G'` — `covuser:deploy` — and
-  compared it to the argument, which names a user: the two can only be equal when the
-  caller writes `"user:group"`, so every run reported `changed` and every
-  `if x.changed { … }` gated on it fired for nothing. The comparison now happens in the
-  shell and accepts both forms `chown` accepts. Invisible to unit tests — a fake executor
-  answers whatever the test asks — and found by running the def twice against a real
-  container (#367).
-- A call cycle is refused when the defs are loaded, not when they run (ADR-0030 §6, which
-  asked for exactly this). The evaluator's guard fired on the target, after earlier steps
-  of the plan had already acted — a partially applied host, for an error that is a writing
-  mistake readable from the files. The guard stays as a backstop, and both report the same
-  chain (`a -> b -> a`) so the two cannot drift. The walk follows delegations too, an edge
-  a phase-only traversal would miss (#311).
-- A run survives its control-channel bridge being dropped. ADR-0031 §2 promised the
-  control host "reconnects, relaunches the bridge, and the dialogue resumes" — it dialled
-  once, so a flaky link, an idle timeout or a killed `sshd` child was fatal to every
-  remaining `~file.read` in the job. It now relaunches, bounded, and tells its own
-  shutdown apart from a drop so no session is left behind. This is the property the
-  socket in the agent's workdir was chosen for, and it had never held (#347).
-- `sudo.write` and `sshd.config` tell the truth in `--dry-run`. Both compose in `apply`
-  and declared no `observe`, and `apply` never runs in check mode — so on a host whose
-  drop-in was already correct they announced `would.written` for a write that would not
-  happen. Each now observes the two things its apply sets: the content, and the mode the
-  daemon insists on. The mode half matters on its own — sudo silently ignores a drop-in
-  that is not 0440, so perfect content at 644 looked converged (#340).
-- `shellf status` no longer acts on the target. It is documented as reporting state
-  without acting (ADR-0013), and its usage line says so, but the engine handled check
-  mode and then fell through to apply: every remaining Go instruction ran for real, so
-  `status` wrote files and executed shells on a host the operator only meant to look at.
-  It now reports `would.<tag>` for a resource that has drifted, and the guard still runs
-  so a converged one is still recognised (#338).
-- An ask survives a bridge left over from a previous session. A resident agent outlives
-  the command that created it (ADR-0005), so `shellf status` and the `shellf run` that
-  follows attach different bridges; the agent held the dead one, which looks alive until
-  it is used and then answers EOF. Seen as an intermittent `err.agent` — about one run in
-  two against a real target, and invisible to every unit test (#334).
-- `file.template` is idempotent again. As a def it had no `observe`, so it rewrote the
-  destination on every run and reported `written`; it now renders in `observe`, compares
-  the result with the destination, and the binding it makes there is reused by `apply` —
-  one round trip to the control host per run, not two (#334).
-- `ResolveRefs` no longer drops a step's control-host marking on the way to the agent.
-  It rebuilt each step field by field and omitted the one saying which arguments the plan
-  wrote `%"…"`, so `file.template(%"conf.j2", …)` read `conf.j2` on the *target* — with
-  no error to show for it when a file of that name happened to exist there. Local runs
-  were unaffected, which is why the unit suite stayed green (#334).
-- A def whose decision phase runs a shell no longer reports `changed` on a converged
-  run. `check` and `observe` are reads; counting their shells as "acted" fired every
-  `if x.changed { … }` on every re-run — the exact false positive idempotence exists to
-  prevent (#328).
-
-- A `template` used as an `if` condition is now rendered on the control host like
-  any other, instead of reaching the agent verbatim and failing `err.agent` with
-  the plan halted. `dir-copy` in the same position is refused control-side with an
-  explicit reason — it expands to one step per file, which a condition cannot hold
-  (#293).
-- `file-write` (and `template`, which becomes one) now stages next to the destination
-  and renames over it, instead of redirecting at the destination and truncating it.
-  A reader can no longer catch the file empty or partial mid-write — a window that
-  existed on every write, not only on an interrupted run. The destination's mode and
-  owner are carried onto the staging file, so a rewrite keeps them as before (#298).
+- `file-write` stages beside the destination and renames over it, so a reader can no longer catch the file partial mid-write (#298).
+- A `template` used as an `if` condition is rendered on the control host instead of reaching the agent verbatim and failing `err.agent` (#293).
+- A def whose `check` or `observe` runs a shell no longer reports `changed` on a converged run — the false positive idempotence exists to prevent (#328).
+- `ResolveRefs` no longer drops a step's control-host marking on the way to the agent, which made `file.template(%"conf.j2", …)` read the path on the target (#334).
+- `file.template` is idempotent again: it renders in `observe` and compares with the destination instead of rewriting it every run (#334).
+- An ask survives a bridge left over from a previous session, seen as an intermittent `err.agent` about one run in two against a real target (#334).
+- `shellf status` no longer acts on the target. The engine handled check mode and then fell through to apply, so `status` wrote files on a host the operator only meant to look at (#338).
+- `sudo.write` and `sshd.config` tell the truth in `--dry-run`: each now observes the content **and** the mode its daemon insists on (#340).
+- A run survives its control-channel bridge being dropped. ADR-0031 §2 promised a reconnection; the control host dialled once (#347).
+- A call cycle is refused when the defs are loaded, not mid-run on a partially applied host (ADR-0030 §6). The evaluator's guard stays as a backstop (#311).
+- `dir.owner` converges. Its `observe` compared `user:group` to an argument naming a user, so every run reported `changed` — invisible to unit tests, found by running it twice against a container (#367).
+- An error caught with `?` no longer fails the run, so `shellf run … && …` works for a plan using the language's own error handling (#356).
+- `file.copy` no longer reports `ok.already` over a stale file. Its `observe` asked whether the destination existed, which is true forever after the first run (#378).
+- On a converged host, `file.copy`, `dir.copy` and `dir.sync` no longer preview `would` for a write that would not happen. An `apply` that cannot act is now evaluated in check mode (ADR-0041), and a `shell { }` in it keeps the conservative verdict (#380).
+- `dir.sync` no longer reports `ok.already` after deleting files: the transfer counted what it wrote and discarded the removal list, so a destructive action was announced as a no-op. The check-mode half was fixed in #384, so the dry-run told the truth while the real run did not (#387).
+- Three `observe` phases asked a weaker question than their `apply` answers, so each reported converged over a host that was not: `git.sync` compared its ref to itself, `file.line` matched a substring, `ufw.open` matched a port anywhere in `ufw status` (#388).
+- A delivered file is replaced, not written through: `~file.write` ran `cp` into the destination's own inode, so a daemon reloading its config could read it truncated (#389).
+- The agent binary and its workdir are verified before use. A cache hit was `test -x` at a public path, so any local user could plant the file shellf executes — often under `as root` (#391).
+- A symlink in `assets/` no longer reaches outside the project: the allow-list's containment check was lexical, so a link at `assets/leak.txt` was declared, served and landed on the target under `ok.copied` (#393).
+- The docs stopped describing a shellf that does not exist: the site's hero ran a renamed flag on a plan outside its project, and `README.md` and `docs/language.md` documented renamed instructions and a `when err` form the parser never accepted (#394).
+- Passing the bytes of `~file.read` where a string is expected is refused instead of silently becoming `""`. `file.write(dst, ~file.read(src))` delivered a 0-byte file under `ok.done`, and a shipped example had been doing it since #375 (#411).
+- A symlink inside a transfer's destination no longer carries the write out of it, which since ADR-0044 happened under `sudo`. `dir.sync` can now remove such a link, named in `--dry-run`; `dir.copy` refuses and points at it (#412).
+- The workdir on the target is created exclusively, in the command that checks it. A `mkdir -p` after a probe accepted a directory another user had created in the window, into which the agent runs every request it finds (#413).
+- `dir.copy(%"src", dst, "sha256")` parses. A stale builtin entry shadowed the def's real signature, so an argument documented in `language.md` and the README was refused (#414).
+- **BREAKING** — `unless { … }` in a def no longer parses. It was stored and read by nothing, so `shell { … } unless { true }` ran the command with the guard holding (#415).
 
 ## [0.4.0] - 2026-08-08
 

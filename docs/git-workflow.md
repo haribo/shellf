@@ -66,10 +66,27 @@ is the **single source of truth**. A GitHub Release body is that version's secti
 - **Write for humans, not machines**: user-facing lines, not commit subjects, and
   never a raw `--generate-notes` dump. Exclude noise (dotfiles, dev deps, style,
   doc formatting, merges).
-- Every PR with a user-observable change adds a line under `## [Unreleased]` — a
-  **soft convention** (reminder in the `/release` skill), not yet CI-enforced.
 - A release moves `[Unreleased]` into `## [X.Y.Z] - <date>` and uses that section
   as the release notes; keep an empty `[Unreleased]` on top.
+
+### The entry rule (checked)
+
+Every PR with a user-observable change adds **one entry** under `## [Unreleased]`:
+
+- **One or two sentences**: what changed for the reader, and the issue number. Not the
+  mechanism, not the rejected alternatives, not the failure mode — the issue holds those,
+  and the PR holds the reasoning. Keep a Changelog puts it as *the headline and the hook,
+  not the full story*.
+- **`#N` is required.** It is the thread a reader pulls when the entry is not enough.
+- **`**BREAKING** —`** opens an entry that changes how an existing plan is written.
+- **One heading per category**, in the order above.
+
+`test/changelog-rule.sh` enforces it on `[Unreleased]` and runs in CI. The ceiling is 60
+words — two full sentences with a reference land near 40. This was prose for the project's
+whole life and eroded anyway: 48 entries, median 91 words, longest 471, against 18–56 for
+every released section (#424). It matters because `release.yaml` publishes the section of
+the **tagged commit** as the GitHub release notes: whatever is in `[Unreleased]` at tag
+time becomes public, and there is no editing pass afterwards.
 
 ## Merge strategy
 
