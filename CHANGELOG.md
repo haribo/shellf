@@ -8,6 +8,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- shellf is MIT-licensed (ADR-0046). The repository carried no license at all, so the default was all rights reserved — nobody could legally fork, package or redistribute it (#427).
+
 - Control-host primitives: `~file.read`, `~file.render` and `~dir.list` read from the machine running shellf, and `%"path"` marks a path as living there (ADR-0034). A def can reach a template or a tree on the operator's disk without a Go transformation (#317).
 - `bytes`, an opaque value type for content read from the control host: it can be handed to an instruction and nothing else, so binary is never mangled into text (#317).
 - A def may call another instruction, so the stdlib composes instead of every def being an island (ADR-0030). Call cycles are refused with their chain (#296).
