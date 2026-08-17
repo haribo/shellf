@@ -364,9 +364,26 @@ func truthyStr(s string) bool {
 	return s != "" && s != "false" && s != "0"
 }
 
-// stringify renders a scalar value for the diff / the shell environment. Bytes are not
-// scalars and never reach here: callers reject them first, so binary content cannot be
-// silently mangled into a string.
+// refuseBytes stops control-host bytes from crossing into a place that expects a string.
+//
+// Bytes are opaque by decision (ADR-0034 §4): they travel from a primitive to another
+// primitive and nowhere else. Interpolation has refused them by name since then; the
+// argument boundary did not, and `stringify` has no case for them — so
+// `file.write(dst, ~file.read(src))` delivered an **empty file** under `ok.done` (#411).
+//
+// The message names `file.copy`, because an author who wrote that meant to deliver a file
+// and there is already an instruction for it.
+func (ev *evaluator) refuseBytes(v value, what, callee string) {
+	if _, isBytes := v.(Bytes); !isBytes {
+		return
+	}
+	ev.fail("%s: %s holds control-host bytes, which cannot be passed where a string is expected (ADR-0034); "+
+		"to deliver a file use file.copy(src, dst)", callee, what)
+}
+
+// stringify renders a scalar value for the diff / the shell environment. A Bytes has no
+// case here and would render as "": every caller must refuse it first — refuseBytes is
+// that check, and it is what keeps binary content from being silently emptied.
 func stringify(v value) string {
 	switch t := v.(type) {
 	case string:
@@ -534,6 +551,7 @@ func (ev *evaluator) evalCall(c Call) value {
 	for i, a := range c.Args {
 		name := def.Params[i].Name
 		v := ev.evalExpr(a)
+		ev.refuseBytes(v, name, c.Name)
 		args[name] = stringify(v)
 		// A control-host path stays one across the call, or the callee reads the target
 		// while the plan asked for the operator's machine (#332).
@@ -714,9 +732,13 @@ func (ev *evaluator) evalSync(c Call, arg value) value {
 	if !ok {
 		ev.fail("~dir.sync reads its source on the control host: mark it %%\"…\"")
 	}
-	dst := stringify(ev.evalExpr(c.Args[1]))
-	del := stringify(ev.evalExpr(c.Args[2]))
-	compare := stringify(ev.evalExpr(c.Args[3]))
+	// The same boundary as a def's arguments: bytes here would resolve to an empty
+	// destination, which is a transfer aimed at nothing rather than a truncated one (#411).
+	dstV, delV, compareV := ev.evalExpr(c.Args[1]), ev.evalExpr(c.Args[2]), ev.evalExpr(c.Args[3])
+	ev.refuseBytes(dstV, "the destination", "~dir.sync")
+	ev.refuseBytes(delV, "delete", "~dir.sync")
+	ev.refuseBytes(compareV, "compare", "~dir.sync")
+	dst, del, compare := stringify(dstV), stringify(delV), stringify(compareV)
 	switch compare {
 	case "", "meta", "sha256":
 	default:

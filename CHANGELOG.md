@@ -90,6 +90,21 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   primitive that writes on the target, which is what `~file.write` does. The old
   spelling is refused, naming the new one (#332).
 
+### Fixed
+
+- Passing the bytes of `~file.read` where a string is expected is **refused** instead of
+  silently becoming `""`. `file.write(dst, ~file.read(src))` delivered a **0-byte file**
+  and reported `ok.done`: `file.write` is a def taking `content: str`, bytes are opaque by
+  decision (ADR-0034 §4), and the conversion between them had no case — so the content was
+  emptied at the parameter boundary, before the body ran. The same check already existed
+  one call away, for interpolating bytes into a string; it simply was not applied here, nor
+  to `~dir.sync`'s own arguments, where bytes resolved to an empty destination. The refusal
+  names the parameter and points at `file.copy`, which is the instruction for delivering a
+  file. `file.write(path, "inline text")` is unchanged. This was not hypothetical: a
+  shipped example — `examples/defs/blog/deliver.shellf` — carried the pattern and had been
+  delivering an empty file, which the e2e harness could not see because it asserted the
+  file's presence and not its content. Both are fixed (#411).
+
 ### Added
 
 - The shipped examples now exercise the language rather than a corner of it: 24 of the 25

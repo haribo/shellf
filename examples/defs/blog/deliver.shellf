@@ -1,9 +1,15 @@
-# A **delegation** (ADR-0037 §2): this def *is* `file.write`, with its content built from
-# the control host. One call, outside every phase — so `file.write`'s own `observe` runs,
-# and `--dry-run` reports `already` on a converged host instead of announcing a write.
+# A **delegation** (ADR-0037 §2): this def *is* `file.copy`, with the same arguments. One
+# call, outside every phase — so the callee's own phases run, and `--dry-run` reports
+# `already` on a converged host instead of announcing a write.
 #
-# It also shows a **primitive**: `~file.read` is an engine call, marked `~` because it has
-# no phases and cannot be overridden. `%"…"` says the path is on the operator's machine.
+# It used to delegate to `file.write` with `~file.read(src)` as its content, and that
+# **silently delivered an empty file**: `file.write` takes a `str`, `~file.read` returns
+# opaque bytes (ADR-0034 §4), and the conversion between them had no case — so the content
+# became "" and the run still said `ok`. Refused since #411.
+#
+# The rule to take away: bytes go from a primitive to a primitive. `file.copy` is the
+# instruction that delivers a file, and `%"…"` at the call site says the source is on the
+# operator's machine.
 def deliver(src: str, dst: str) {
-    file.write(dst, ~file.read(src))
+    file.copy(src, dst)
 }
