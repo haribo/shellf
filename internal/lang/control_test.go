@@ -699,7 +699,10 @@ func TestControl_SyncIsInertInCheckMode(t *testing.T) {
 
 	var synced, previewed bool
 	sync := func(engine.Executor, string, string, string, bool) (int, int, error) { synced = true; return 1, 0, nil }
-	preview := func(engine.Executor, string, string, string) (int, []string, error) { previewed = true; return 1, []string{"gone"}, nil }
+	preview := func(engine.Executor, string, string, string) (int, []string, error) {
+		previewed = true
+		return 1, []string{"gone"}, nil
+	}
 
 	args := map[string]string{"s": "tree", "dst": "/opt/x"}
 	// A non-nil fetcher: the agent supplies all three together, and the generic
