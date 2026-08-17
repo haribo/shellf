@@ -28,8 +28,12 @@ fail() { printf '\033[1;31mFAIL: %s\033[0m\n' "$*" >&2; exit 1; }
 [ -f "$file" ] || fail "no CHANGELOG.md at $file"
 
 # The Unreleased section: from its heading to the next version heading.
+grep -q '^## \[Unreleased\]' "$file" || fail "no [Unreleased] section — the release flow expects one"
 section="$(awk '/^## \[Unreleased\]/{f=1;next} /^## \[/{f=0} f' "$file")"
-[ -n "$section" ] || fail "no [Unreleased] section — the release flow expects one"
+# An empty section is the correct state right after a release rolled `[Unreleased]` into
+# `[X.Y.Z]`: there is nothing to check until the next PR adds an entry. Checking for the
+# heading and for entries separately is the difference between "no section" and "no entries
+# yet" — conflating them failed the release flow the rule exists to protect (#424).
 
 # One entry per `- ` at column 0; its continuation lines are indented.
 mapfile -t problems < <(printf '%s\n' "$section" | awk -v max="$max_words" '
