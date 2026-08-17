@@ -426,6 +426,14 @@ docker exec "$cname" test -f /opt/dogfood/index.html || fail "the webserver exam
 docker exec "$appname" grep -q 'blog.example.test' /opt/blog/.env || fail "the blog .env was not rendered per host"
 docker exec "$appname" sh -c 'docker compose -f /opt/blog/docker-compose.yml ps --status running | grep -q blog' \
   || fail "the blog stack is not running"
+# Content, not just presence (#411). `blog.deliver` used to hand `~file.read`'s bytes to
+# `file.write`, whose parameter is a `str`: the content became "" and the run still said
+# `ok`. An empty file passed every check this harness had — a delivered file is asserted by
+# what is in it.
+docker exec "$appname" test -s /opt/blog/compose.reference.yml \
+  || fail "the delivered reference file is empty (#411)"
+docker exec "$appname" sh -c 'cmp -s /opt/blog/docker-compose.yml /opt/blog/compose.reference.yml' \
+  || fail "the delivered reference file does not match its source"
 
 say "9. a remote module is fetched, pinned and used (#357)"
 # `import <alias> "<url>@<version>"` (ADR-0016) was covered by a unit test and had never

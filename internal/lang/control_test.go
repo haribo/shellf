@@ -729,3 +729,56 @@ func TestControl_SyncIsInertInCheckMode(t *testing.T) {
 		t.Fatal("apply must perform the transfer")
 	}
 }
+
+// #411: bytes handed to an instruction that declares `str` used to be flattened to "" by
+// stringify, so `file.write(dst, ~file.read(src))` wrote an **empty file** and reported
+// `ok.done`. Measured, not deduced: the destination was 0 bytes with a "hello-bytes"
+// source.
+//
+// The refusal already existed one call away — interpolating bytes into a string is
+// refused by name (ADR-0034 §4) — and simply was not applied at the argument boundary.
+func TestControl_BytesRefusedAsAStringArgument(t *testing.T) {
+	src := `
+def sink(content: str) { apply { shell { printf '%s' "$content" } return ok.done } }
+def caller(p: str) { apply { sink(~file.read(p)) return ok.done } }
+`
+	fetch := func(string, []byte, map[string]string) ([]byte, error) { return []byte("hello-bytes"), nil }
+	_, err := evalWithFetchControl(t, src, "caller", map[string]string{"p": "f.txt"}, []string{"p"}, fetch)
+	if err == nil {
+		t.Fatal("bytes passed where a string is expected must fail, not become an empty string")
+	}
+	// The message has to say what to write instead: an author reaching for this wanted to
+	// deliver a file, which is `file.copy`.
+	if !strings.Contains(err.Error(), "file.copy") {
+		t.Fatalf("the refusal must name what to use instead: %v", err)
+	}
+	if !strings.Contains(err.Error(), "content") {
+		t.Fatalf("the refusal must name the parameter it refused: %v", err)
+	}
+}
+
+// The same flattening reaches `~dir.sync`'s own arguments, where an empty destination is
+// nonsense rather than a silent truncation — refused for the same reason (#411).
+func TestControl_SyncRefusesBytesArguments(t *testing.T) {
+	defs, err := ParseDefs(`def d(s: str, p: str) { apply { x = ~dir.sync(s, ~file.read(p), "false", "meta") return ok.x } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fetch := func(string, []byte, map[string]string) ([]byte, error) { return []byte("/tmp/x"), nil }
+	// A working channel, so the refusal cannot be "no control host channel" — the failure
+	// this asserts must come from the argument itself.
+	sync := func(engine.Executor, string, string, string, bool) (int, int, error) {
+		t.Fatal("a transfer must not start with bytes for a destination")
+		return 0, 0, nil
+	}
+	preview := func(engine.Executor, string, string, string) (int, []string, error) { return 0, nil, nil }
+
+	_, err = EvalDefFull(defs[0], map[string]string{"s": "tree", "p": "f.txt"}, nil,
+		[]string{"s", "p"}, noopExec{}, engine.Apply, nil, []string{"d"}, fetch, sync, preview)
+	if err == nil {
+		t.Fatal("bytes as a destination must fail rather than resolve to an empty path")
+	}
+	if !strings.Contains(err.Error(), "bytes") {
+		t.Fatalf("the refusal must name what was wrong: %v", err)
+	}
+}
