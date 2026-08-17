@@ -732,3 +732,30 @@ func TestReportText_ACaughtErrorIsNotARunFailure(t *testing.T) {
 		t.Fatal("an uncaught error must still fail the run")
 	}
 }
+
+// #414: `dir.copy`'s third argument is documented (`docs/language.md`, README) and was
+// refused — `dir.copy expects 2 argument(s), got 3`. A stale Go-builtin entry in
+// stdSignatures shadowed the def, which grew `compare` when `dir.copy` became a def over
+// `~dir.sync` (#335, ADR-0039 §6). `dir.sync` was never in that table, which is why the
+// same call works there.
+//
+// The rule the table's own comment states: "adding a def needs no parser-side edit".
+func TestStdSignatures_ComeFromTheDefs(t *testing.T) {
+	sig := stdSignatures()
+
+	params, required, ok := sig("dir.copy")
+	if !ok {
+		t.Fatal("dir.copy must resolve")
+	}
+	if len(params) != 3 || params[2] != "compare" {
+		t.Fatalf("dir.copy's signature must come from its def: %v", params)
+	}
+	if required != 2 {
+		t.Fatalf("compare has a default, so two arguments are required, got %d", required)
+	}
+
+	// The neighbour that was in the same table, for the same stale reason.
+	if params, required, ok := sig("file.copy"); !ok || len(params) != 2 || required != 2 {
+		t.Fatalf("file.copy: %v %d %v", params, required, ok)
+	}
+}
