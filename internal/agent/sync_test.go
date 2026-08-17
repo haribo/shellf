@@ -402,3 +402,62 @@ func TestSync_DeleteMakesTheTargetMatch(t *testing.T) {
 		t.Fatal("delete = true must still deliver the source")
 	}
 }
+
+// #412 end to end, over the real channel: a link inside the destination standing where a
+// directory must go. `dir.copy` (delete = false) must refuse rather than write through it;
+// `dir.sync` (delete = true) must clear it and deliver.
+//
+// The manifest is what makes the second half possible: a non-regular entry used to be left
+// out of it entirely, so the source never saw it, never called it extra, and no amount of
+// `delete` could remove it.
+func TestSync_LinkInTheWay(t *testing.T) {
+	root := sourceTree(t) // tree/hello.txt + tree/sub/deep.bin
+	escape := t.TempDir()
+
+	t.Run("copy refuses", func(t *testing.T) {
+		dst := filepath.Join(t.TempDir(), "delivered")
+		if err := os.MkdirAll(dst, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(escape, filepath.Join(dst, "sub")); err != nil {
+			t.Fatal(err)
+		}
+		ch := syncPair(t, root)
+
+		_, _, err := ch.Sync(noEscalation{}, "dir.sync:tree", dst, "meta", false)
+		if err == nil {
+			t.Fatal("a copy must refuse a link that leads out of the destination")
+		}
+		if _, serr := os.Stat(filepath.Join(escape, "deep.bin")); !os.IsNotExist(serr) {
+			t.Fatal("the copy wrote through the link")
+		}
+	})
+
+	t.Run("sync with delete clears it", func(t *testing.T) {
+		dst := filepath.Join(t.TempDir(), "delivered")
+		if err := os.MkdirAll(dst, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(escape, filepath.Join(dst, "sub")); err != nil {
+			t.Fatal(err)
+		}
+		ch := syncPair(t, root)
+
+		n, removed, err := ch.Sync(noEscalation{}, "dir.sync:tree", dst, "meta", true)
+		if err != nil {
+			t.Fatalf("a sync that may delete must clear the link and deliver: %v", err)
+		}
+		if removed != 1 {
+			t.Fatalf("the link must be counted as removed, got %d", removed)
+		}
+		if n != 2 {
+			t.Fatalf("both files must land, got %d", n)
+		}
+		if b, err := os.ReadFile(filepath.Join(dst, "sub", "deep.bin")); err != nil || len(b) != 4 {
+			t.Fatalf("the file must land inside the destination: %q (%v)", b, err)
+		}
+		if _, err := os.Stat(filepath.Join(escape, "deep.bin")); !os.IsNotExist(err) {
+			t.Fatal("nothing must have been written through the link")
+		}
+	})
+}

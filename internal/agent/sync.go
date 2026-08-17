@@ -160,10 +160,21 @@ func scanTarget(dst, compare string) ([]proto.Entry, error) {
 			}
 			return err
 		}
-		if d.IsDir() || !d.Type().IsRegular() {
-			return nil // a symlink is not carried, so it is not compared either
+		if d.IsDir() {
+			return nil // directories are not carried; the agent creates what it needs
 		}
-		rel, err := filepath.Rel(dst, p)
+		rel, rerr := filepath.Rel(dst, p)
+		if rerr != nil {
+			return rerr
+		}
+		if !d.Type().IsRegular() {
+			// Not carried, so never compared as content — but named, so the source can
+			// see it has no such thing and call it extra. Left out of the manifest, a link
+			// in the way could not be removed and the delivery wrote through it (#412).
+			out = append(out, proto.Entry{Path: filepath.ToSlash(rel), Kind: "irregular"})
+			return nil
+		}
+		rel, err = filepath.Rel(dst, p)
 		if err != nil {
 			return err
 		}
@@ -382,6 +393,13 @@ func removeExtras(dst string, extras []string) error {
 		victim := filepath.Join(dst, filepath.FromSlash(rel))
 		if !underDst(dst, victim) {
 			return fmt.Errorf("dir.sync: refusing to remove outside the destination: %s", rel)
+		}
+		// The victim itself may be a link, and removing a link removes the link — that is
+		// what clears one standing in a delivery's way. What must not happen is *reaching*
+		// it through another: a link in an intermediate directory would delete a file on
+		// the far side of it (#412).
+		if err := staysInside(dst, filepath.Dir(victim), rel); err != nil {
+			return fmt.Errorf("dir.sync: %v", err)
 		}
 		if err := os.Remove(victim); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("dir.sync: removing %s: %v", rel, err)

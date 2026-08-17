@@ -130,3 +130,93 @@ func TestSyncCommit_WithoutDeleteLeavesExtrasAlone(t *testing.T) {
 		t.Fatalf("a copy must remove nothing: %v", err)
 	}
 }
+
+// #412: `underDst` compares cleaned path text, and a symlink is not a lexical thing. A
+// link *inside* the destination therefore sent a placement outside it — measured:
+// `dir.copy(%"tree2", "/tmp/probe-dst")` with `probe-dst/sub -> /tmp/probe-escape` wrote
+// `/tmp/probe-escape/x.txt` and reported `ok.copied`.
+//
+// Since ADR-0044 this runs under `sudo` when the block is `as root`, so the ceiling moved
+// from the connecting user's reach to the machine.
+func TestSyncCommit_RefusesToWriteThroughALinkOutOfTheDestination(t *testing.T) {
+	staging, dst := t.TempDir(), t.TempDir()
+	escape := t.TempDir()
+	if err := os.Symlink(escape, filepath.Join(dst, "sub")); err != nil {
+		t.Fatal(err)
+	}
+	writeStagedFile(t, staging, "sub/x.txt", "PAYLOAD")
+
+	var out strings.Builder
+	err := SyncCommit(staging, dst, false, &out)
+	if err == nil {
+		t.Fatal("writing through a link out of the destination must be refused")
+	}
+	if !strings.Contains(err.Error(), "sub") {
+		t.Fatalf("the refusal must name the component that leaves: %v", err)
+	}
+	// Naming the link's target would hand the caller a path from the other side of the
+	// deployment — the rule #393 set for the control host.
+	if strings.Contains(err.Error(), escape) {
+		t.Fatalf("the refusal must not name what the link pointed at: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(escape, "x.txt")); !os.IsNotExist(err) {
+		t.Fatal("a refused placement still wrote outside the destination")
+	}
+}
+
+// The legitimate case, which must keep working: the destination *is* a link. `/var/www`
+// pointing at `/srv/www` is ordinary, and the operator asked for `/var/www`.
+func TestSyncCommit_AllowsADestinationThatIsItselfALink(t *testing.T) {
+	staging, real := t.TempDir(), t.TempDir()
+	dst := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, dst); err != nil {
+		t.Fatal(err)
+	}
+	writeStagedFile(t, staging, "sub/x.txt", "PAYLOAD")
+
+	var out strings.Builder
+	if err := SyncCommit(staging, dst, false, &out); err != nil {
+		t.Fatalf("a destination that is a link must be delivered into: %v", err)
+	}
+	if b, err := os.ReadFile(filepath.Join(real, "sub", "x.txt")); err != nil || string(b) != "PAYLOAD" {
+		t.Fatalf("content: %q (%v)", b, err)
+	}
+}
+
+// With `delete`, the link is what the source does not have, so it goes the way every other
+// extra goes — and the placement that it blocked then succeeds. Deletions run before the
+// placement for exactly this reason.
+func TestSyncCommit_DeleteClearsALinkInTheWay(t *testing.T) {
+	staging, dst := t.TempDir(), t.TempDir()
+	escape := t.TempDir()
+	if err := os.Symlink(escape, filepath.Join(dst, "sub")); err != nil {
+		t.Fatal(err)
+	}
+	writeStagedFile(t, staging, "sub/x.txt", "PAYLOAD")
+	if err := os.WriteFile(filepath.Join(staging, stagingDeletion), []byte("sub\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out strings.Builder
+	if err := SyncCommit(staging, dst, true, &out); err != nil {
+		t.Fatalf("a sync that may delete must clear the link and deliver: %v", err)
+	}
+	if b, err := os.ReadFile(filepath.Join(dst, "sub", "x.txt")); err != nil || string(b) != "PAYLOAD" {
+		t.Fatalf("the file must land inside the destination: %q (%v)", b, err)
+	}
+	if _, err := os.Stat(filepath.Join(escape, "x.txt")); !os.IsNotExist(err) {
+		t.Fatal("nothing must have been written through the link")
+	}
+}
+
+// writeStagedFile puts one file in the staging tree, as the unprivileged agent does.
+func writeStagedFile(t *testing.T, staging, rel, content string) {
+	t.Helper()
+	p := filepath.Join(staging, stagingTree, rel)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

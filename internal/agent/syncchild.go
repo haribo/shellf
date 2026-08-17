@@ -50,9 +50,34 @@ func SyncScan(dst, compare string, w io.Writer) error {
 // filesystems is not atomic, and #389 exists because a non-atomic replacement is
 // observable by a daemon reloading its config mid-write.
 func SyncCommit(staging, dst string, del bool, w io.Writer) error {
+	// The destination is resolved once, and everything is measured against the result: a
+	// destination that *is* a link is ordinary (`/var/www` → `/srv/www`), and the operator
+	// asked for that path. What is refused is a link **inside** it that leads out (#412).
+	root, err := resolvedRoot(dst)
+	if err != nil {
+		return fmt.Errorf("dir.sync: %v", err)
+	}
+
+	// Deletions run first, before anything is placed. A link the source does not have is
+	// an extra like any other, and it is often the very thing standing between a file and
+	// its destination — removing it after the placement would mean refusing the placement
+	// it was blocking. A transfer that never terminated still deletes nothing: this whole
+	// function runs only once the terminator arrived (ADR-0039 §5).
+	removed := 0
+	if del {
+		victims, rerr := stagedDeletions(staging)
+		if rerr != nil {
+			return rerr
+		}
+		if err := removeExtras(root, victims); err != nil {
+			return err
+		}
+		removed = len(victims)
+	}
+
 	tree := filepath.Join(staging, stagingTree)
 	written := 0
-	err := filepath.WalkDir(tree, func(p string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(tree, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if os.IsNotExist(err) && p == tree {
 				return filepath.SkipAll // nothing was staged: a converged transfer
@@ -66,7 +91,7 @@ func SyncCommit(staging, dst string, del bool, w io.Writer) error {
 		if rerr != nil {
 			return rerr
 		}
-		if err := placeStaged(p, dst, rel, d); err != nil {
+		if err := placeStaged(p, root, rel, d); err != nil {
 			return err
 		}
 		written++
@@ -74,18 +99,6 @@ func SyncCommit(staging, dst string, del bool, w io.Writer) error {
 	})
 	if err != nil {
 		return fmt.Errorf("dir.sync: %v", err)
-	}
-
-	removed := 0
-	if del {
-		victims, rerr := stagedDeletions(staging)
-		if rerr != nil {
-			return rerr
-		}
-		if err := removeExtras(dst, victims); err != nil {
-			return err
-		}
-		removed = len(victims)
 	}
 	return json.NewEncoder(w).Encode(commitReport{Written: written, Removed: removed})
 }
@@ -109,6 +122,11 @@ func placeStaged(src, dst, rel string, d fs.DirEntry) error {
 	final := filepath.Join(dst, rel)
 	if !underDst(dst, final) {
 		return fmt.Errorf("refusing to write outside the destination: %s", rel)
+	}
+	// Checked before MkdirAll, not after: creating the directories would already have
+	// followed the link, leaving a tree wherever it pointed (#412).
+	if err := staysInside(dst, filepath.Dir(final), rel); err != nil {
+		return err
 	}
 	info, err := d.Info()
 	if err != nil {
@@ -169,4 +187,62 @@ func stagedDeletions(staging string) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// resolvedRoot is the destination with its own links followed. A destination that *is* a
+// link is ordinary — `/var/www` pointing at `/srv/www` — and the operator named that path,
+// so it is resolved once and everything below is measured against the result.
+//
+// A destination that does not exist yet resolves to its nearest existing ancestor plus the
+// part still to be created, which is enough: what does not exist cannot be a link, and this
+// process is the one about to create it.
+func resolvedRoot(dst string) (string, error) {
+	real, err := resolveExisting(dst)
+	if err != nil {
+		return "", err
+	}
+	return real, nil
+}
+
+// staysInside refuses a directory that leaves root once its links are followed. `rel` names
+// the offending path the way the transfer knows it; the link's target is deliberately not
+// in the message — the caller must not learn a path from the other side of the deployment,
+// which is the rule #393 set for the control host.
+func staysInside(root, dir, rel string) error {
+	real, err := resolveExisting(dir)
+	if err != nil {
+		return fmt.Errorf("cannot resolve %s under the destination: %v", rel, err)
+	}
+	if underDst(root, real) {
+		return nil
+	}
+	return fmt.Errorf("refusing to write %s: a link inside the destination leads out of it — "+
+		"remove it, or let dir.sync delete what the source does not have", rel)
+}
+
+// resolveExisting resolves the longest existing prefix of path and re-appends the rest.
+// `filepath.EvalSymlinks` fails outright on a path whose tail does not exist yet, which is
+// the ordinary case for a first delivery.
+func resolveExisting(path string) (string, error) {
+	rest := ""
+	p := filepath.Clean(path)
+	for {
+		if _, err := os.Lstat(p); err == nil {
+			break
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			break
+		}
+		rest = filepath.Join(filepath.Base(p), rest)
+		p = parent
+	}
+	real, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return "", err
+	}
+	if rest == "" {
+		return real, nil
+	}
+	return filepath.Join(real, rest), nil
 }
