@@ -223,7 +223,9 @@ func pushCmd(path string) string {
 func depositCmd(wd, jobid string) string {
 	tmp := fmt.Sprintf("%s/req-%s.json.tmp", wd, jobid)
 	final := fmt.Sprintf("%s/req-%s.json", wd, jobid)
-	return fmt.Sprintf("umask 077 && mkdir -p %[1]s && cat > %[2]s && mv %[2]s %[3]s", wd, tmp, final)
+	// No `mkdir` here: the workdir was created and vetted by workdirEnsureCmd, and creating
+	// it again with `-p` was what accepted a directory somebody else had put there (#413).
+	return fmt.Sprintf("umask 077 && cat > %[1]s && mv %[1]s %[2]s", tmp, final)
 }
 
 // launchCmd starts a detached resident agent with an inactivity TTL.
@@ -298,7 +300,7 @@ func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
 			return nil, err
 		}
 	}
-	wst, err := workdirState(cn, wd)
+	wst, err := ensureWorkdir(cn, wd)
 	if err != nil {
 		_ = cn.close()
 		return nil, err
@@ -452,8 +454,24 @@ if [ "$s" = "%[2]s" ]; then echo ok; else echo "stale $s"; fi`, path, wantSum)
 // a request of their choosing executed, `become: root` included. `umask 077` does not
 // cover this: it sets the mode of a directory it *creates*, and both `/tmp` and `/dev/shm`
 // are world-writable, so the path can be pre-created (#391).
-func workdirStateCmd(wd string) string {
-	return fmt.Sprintf(`if [ ! -e %[1]s ]; then echo absent; exit 0; fi
+// workdirEnsureCmd creates the workdir and answers what it found: `ok`, or `unsafe …`.
+//
+// Creating and checking are one command on purpose (#413). They used to be two: a probe
+// answering `absent` — the ordinary state on a first run, after the agent's TTL erased it,
+// or after `shellf clean` — was accepted, and the deposit that followed did `mkdir -p`,
+// which succeeds on a directory somebody else created in between and changes neither its
+// owner nor its mode. The path is derived from the published binary's digest and the SSH
+// user, so it is calculable; an attacker loops on creating it and waits for a deployment.
+// The agent then runs every `req-*.json` it finds there, `as root` steps included.
+//
+// `mkdir` without `-p` is the whole fix: it fails when the path exists, so whoever created
+// the directory is the one that owns it. On the sticky /dev/shm or /tmp a local user cannot
+// remove ours to put theirs in its place, so winning the creation is winning outright.
+// `umask 077` makes what we create private without a second `chmod` to race against.
+func workdirEnsureCmd(wd string) string {
+	return fmt.Sprintf(`umask 077
+if mkdir %[1]s 2>/dev/null; then echo ok; exit 0; fi
+if [ ! -d %[1]s ]; then echo "unsafe $(stat -c '%%U:%%a' %[1]s 2>/dev/null) (not a directory)"; exit 0; fi
 if [ -z "$(find %[1]s -maxdepth 0 -type d -user "$(id -un)" ! -perm /022 2>/dev/null)" ]; then
 echo "unsafe $(stat -c '%%U:%%a' %[1]s 2>/dev/null)"; exit 0; fi
 echo ok`, wd)
@@ -477,8 +495,8 @@ func agentState(cn conn, path, wantSum string) (string, error) {
 	return st, nil
 }
 
-func workdirState(cn conn, wd string) (string, error) {
-	out, err := cn.run(posix(workdirStateCmd(wd)), nil)
+func ensureWorkdir(cn conn, wd string) (string, error) {
+	out, err := cn.run(posix(workdirEnsureCmd(wd)), nil)
 	if err != nil {
 		return "", fmt.Errorf("cannot check the workdir %s: %w", wd, err)
 	}

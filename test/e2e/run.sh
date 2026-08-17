@@ -617,6 +617,18 @@ printf '%s' "$out" | grep -q 'another user can write' || fail "a world-writable 
 docker exec "$cname" sh -c "ls $work_path/req-*.json" >/dev/null 2>&1 \
   && fail "no request may be deposited into an unsafe workdir"
 
+# The subtler shape, and the one #413 is about: a workdir another user created *for
+# themselves* — root:700. Nothing about it looks hostile, it is not world-writable, and its
+# owner can drop a req-*.json into it whenever they like. Only "is it ours" separates it
+# from the real one, and the answer used to be given before the directory was created.
+docker exec "$cname" sh -c "rm -rf /dev/shm/shellf-* /tmp/shellf-agent-*"
+docker exec "$cname" sh -c "mkdir -p $work_path && chown root:root $work_path && chmod 700 $work_path"
+rc=0; out="$(run 2>&1)" || rc=$?
+[ "$rc" -ne 0 ] || fail "a workdir owned by another user must be refused (#413)"
+printf '%s' "$out" | grep -q 'another user can write' || fail "the refusal must say why"
+docker exec "$cname" sh -c "ls $work_path/req-*.json" >/dev/null 2>&1 \
+  && fail "no request may be deposited into a workdir we do not own"
+
 # And the clean path still works, with the modes the guard requires.
 docker exec "$cname" sh -c "rm -rf /dev/shm/shellf-*"
 run >/dev/null 2>&1 || fail "a clean target must still run"
