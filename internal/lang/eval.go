@@ -381,6 +381,27 @@ func (ev *evaluator) refuseBytes(v value, what, callee string) {
 		"to deliver a file use file.copy(src, dst)", callee, what)
 }
 
+// checkParamType holds a declared type at a def-to-def call, where the plan's parse-time
+// check cannot reach (ADR-0045 §3). By value, not by spelling: a bool is the boolean it
+// is, or the text of one — what is refused is `"yes"`, which read as "stop" and stopped a
+// service under `ok.converged` (#418).
+func (ev *evaluator) checkParamType(p Param, v value, callee string) {
+	if p.Type != "bool" {
+		return
+	}
+	switch t := v.(type) {
+	case bool:
+		return
+	case string:
+		if t == "true" || t == "false" {
+			return
+		}
+		ev.fail("%s: %s expects a boolean, got %q — write true or false", callee, p.Name, t)
+	default:
+		ev.fail("%s: %s expects a boolean", callee, p.Name)
+	}
+}
+
 // stringify renders a scalar value for the diff / the shell environment. A Bytes has no
 // case here and would render as "": every caller must refuse it first — refuseBytes is
 // that check, and it is what keeps binary content from being silently emptied.
@@ -552,6 +573,7 @@ func (ev *evaluator) evalCall(c Call) value {
 		name := def.Params[i].Name
 		v := ev.evalExpr(a)
 		ev.refuseBytes(v, name, c.Name)
+		ev.checkParamType(def.Params[i], v, c.Name)
 		args[name] = stringify(v)
 		// A control-host path stays one across the call, or the callee reads the target
 		// while the plan asked for the operator's machine (#332).

@@ -297,6 +297,30 @@ on host {
 - Lists are literals of strings; glob/range iteration and list variables are not
   in this version.
 
+## Parameter types — `str` and `bool` (ADR-0045)
+
+A def declares what each parameter is, and the declaration is enforced:
+
+```
+def ensure(name: str, running: bool, enabled: bool) { … }
+```
+
+Those two names are the whole vocabulary; anything else is a parse error. A `bool`
+parameter takes a **boolean value**, however it is written — what is refused is a value
+that is not one:
+
+```
+service.ensure("nginx", true, true)        # fine
+service.ensure("nginx", "true", "true")    # fine — that is a boolean, written as text
+tls = "true"
+service.ensure("nginx", tls, true)         # fine — the variable holds a boolean
+service.ensure("nginx", "yes", true)       # refused: "yes" is not a boolean
+```
+
+The refusal happens when the plan is read, before any host is contacted. It matters more
+than it looks: a def receiving `"yes"` for `running` used to read it as *not true* and
+**stop** the service, reporting `ok.converged`.
+
 ## `%"…"` — a file on your machine, named by the plan (ADR-0043)
 
 A `%` marks a path the control host owns: `file.copy(%"conf.j2", "/etc/app.conf")`. What a

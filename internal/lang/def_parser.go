@@ -179,13 +179,27 @@ func nominalReturn(d Def) *Outcome {
 	return nil
 }
 
+// paramType reads a parameter's declared type from the closed vocabulary (ADR-0045 §1).
+//
+// It used to take any identifier and nothing ever read it back, so `def t(p: banana)`
+// parsed and ran — an annotation that documented an intent no one enforced (#418).
+func (p *parser) paramType() string {
+	t := p.expect(tIdent, "type").val
+	switch t {
+	case "str", "bool":
+		return t
+	}
+	p.fail("unknown parameter type %q — a parameter is `str` or `bool` (ADR-0045)", t)
+	return ""
+}
+
 func (p *parser) params() []Param {
 	p.expect(tLParen, "(")
 	var out []Param
 	for p.tok.kind != tRParen {
 		name := p.expect(tIdent, "parameter name").val
 		p.expect(tColon, ":")
-		par := Param{Name: name, Type: p.expect(tIdent, "type").val}
+		par := Param{Name: name, Type: p.paramType()}
 		if p.tok.kind == tEq { // optional default: `ensure: str = "present"` (ADR-0013)
 			p.adv()
 			par.Default = p.primary() // a literal (string/bool/number)

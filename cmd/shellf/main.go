@@ -576,17 +576,17 @@ func loadInventory(invPath string) (inventory.Inventory, error) {
 // the table still said two parameters while the def had grown `compare` (#414). A
 // signature written in two places is a signature that drifts.
 func stdSignatures() lang.InstructionSig {
-	return func(name string) ([]string, int, bool) {
+	return func(name string) ([]lang.Param, int, bool) {
 		if def, ok := std.Lookup(name); ok {
-			names := make([]string, len(def.Params))
 			required := 0
-			for i, p := range def.Params {
-				names[i] = p.Name
+			for _, p := range def.Params {
 				if p.Default == nil {
 					required++
 				}
 			}
-			return names, required, true
+			// The def's own parameters, types included: a signature written twice is a
+			// signature that drifts (#414), and the type is what ADR-0045 checks against.
+			return def.Params, required, true
 		}
 		return nil, 0, false
 	}

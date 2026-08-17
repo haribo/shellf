@@ -9,12 +9,16 @@ import (
 	"shellf/internal/proto"
 )
 
-// InstructionSig reports an instruction's positional parameter names and how
-// many are required (the leading params without a default), so the parser can
-// turn `apt.install("nginx")` into Step{Args:{"pkg":"nginx"}} and allow omitting
-// trailing defaulted params. The caller supplies it (from `std.Lookup` +
-// builtins), so signatures live with the defs, not a duplicated map here (#107).
-type InstructionSig func(name string) (params []string, required int, ok bool)
+// InstructionSig reports an instruction's positional parameters and how many are
+// required (the leading ones without a default), so the parser can turn
+// `apt.install("nginx")` into Step{Args:{"pkg":"nginx"}} and allow omitting trailing
+// defaulted params. The caller supplies it (from `std.Lookup`), so signatures live with
+// the defs, not a duplicated map here (#107).
+//
+// It carries the whole Param, types included: a declared type is checked against the
+// argument when the plan is read (ADR-0045), which needs the type here rather than a name
+// alone.
+type InstructionSig func(name string) (params []Param, required int, ok bool)
 
 // defaultSig backs ParsePlan (the no-vars convenience used by tests, which set
 // it — see sig_test.go). Production goes through ParsePlanWithVars with an
@@ -259,9 +263,9 @@ type parser struct {
 
 // resolveSig looks up an instruction's parameter names and required count: a
 // package user def first (ADR-0014), then the stdlib/builtins.
-func (p *parser) resolveSig(name string) ([]string, int, bool) {
+func (p *parser) resolveSig(name string) ([]Param, int, bool) {
 	if d, ok := p.userDefs[name]; ok {
-		return paramNames(d), requiredCount(d), true
+		return d.Params, requiredCount(d), true
 	}
 	if p.sig != nil {
 		return p.sig(name)
@@ -286,13 +290,11 @@ func isDefStart(t token) bool {
 	return t.kind == tIdent && (t.val == "def" || t.val == "override")
 }
 
-func paramNames(d Def) []string {
-	names := make([]string, len(d.Params))
-	for i, par := range d.Params {
-		names[i] = par.Name
-	}
-	return names
-}
+// isBoolValue reports whether a value *is* a boolean, however it was written: the literal
+// `true`, the string `"true"`, or a variable holding either. ADR-0045 §2 refuses values
+// that are not booleans, not ways of spelling one — a plan holding a flag in a variable
+// (`--set tls=true`) is ordinary, and forbidding it would buy style at the cost of use.
+func isBoolValue(v string) bool { return v == "true" || v == "false" }
 
 func newParser(src string) *parser {
 	p := &parser{lex: newLexer(src), baseVars: map[string]string{}, caught: map[string]bool{}, importedAliases: map[string]bool{}}
@@ -799,7 +801,7 @@ var Renamed = map[string]string{
 }
 
 func (p *parser) call(name string) proto.Step {
-	argNames, required, ok := p.resolveSig(name)
+	params, required, ok := p.resolveSig(name)
 	if !ok {
 		if to, was := Renamed[name]; was {
 			p.fail("unknown instruction %q — renamed to %q (ADR-0032)", name, to)
@@ -828,11 +830,11 @@ func (p *parser) call(name string) proto.Step {
 		caught = true
 	}
 
-	if len(vals) < required || len(vals) > len(argNames) {
-		if required == len(argNames) {
+	if len(vals) < required || len(vals) > len(params) {
+		if required == len(params) {
 			p.fail("%s expects %d argument(s), got %d", name, required, len(vals))
 		}
-		p.fail("%s expects %d–%d argument(s), got %d", name, required, len(argNames), len(vals))
+		p.fail("%s expects %d–%d argument(s), got %d", name, required, len(params), len(vals))
 	}
 	// Map the supplied args positionally; omitted trailing params (which must be
 	// defaulted) are filled by the def at eval (ADR-0013).
@@ -840,13 +842,29 @@ func (p *parser) call(name string) proto.Step {
 	var refs map[string]string
 	var control []string
 	for i := 0; i < len(vals); i++ {
-		n := argNames[i]
+		n := params[i].Name
 		if vals[i].ref != "" {
+			// A bare identifier is a reference: a plan binding, or a captured result
+			// resolved on the target. When it names something known here, its value is
+			// checked like any other (ADR-0045 §2) — `flag = "yes"` must fail at the plan,
+			// not at the service. A captured result cannot be checked here, and does not
+			// need to be: `r.changed` is a boolean by construction.
+			if v, known := p.lookup(vals[i].ref); known && params[i].Type == "bool" && !isBoolValue(v) {
+				p.fail("%s: %s expects a boolean, got %q from %s — write true or false",
+					name, n, v, vals[i].ref)
+			}
 			if refs == nil {
 				refs = map[string]string{}
 			}
 			refs[n] = vals[i].ref
 		} else {
+			// The declared type, checked against the value the plan actually passes
+			// (ADR-0045 §2). Variables are already interpolated here, so `"yes"` is
+			// caught before a host is contacted rather than stopping a service on one.
+			// A `ref` is skipped: what a captured result holds is only known at run time.
+			if params[i].Type == "bool" && !isBoolValue(vals[i].val) {
+				p.fail("%s: %s expects a boolean, got %q — write true or false", name, n, vals[i].val)
+			}
 			args[n] = vals[i].val
 			if vals[i].control {
 				control = append(control, n)

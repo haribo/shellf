@@ -67,11 +67,11 @@ func TestLoadGlobals_MissingVarsFile(t *testing.T) {
 func TestStdSignatures(t *testing.T) {
 	sig := stdSignatures()
 
-	if params, req, ok := sig("file.copy"); !ok || len(params) != 2 || req != 2 || params[0] != "src" || params[1] != "dst" {
-		t.Fatalf("builtin file-copy signature: %v req=%d ok=%v", params, req, ok)
+	if params, req, ok := sig("file.copy"); !ok || len(params) != 2 || req != 2 || params[0].Name != "src" || params[1].Name != "dst" {
+		t.Fatalf("file-copy signature: %v req=%d ok=%v", params, req, ok)
 	}
 	// A stdlib def resolves its params from the embedded source (self-hosting).
-	if params, req, ok := sig("dir.ensure"); !ok || len(params) != 1 || req != 1 || params[0] != "path" {
+	if params, req, ok := sig("dir.ensure"); !ok || len(params) != 1 || req != 1 || params[0].Name != "path" {
 		t.Fatalf("stdlib dir-ensure signature: %v req=%d ok=%v", params, req, ok)
 	}
 	// compose-up gained an optional `build` param → 2 params, 1 required.
@@ -747,7 +747,7 @@ func TestStdSignatures_ComeFromTheDefs(t *testing.T) {
 	if !ok {
 		t.Fatal("dir.copy must resolve")
 	}
-	if len(params) != 3 || params[2] != "compare" {
+	if len(params) != 3 || params[2].Name != "compare" {
 		t.Fatalf("dir.copy's signature must come from its def: %v", params)
 	}
 	if required != 2 {
