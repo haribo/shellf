@@ -53,6 +53,28 @@ func main() {
 		return
 	}
 
+	// The escalated half of a tree transfer (ADR-0044). The agent re-invokes itself through
+	// the executor so `as <user>` applies to the placement, which used to be done from the
+	// agent's own process and therefore ignored the escalation entirely (#390).
+	//
+	// Bounded on purpose: paths and flags, no socket, no control host, no plan, no def.
+	// Whatever reads these arguments may be running as root.
+	if len(os.Args) > 3 && os.Args[1] == "__sync-scan" {
+		if err := agent.SyncScan(os.Args[2], os.Args[3], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) > 3 && os.Args[1] == "__sync-commit" {
+		del := len(os.Args) > 4 && os.Args[4] == "--delete"
+		if err := agent.SyncCommit(os.Args[2], os.Args[3], del, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// Bridge: copies this session's stdin/stdout to the detached agent's Unix socket
 	// (ADR-0031). Hidden, launched by the control host over SSH for the duration of a
 	// job that needs the channel. It dies with its session by design.

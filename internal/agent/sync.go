@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"shellf/internal/engine"
 	"shellf/internal/proto"
 )
 
@@ -24,8 +26,8 @@ import (
 // The manifest goes first, so the control host can answer only the delta — that one round
 // trip is what buys a converged run its zero bytes, and what keeps a large tree from
 // costing one round trip per file.
-func (c *Channel) Sync(resource, dst, compare string, del bool) (written, removed int, err error) {
-	n, extras, err := c.sync(resource, dst, compare, del, false)
+func (c *Channel) Sync(ex engine.Executor, resource, dst, compare string, del bool) (written, removed int, err error) {
+	n, extras, err := c.sync(ex, resource, dst, compare, del, false)
 	if !del {
 		extras = nil // a copy removes nothing, whatever the terminator listed
 	}
@@ -36,12 +38,12 @@ func (c *Channel) Sync(resource, dst, compare string, del bool) (written, remove
 // computed on the control host, no file is streamed, nothing is written and nothing is
 // removed. It returns how many files would be written and which would be deleted, so a
 // destructive def can name them before acting (#373).
-func (c *Channel) Preview(resource, dst, compare string) (int, []string, error) {
-	return c.sync(resource, dst, compare, false, true)
+func (c *Channel) Preview(ex engine.Executor, resource, dst, compare string) (int, []string, error) {
+	return c.sync(ex, resource, dst, compare, false, true)
 }
 
-func (c *Channel) sync(resource, dst, compare string, del, preview bool) (int, []string, error) {
-	entries, err := scanTarget(dst, compare)
+func (c *Channel) sync(ex engine.Executor, resource, dst, compare string, del, preview bool) (int, []string, error) {
+	entries, err := c.scanThrough(ex, dst, compare)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -53,15 +55,97 @@ func (c *Channel) sync(resource, dst, compare string, del, preview bool) (int, [
 	//
 	// Restarting is safe and cheap by construction (ADR-0039 §3): the second attempt
 	// rebuilds its manifest, so whatever arrived before the drop is not sent again.
-	n, extras, err, stale := c.streamOnce(resource, dst, compare, del, preview, entries)
+	//
+	// A preview writes nothing, so it needs no staging area and no commit: it asks for the
+	// delta, receives the terminator alone, and reports.
+	if preview {
+		n, extras, err, stale := c.streamOnce(resource, "", compare, preview, entries, resource)
+		if stale {
+			entries, serr := c.scanThrough(ex, dst, compare)
+			if serr != nil {
+				return 0, nil, serr
+			}
+			n, extras, err, _ = c.streamOnce(resource, "", compare, preview, entries, resource)
+		}
+		return n, extras, err
+	}
+
+	staging, err := os.MkdirTemp(c.workdir, "sync-")
+	if err != nil {
+		return 0, nil, fmt.Errorf("dir.sync: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(staging) }()
+
+	n, extras, err, stale := c.streamOnce(resource, staging, compare, preview, entries, resource)
 	if stale {
-		entries, serr := scanTarget(dst, compare)
+		// A retry starts from a clean staging area: the first attempt's files are still
+		// there, and nothing has been placed, so the second manifest asks for them again.
+		if err := os.RemoveAll(staging); err != nil {
+			return 0, nil, fmt.Errorf("dir.sync: %v", err)
+		}
+		entries, serr := c.scanThrough(ex, dst, compare)
 		if serr != nil {
 			return 0, nil, serr
 		}
-		n, extras, err, _ = c.streamOnce(resource, dst, compare, del, preview, entries)
+		n, extras, err, _ = c.streamOnce(resource, staging, compare, preview, entries, resource)
 	}
-	return n, extras, err
+	if err != nil {
+		return 0, nil, err
+	}
+
+	// Everything is staged; placing it is the escalated half (ADR-0044 §1). It runs even
+	// when nothing was transferred: a delete-only sync has files to remove and none to
+	// write, and #387 is what a transfer reporting "nothing happened" in that case cost.
+	if del && len(extras) > 0 {
+		if err := os.WriteFile(filepath.Join(staging, stagingDeletion),
+			[]byte(strings.Join(extras, "\n")), 0o600); err != nil {
+			return 0, nil, fmt.Errorf("dir.sync: %v", err)
+		}
+	}
+	placed, err := c.commitThrough(ex, staging, dst, del)
+	if err != nil {
+		return 0, nil, err
+	}
+	// ADR-0039 §5: the terminator says how many files the transfer sent, so a stream that
+	// ended early is detected rather than committed as a complete one.
+	if placed != n {
+		return 0, nil, fmt.Errorf("dir.sync: the transfer sent %d file(s) but %d landed — refusing to report a partial delivery", n, placed)
+	}
+	return n, extras, nil
+}
+
+// scanThrough asks the escalated child for the destination's manifest. It goes through the
+// executor even with no escalation in force (ADR-0044 §5): keeping a second, in-process
+// path would leave the escalated one as the one nobody exercises — and it is the one that
+// touches root.
+func (c *Channel) scanThrough(ex engine.Executor, dst, compare string) ([]proto.Entry, error) {
+	out, err := c.child(ex, "__sync-scan", dst, compare)
+	if err != nil {
+		return nil, err
+	}
+	var entries []proto.Entry
+	if err := json.Unmarshal([]byte(out), &entries); err != nil {
+		return nil, fmt.Errorf("dir.sync: unreadable manifest from the agent: %v", err)
+	}
+	return entries, nil
+}
+
+// commitThrough places the staged tree, as whoever `as <user>` named. Returns how many
+// files landed.
+func (c *Channel) commitThrough(ex engine.Executor, staging, dst string, del bool) (int, error) {
+	args := []string{"__sync-commit", staging, dst}
+	if del {
+		args = append(args, "--delete")
+	}
+	out, err := c.child(ex, args...)
+	if err != nil {
+		return 0, err
+	}
+	var rep commitReport
+	if err := json.Unmarshal([]byte(out), &rep); err != nil {
+		return 0, fmt.Errorf("dir.sync: unreadable report from the agent: %v", err)
+	}
+	return rep.Written, nil
 }
 
 // scanTarget lists what is already under dst, in the same shape the control host walks
@@ -104,13 +188,15 @@ func scanTarget(dst, compare string) ([]proto.Entry, error) {
 	return out, nil
 }
 
-// streamInto sends the ask and consumes the sequence until the terminator.
-//
-// Each file is staged beside its destination and renamed once its last chunk lands — the
-// rule #298 already imposes on `file.write`: a reader must never catch a partial file. A
-// transfer cut short therefore leaves the destination as it was, and the retry's manifest
-// lists what did arrive, so only the interrupted file is sent again (ADR-0039 §3).
-func (c *Channel) streamOnce(resource, dst, compare string, del, preview bool, entries []proto.Entry) (n int, extras []string, err error, stale bool) {
+// Each file is written into the staging tree and renamed into place there once its last
+// chunk lands — the rule #298 imposes on `file.write`: a reader must never catch a partial
+// file. Nothing reaches the destination until the whole transfer terminates and the
+// escalated commit runs, so an interrupted transfer leaves the destination exactly as it
+// was, and the retry's manifest lists what is already there (ADR-0039 §3).
+// streamOnce consumes one transfer. `staging` is where files land — a directory this
+// agent owns, never the destination: placing them is the escalated half (ADR-0044). It is
+// empty for a preview, which receives no file at all.
+func (c *Channel) streamOnce(resource, staging, compare string, preview bool, entries []proto.Entry, label string) (n int, extras []string, err error, stale bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -156,7 +242,7 @@ func (c *Channel) streamOnce(resource, dst, compare string, del, preview bool, e
 						return 0, nil, err, false
 					}
 				}
-				if staged, err = openStaged(dst, m.Path, m.Mode, m.MTime); err != nil {
+				if staged, err = openStaged(filepath.Join(staging, stagingTree), m.Path, m.Mode, m.MTime); err != nil {
 					return 0, nil, err, false
 				}
 			}
@@ -182,11 +268,9 @@ func (c *Channel) streamOnce(resource, dst, compare string, del, preview bool, e
 				// chunk: refuse rather than commit a truncated file.
 				return 0, nil, fmt.Errorf("%s: transfer ended with %s unfinished", resource, staged.rel), false
 			}
-			if del && !preview {
-				if err := removeExtras(dst, m.Delete); err != nil {
-					return 0, nil, err, false
-				}
-			}
+			// Deletions are not applied here: they are the escalated commit's, applied
+			// after the transfer terminated and only when the caller asked for them
+			// (ADR-0039 §5).
 			return m.Written, m.Delete, nil, false
 		}
 	}

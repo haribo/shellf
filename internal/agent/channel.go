@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"shellf/internal/engine"
 	"shellf/internal/proto"
 )
 
@@ -35,6 +36,19 @@ var attachWait = 30 * time.Second
 type Channel struct {
 	ln net.Listener
 
+	// workdir is the agent's own directory, where a transfer stages what it received
+	// before the escalated commit places it (ADR-0044 §3). It belongs to this agent: a
+	// staging area the escalated side could write would be a way to hand root a file
+	// somebody else chose.
+	workdir string
+
+	// child runs one of the escalated verbs. It is a field for the same reason Executor is
+	// an interface: a unit test cannot re-invoke the agent binary, since the binary running
+	// a `go test` is the test binary and knows no `__sync-commit`. Production never
+	// replaces it, and the real path — fork, escalate, place — is what the e2e harness
+	// exercises against a container, which is the only place it can be proven.
+	child func(ex engine.Executor, args ...string) (string, error)
+
 	mu    sync.Mutex
 	conn  *proto.Conn
 	next  int
@@ -55,7 +69,7 @@ func Listen(workdir string) (*Channel, error) {
 		_ = ln.Close()
 		return nil, err
 	}
-	c := &Channel{ln: ln, ready: make(chan struct{})}
+	c := &Channel{ln: ln, workdir: workdir, child: childVerb, ready: make(chan struct{})}
 	// Greet as soon as a bridge attaches, not at the first request. The control host
 	// handshakes when it opens the bridge — if the agent only answered on demand, a run
 	// that asks for nothing (a dry-run, or any plan without a primitive) would leave

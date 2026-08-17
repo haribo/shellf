@@ -32,8 +32,8 @@ func TestSync_DeleteOnlyIsNotAlready(t *testing.T) {
 
 	// The tree is converged — nothing to write — and one file on the target is not in the
 	// source, so the transfer removes it and writes nothing.
-	sync := func(string, string, string, bool) (int, int, error) { return 0, 1, nil }
-	preview := func(string, string, string) (int, []string, error) { return 0, nil, nil }
+	sync := func(engine.Executor, string, string, string, bool) (int, int, error) { return 0, 1, nil }
+	preview := func(engine.Executor, string, string, string) (int, []string, error) { return 0, nil, nil }
 
 	res, err := EvalDefFull(byName["sync"], map[string]string{"s": "tree", "dst": "/opt/x"},
 		nil, []string{"s"}, noopExec{}, engine.Apply, resolve, []string{"sync"}, fetch, sync, preview)
@@ -62,8 +62,8 @@ func TestSync_ConvergedStillReportsAlready(t *testing.T) {
 	byName := map[string]Def{"sync": defs[0]}
 	resolve := func(s string) (Def, bool) { d, ok := byName[s]; return d, ok }
 	fetch := func(string, []byte, map[string]string) ([]byte, error) { return nil, nil }
-	sync := func(string, string, string, bool) (int, int, error) { return 0, 0, nil }
-	preview := func(string, string, string) (int, []string, error) { return 0, nil, nil }
+	sync := func(engine.Executor, string, string, string, bool) (int, int, error) { return 0, 0, nil }
+	preview := func(engine.Executor, string, string, string) (int, []string, error) { return 0, nil, nil }
 
 	res, err := EvalDefFull(byName["sync"], map[string]string{"s": "tree", "dst": "/opt/x"},
 		nil, []string{"s"}, noopExec{}, engine.Apply, resolve, []string{"sync"}, fetch, sync, preview)
