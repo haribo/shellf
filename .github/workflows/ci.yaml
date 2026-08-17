@@ -38,6 +38,7 @@ jobs:
         with:
           go-version-file: go.mod
       - run: bash test/coverage-ratchet.sh
+      - run: bash test/changelog-rule.sh
 
   e2e:
     # Real SSH transport + resident agent against a throwaway sshd container:
