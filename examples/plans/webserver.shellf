@@ -9,9 +9,9 @@
 # instruction is idempotent). Root is reached via `as root` — either intrinsically
 # (the def declares it) or by wrapping.
 #
-# The inventory lives OUTSIDE this directory on purpose: a plan's directory is its
-# def package (ADR-0014), so every sibling `*.shellf` is loaded as a def — an
-# inventory kept here would be parsed as one and fail.
+# The inventory lives in `inventories/`, not beside this plan: a project is laid out by
+# type (ADR-0038) — `plans/` holds what a run invokes, `defs/<package>/` the reusable
+# instructions, `assets/` the content a plan delivers.
 on web {
     # These defs declare `as root` themselves, so they escalate automatically
     # even when you SSH as a non-root user.

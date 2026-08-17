@@ -137,5 +137,5 @@ here depends on the answer.
 - **A plan can no longer have sibling defs.** The single most convenient thing about
   ADR-0014 — drop a `.shellf` next to your plan and call it — is gone. What replaces it is
   a directory away (`defs/<name>/`) and qualified by name.
-- This record is design only. The implementation follows in its own issue, and nothing in
-  the tree behaves this way yet.
+- This record is a decision, not a report on the tree. What implements it, and when, lives
+  in the issue that carries the work.

@@ -1,6 +1,6 @@
-# A user def for the blog package (ADR-0014): the plan's own directory is loaded
-# as a def package, so `data-dir` resolves by name with no import. Idempotent by
-# an observed field, like any stdlib def.
+# A user def for the blog package: it lives in `defs/blog/`, and the directory names the
+# package (ADR-0038), so it resolves as `blog.data-dir` with no import. Idempotent by an
+# observed field, like any stdlib def.
 # Two steps, two defs, and both tolerate being re-run — which is what ADR-0040 §1 asks of
 # every step and what `mkdir && chmod` in a `shell { }` no longer parses for. The `observe`
 # declares one dimension per effect: a directory that exists with the wrong mode is drift,

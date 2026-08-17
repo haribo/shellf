@@ -1,6 +1,9 @@
 # shellf — language spec
 
-> Living doc. Only **stable** primitives are documented here. Instruction syntax is still moving → not yet included.
+> Living doc, and incomplete on purpose: what is written here is current, what is missing
+> is missing. Two shipped constructs have no chapter yet — `as <user>` escalation
+> ([ADR-0011](adr/0011-privilege-escalation.md)) and `import`
+> ([ADR-0015](adr/0015-local-imports.md), [ADR-0016](adr/0016-remote-modules.md)).
 
 ## `Result` — an instruction's outcome
 

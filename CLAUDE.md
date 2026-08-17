@@ -44,7 +44,7 @@ Rules must be concise. One rule per line when possible.
 
 ## Discipline (user-requested)
 
-- Do NOT design imports / ecosystem / sharing yet (phase 3).
+- Imports are **shipped** and exercised end to end — local (ADR-0015) and remote modules (ADR-0016); maintain them like the rest. What stays out of scope is the layer above: a registry, a namespace, any publication index (phase 3).
 - The language is now real (grammar, lexer, parser, evaluator) — the "don't invent a language" caution is **resolved**; grammar changes go through an ADR.
 - The first milestone (engine + instructions over SSH via the agent, apply AND check) is **done**; the stdlib is now self-hosted (`def` in shellf, embedded). `Executor` (shell) stays an injectable interface (testability).
 

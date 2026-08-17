@@ -308,8 +308,8 @@
     <div class="wrap">
       <h2 class="sec">What it does</h2>
       <div class="feat">
-        <div class="cell"><div class="c-k"><span class="mk">▸</span>Packages &amp; services</div><p><code>apt.install</code>, <code>service</code>, files, dirs — installed, running, owned as declared.</p></div>
-        <div class="cell"><div class="c-k"><span class="mk">▸</span>Config, per host</div><p><code>template</code> fills <code>@{vars}</code> from the inventory, rendered per host.</p></div>
+        <div class="cell"><div class="c-k"><span class="mk">▸</span>Packages &amp; services</div><p><code>apt.install</code>, <code>service.ensure</code>, files, dirs — installed, running, owned as declared.</p></div>
+        <div class="cell"><div class="c-k"><span class="mk">▸</span>Config, per host</div><p><code>file.template</code> fills <code>@{vars}</code> from the inventory, rendered per host.</p></div>
         <div class="cell"><div class="c-k"><span class="mk">▸</span>Containers</div><p><code>docker.compose-up</code>, <code>docker.network</code> — <code>--dry-run</code> previews the recreate.</p></div>
         <div class="cell"><div class="c-k"><span class="mk">▸</span>Firewall</div><p><code>ufw.open</code> / <code>default</code> / <code>enable</code> — only the ports you list.</p></div>
         <div class="cell"><div class="c-k"><span class="mk">▸</span>Files &amp; trees</div><p><code>dir.copy</code> byte-for-byte (binary-safe), <code>file.download</code> sha256-checked.</p></div>
