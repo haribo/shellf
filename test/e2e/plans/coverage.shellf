@@ -45,6 +45,11 @@ on target {
     shell { touch /tmp/cov/mirror/stale.txt }
     dir.sync(%"tree", "/tmp/cov/mirror")
 
+    # `compare` is the third argument both transfers take. It was documented and refused
+    # for `dir.copy` — a stale builtin signature shadowed the def (#414) — so it is
+    # exercised here in the form the docs print.
+    dir.copy(%"tree", "/tmp/cov/compared", "sha256")
+
     # --- validated configs ----------------------------------------------------------
     sudo.write("covrule", "covuser ALL=(ALL) NOPASSWD: /bin/true")
     sshd.config("covlimit", "MaxAuthTries 4")

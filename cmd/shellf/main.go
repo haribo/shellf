@@ -566,22 +566,17 @@ func loadInventory(invPath string) (inventory.Inventory, error) {
 	return inv, nil
 }
 
-// stdSignatures resolves an instruction's parameter names from the embedded
-// stdlib (signatures live with the defs, self-hosting) plus the Go builtins —
-// so adding a def needs no parser-side edit (#107).
+// stdSignatures resolves an instruction's parameter names from the embedded stdlib —
+// signatures live with the defs, self-hosting, so adding a def needs no parser-side edit
+// (#107).
+//
+// There is no builtin table beside it any more. It held `file.copy` and `dir.copy` from
+// when both were Go transformations; both became defs, and the stale entry shadowed the
+// real signature — `dir.copy(%"src", dst, "sha256")` was documented and refused, because
+// the table still said two parameters while the def had grown `compare` (#414). A
+// signature written in two places is a signature that drifts.
 func stdSignatures() lang.InstructionSig {
-	// params, and how many are required.
-	builtins := map[string]struct {
-		params   []string
-		required int
-	}{
-		"file.copy": {[]string{"src", "dst"}, 2},
-		"dir.copy":  {[]string{"src", "dst"}, 2},
-	}
 	return func(name string) ([]string, int, bool) {
-		if b, ok := builtins[name]; ok {
-			return b.params, b.required, true
-		}
 		if def, ok := std.Lookup(name); ok {
 			names := make([]string, len(def.Params))
 			required := 0

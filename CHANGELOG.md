@@ -92,6 +92,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `dir.copy(%"src", dst, "sha256")` parses. The third argument has been documented in
+  `docs/language.md` and the README since `dir.copy` became a def over `~dir.sync`
+  (ADR-0039 §6), and was refused with `dir.copy expects 2 argument(s), got 3`: a stale Go
+  builtin entry shadowed the def's real signature. `dir.sync` was never in that table,
+  which is why the same call always worked there. The table is gone — a signature written
+  in two places is a signature that drifts, and the code's own comment already said
+  signatures live with the defs (#414).
+
 - The workdir on the target is now **created exclusively**, in the same command that checks
   it. It used to be probed first and created after, by a `mkdir -p` that succeeds on a
   directory somebody else made in between and changes neither its owner nor its mode — so
