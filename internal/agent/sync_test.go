@@ -461,3 +461,78 @@ func TestSync_LinkInTheWay(t *testing.T) {
 		}
 	})
 }
+
+// #431: the same stale-bridge retry, on a transfer that only **deletes**. It failed where
+// the delivering one passed, and only sometimes — which is what an intermittent e2e
+// failure on step 13 looked like for two days.
+//
+// The retry cleared the staging area with `os.RemoveAll`, which removes the directory
+// itself. A transfer that delivers a file recreates it by accident, through the `MkdirAll`
+// that opens the first staged file; one that stages nothing does not, so writing the
+// deletion list into it failed with ENOENT and the whole sync errored.
+func TestSync_RetriesAfterAStaleBridge_DeleteOnly(t *testing.T) {
+	old := attachWait
+	attachWait = 2 * time.Second
+	defer func() { attachWait = old }()
+
+	root := sourceTree(t)
+	dst := filepath.Join(t.TempDir(), "delivered")
+
+	// Converged first, through a healthy channel: the retry below then has nothing to
+	// deliver, which is the case that breaks.
+	ch := syncPair(t, root)
+	if _, _, err := ch.Sync(noEscalation{}, "dir.sync:tree", dst, "meta", true); err != nil {
+		t.Fatal(err)
+	}
+	_ = ch.Close()
+	if err := os.WriteFile(filepath.Join(dst, "intruder.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	wd := shortDir(t)
+	ch2, err := Listen(wd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ch2.Close() }()
+	ch2.child = inProcessChild
+	sock := filepath.Join(wd, SockName)
+
+	// A bridge from a session that has already ended: it greets, then dies.
+	dead, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = proto.NewConn(dead).Handshake() }()
+	waitAttached(t, ch2)
+	_ = dead.Close()
+
+	// The live one attaches a moment later, as the control host reconnects.
+	allow := orchestrator.NewAllowed(root, []string{"dir.sync:tree"})
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		c, derr := net.Dial("unix", sock)
+		if derr != nil {
+			return
+		}
+		conn := proto.NewConn(c)
+		if conn.Handshake() != nil {
+			return
+		}
+		_ = orchestrator.Serve(conn, allow)
+	}()
+
+	n, removed, err := ch2.Sync(noEscalation{}, "dir.sync:tree", dst, "meta", true)
+	if err != nil {
+		t.Fatalf("a delete-only transfer must survive a stale bridge: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("nothing should be transferred to a converged destination, got %d", n)
+	}
+	if removed != 1 {
+		t.Fatalf("the intruder must be removed, got %d", removed)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "intruder.txt")); !os.IsNotExist(err) {
+		t.Fatal("the intruder is still there")
+	}
+}

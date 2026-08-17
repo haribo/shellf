@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- A `dir.sync` that only deletes no longer fails after a stale-bridge retry. Clearing the staging area removed the directory itself, which a transfer with a file to deliver recreated by accident and a delete-only one did not (#431).
+
 ## [0.5.0] - 2026-08-17
 
 ### Added
