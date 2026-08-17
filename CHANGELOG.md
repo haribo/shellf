@@ -44,6 +44,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A `dir.sync` that only deletes no longer fails after a stale-bridge retry. Clearing the staging area removed the directory itself, which a transfer with a file to deliver recreated by accident and a delete-only one did not (#431).
+
 - `file-write` stages beside the destination and renames over it, so a reader can no longer catch the file partial mid-write (#298).
 - A `template` used as an `if` condition is rendered on the control host instead of reaching the agent verbatim and failing `err.agent` (#293).
 - A def whose `check` or `observe` runs a shell no longer reports `changed` on a converged run — the false positive idempotence exists to prevent (#328).

@@ -80,7 +80,16 @@ func (c *Channel) sync(ex engine.Executor, resource, dst, compare string, del, p
 	if stale {
 		// A retry starts from a clean staging area: the first attempt's files are still
 		// there, and nothing has been placed, so the second manifest asks for them again.
+		//
+		// Emptied, not removed. `RemoveAll` took the directory itself with it, and a
+		// transfer that delivers a file recreated it by accident — through the `MkdirAll`
+		// that opens the first staged file. One that stages nothing did not, so a
+		// delete-only retry then failed writing its deletion list into a directory that no
+		// longer existed (#431).
 		if err := os.RemoveAll(staging); err != nil {
+			return 0, nil, fmt.Errorf("dir.sync: %v", err)
+		}
+		if err := os.Mkdir(staging, 0o700); err != nil {
 			return 0, nil, fmt.Errorf("dir.sync: %v", err)
 		}
 		entries, serr := c.scanThrough(ex, dst, compare)

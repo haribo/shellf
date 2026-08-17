@@ -27,7 +27,14 @@ cleanup() { docker rm -f "$cname" >/dev/null 2>&1 || true; rm -rf "$work"; }
 trap cleanup EXIT
 
 say() { printf '\n\033[1;36m== %s\033[0m\n' "$*"; }
-fail() { printf '\033[1;31mFAIL: %s\033[0m\n' "$*" >&2; exit 1; }
+# `$out` is printed when a step captured it: a check written `out="$(cmd)" || fail "…"`
+# reports the failure and swallows the reason, which is how an intermittent step 13 stayed
+# unexplained for two days (#431). Steps that do not capture leave it empty.
+fail() {
+  printf '\033[1;31mFAIL: %s\033[0m\n' "$*" >&2
+  [ -n "${out:-}" ] && printf '%s\n' "$out" >&2
+  exit 1
+}
 
 say "build shellf"
 ( cd "$root" && go build -o "$work/shellf" ./cmd/shellf )
@@ -569,7 +576,7 @@ EOF
 del() { "$work/shellf" run --inventory "$work/del/inventories/inv.shellf" --insecure \
   "$work/del/plans/plan.shellf" 2>&1; }
 
-del >/dev/null || fail "the first sync failed"
+out="$(del)" || fail "the first sync failed"
 docker exec "$cname" touch /tmp/shellf-del/intruder.txt
 
 out="$(del)" || fail "the delete-only sync failed"; printf '%s\n' "$out"
