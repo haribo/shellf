@@ -887,4 +887,54 @@ docker exec "$cname" test -f /opt/l412/sub/x.txt || fail "the file did not land 
   || fail "the escalated delivery landed as the wrong user"
 docker exec "$cname" test -e /opt/l412-escape/x.txt && fail "something was written through the link"
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out"
+say "20. a boolean parameter refuses a value that is not one (#418)"
+# Measured before the check existed: `service.ensure("cron", "yes", "true")` reported
+# `ok.converged` and **stopped** cron — the apply tests `[ "$running" = true ]`, so anything
+# that is not exactly "true" means stop, and the observe compared "yes" against true/false
+# so it never converged and stopped it again on every run.
+#
+# The service is asserted, not the report: the report already said `ok`.
+mkdir -p "$work/types/plans" "$work/types/inventories"
+cat > "$work/types/inventories/inv.shellf" <<EOF
+host target = {
+    address: "$ip", user: "deploy", key: "$work/id",
+}
+EOF
+# nginx is installed and running by now (step 8's webserver example, and the coverage
+# plan). Started defensively so this step does not depend on the order of the ones above.
+docker exec "$cname" bash -c 'systemctl start nginx' >/dev/null 2>&1
+[ "$(docker exec "$cname" systemctl is-active nginx)" = "active" ] || fail "nginx should be running before this step"
+
+cat > "$work/types/plans/plan.shellf" <<'EOF'
+on target {
+    service.ensure("nginx", "yes", true)
+}
+EOF
+rc=0; out="$("$work/shellf" run --inventory "$work/types/inventories/inv.shellf" --insecure \
+  "$work/types/plans/plan.shellf" 2>&1)" || rc=$?
+printf '%s\n' "$out"
+[ "$rc" -ne 0 ] || fail "a non-boolean must be refused (#418)"
+printf '%s' "$out" | grep -q 'expects a boolean' || fail "the refusal must name the type"
+printf '%s' "$out" | grep -q 'running' || fail "the refusal must name the parameter"
+[ "$(docker exec "$cname" systemctl is-active nginx)" = "active" ] \
+  || fail "the refused plan stopped the service anyway"
+
+# And the boolean forms both work, since ADR-0045 §2 checks the value, not the spelling.
+cat > "$work/types/plans/plan.shellf" <<'EOF'
+on target {
+    service.ensure("nginx", true, true)
+}
+EOF
+"$work/shellf" run --inventory "$work/types/inventories/inv.shellf" --insecure \
+  "$work/types/plans/plan.shellf" >/dev/null 2>&1 || fail "a bare boolean must be accepted"
+[ "$(docker exec "$cname" systemctl is-active nginx)" = "active" ] || fail "nginx must still be running"
+
+cat > "$work/types/plans/plan.shellf" <<'EOF'
+on target {
+    service.ensure("nginx", "true", "true")
+}
+EOF
+"$work/shellf" run --inventory "$work/types/inventories/inv.shellf" --insecure \
+  "$work/types/plans/plan.shellf" >/dev/null 2>&1 || fail "a boolean written as text must be accepted"
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out, booleans are booleans"

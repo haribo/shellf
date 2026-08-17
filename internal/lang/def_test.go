@@ -1,6 +1,9 @@
 package lang
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseDef_Install(t *testing.T) {
 	src := `
@@ -171,5 +174,29 @@ func TestParseDef_Errors(t *testing.T) {
 		if _, err := ParseDefs(src); err == nil {
 			t.Fatalf("expected error for: %s", src)
 		}
+	}
+}
+
+// #418, ADR-0045 §1: the type vocabulary is closed. `def t(p: banana)` parsed and ran —
+// the parser read an identifier and nothing read it back, so the annotation documented an
+// intent no one enforced.
+func TestParams_TypeVocabularyIsClosed(t *testing.T) {
+	for _, ok := range []string{
+		`def t(p: str) { apply { shell { echo "$p" } return ok.done } }`,
+		`def t(p: bool) { apply { shell { echo "$p" } return ok.done } }`,
+	} {
+		if _, err := ParseDefs(ok); err != nil {
+			t.Fatalf("must parse: %s\n%v", ok, err)
+		}
+	}
+	_, err := ParseDefs(`def t(p: banana) { apply { shell { echo "$p" } return ok.done } }`)
+	if err == nil {
+		t.Fatal("an invented type must be refused, not carried as decoration")
+	}
+	if !strings.Contains(err.Error(), "banana") {
+		t.Fatalf("the refusal must name what was written: %v", err)
+	}
+	if !strings.Contains(err.Error(), "str") || !strings.Contains(err.Error(), "bool") {
+		t.Fatalf("the refusal must name what is accepted: %v", err)
 	}
 }

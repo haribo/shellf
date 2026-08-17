@@ -90,6 +90,20 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   primitive that writes on the target, which is what `~file.write` does. The old
   spelling is refused, naming the new one (#332).
 
+### Changed
+
+- **BREAKING** — a parameter's declared type is now checked (ADR-0045). The annotation had
+  never been read: `def t(p: banana)` parsed and ran, and `service.ensure("cron", "yes",
+  "true")` reported `ok.converged` while **stopping** the service — the `apply` tests
+  `[ "$running" = true ]`, so anything that is not exactly `"true"` means stop, and the
+  `observe` compared `"yes"` against `true`/`false`, so the def never converged and stopped
+  it again on every run. The type vocabulary is now closed to `str` and `bool`, and a
+  `bool` parameter takes a boolean **value** however it is written: `true`, `"true"`, or a
+  variable holding one all pass, while `"yes"`, `"1"` and `"True"` are refused when the
+  plan is read — before a host is contacted. `service.ensure` and `docker.compose-up`
+  declare `bool` where they took a string; every existing call keeps working, since
+  `"true"` is still a boolean (#418).
+
 ### Fixed
 
 - **BREAKING** — `unless { … }` in a def no longer parses. It was accepted and **silently

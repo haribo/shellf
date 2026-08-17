@@ -1,4 +1,4 @@
-def ensure(name: str, running: str, enabled: str) as root {
+def ensure(name: str, running: bool, enabled: bool) as root {
     # Value fields matching the `running`/`enabled` arguments: each is compared,
     # so the same def converges a service up or down.
     observe {

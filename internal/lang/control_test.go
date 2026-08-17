@@ -221,7 +221,7 @@ func TestControl_NoFetcherFails(t *testing.T) {
 // A control-host path literal interpolates like any string, so a plan can name a file per
 // host. Written in a plan, which is the only place a `%"…"` may now sit (ADR-0043).
 func TestControl_PathLiteralIsInterpolated(t *testing.T) {
-	sig := func(string) ([]string, int, bool) { return []string{"src", "dst"}, 2, true }
+	sig := func(string) ([]Param, int, bool) { return strParams("src", "dst"), 2, true }
 	plan, err := ParsePlanWithVars(`on web { deliver(%"conf/${name}.j2", "/etc/app.conf") }`,
 		map[string]string{"name": "web"}, nil, sig)
 	if err != nil {
@@ -312,9 +312,9 @@ func TestControl_ComputedPathIsNotDeclared(t *testing.T) {
 // reading it only ever sees a parameter. Scanning defs alone would miss it, and the
 // request would be refused at runtime for a file the plan legitimately declared.
 func TestControl_PlanArgumentIsDeclared(t *testing.T) {
-	sig := func(name string) ([]string, int, bool) {
+	sig := func(name string) ([]Param, int, bool) {
 		if name == "deliver" {
-			return []string{"src", "dst"}, 2, true
+			return strParams("src", "dst"), 2, true
 		}
 		return nil, 0, false
 	}
@@ -348,7 +348,7 @@ func TestControl_PlanArgumentIsDeclared(t *testing.T) {
 
 // An unmarked argument is an ordinary string: a plan must say which paths are its own.
 func TestControl_UnmarkedPlanArgumentIsNotDeclared(t *testing.T) {
-	sig := func(string) ([]string, int, bool) { return []string{"src", "dst"}, 2, true }
+	sig := func(string) ([]Param, int, bool) { return strParams("src", "dst"), 2, true }
 	plan, err := ParsePlanWithVars(`on web { deliver("conf.j2", "/etc/app.conf") }`,
 		map[string]string{}, nil, sig)
 	if err != nil {
@@ -362,15 +362,15 @@ func TestControl_UnmarkedPlanArgumentIsNotDeclared(t *testing.T) {
 // The scan must reach every position a step can nest in, or a plan that declares a file
 // inside a block or a branch is refused at runtime for a resource it did declare.
 func TestControl_ScanReachesNestedSteps(t *testing.T) {
-	sig := func(string) ([]string, int, bool) { return []string{"src", "dst"}, 2, true }
+	sig := func(string) ([]Param, int, bool) { return strParams("src", "dst"), 2, true }
 	plan, err := ParsePlanWithVars(`
 on web {
   as root { deliver(%"in-block.j2", "/a") }
   parallel { deliver(%"in-parallel.j2", "/b") }
   if dir.exists("/opt") { deliver(%"in-then.j2", "/c") } else { deliver(%"in-else.j2", "/d") }
-}`, map[string]string{}, nil, func(n string) ([]string, int, bool) {
+}`, map[string]string{}, nil, func(n string) ([]Param, int, bool) {
 		if n == "dir.exists" {
-			return []string{"path"}, 1, true
+			return strParams("path"), 1, true
 		}
 		return sig(n)
 	})
