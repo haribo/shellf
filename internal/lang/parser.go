@@ -9,12 +9,16 @@ import (
 	"shellf/internal/proto"
 )
 
-// InstructionSig reports an instruction's positional parameter names and how
-// many are required (the leading params without a default), so the parser can
-// turn `apt.install("nginx")` into Step{Args:{"pkg":"nginx"}} and allow omitting
-// trailing defaulted params. The caller supplies it (from `std.Lookup` +
-// builtins), so signatures live with the defs, not a duplicated map here (#107).
-type InstructionSig func(name string) (params []string, required int, ok bool)
+// InstructionSig reports an instruction's positional parameters and how many are
+// required (the leading ones without a default), so the parser can turn
+// `apt.install("nginx")` into Step{Args:{"pkg":"nginx"}} and allow omitting trailing
+// defaulted params. The caller supplies it (from `std.Lookup`), so signatures live with
+// the defs, not a duplicated map here (#107).
+//
+// It carries the whole Param, types included: a declared type is checked against the
+// argument when the plan is read (ADR-0045), which needs the type here rather than a name
+// alone.
+type InstructionSig func(name string) (params []Param, required int, ok bool)
 
 // defaultSig backs ParsePlan (the no-vars convenience used by tests, which set
 // it — see sig_test.go). Production goes through ParsePlanWithVars with an
@@ -68,6 +72,12 @@ func ParsePackage(planSrc string, libs map[string]string, imports map[string][]s
 	for fname, src := range libs {
 		lp := newParser(src)
 		lp.sig, lp.userDefs = stdSig, defsByName
+		// A file keyed `<dir>/<file>` comes from a sub-package: its defs are
+		// qualified `<dir>.<def>` (ADR-0033). The declaration itself never carries
+		// a dot — the directory names, the author does not.
+		if i := strings.IndexByte(fname, '/'); i > 0 {
+			lp.defPrefix = fname[:i] + "."
+		}
 		for lp.tok.kind != tEOF {
 			if !isDefStart(lp.tok) {
 				lp.fail("package file %s may only contain defs, not %q", fname, lp.tok.val)
@@ -173,17 +183,21 @@ func (p *parser) registerDef(d Def) {
 	if p.userDefs == nil {
 		p.userDefs = map[string]Def{}
 	}
-	if _, dup := p.userDefs[d.Name]; dup {
-		p.fail("duplicate def %q in the package", d.Name)
+	// The name a caller writes: bare in the package root, `<dir>.<def>` in a
+	// sub-package (ADR-0033). Errors name it too, so the message matches what the
+	// author would have to type at the call site.
+	name := p.defPrefix + d.Name
+	if _, dup := p.userDefs[name]; dup {
+		p.fail("duplicate def %q in the package", name)
 	}
-	std := p.stdHas(d.Name)
+	std := p.stdHas(name)
 	switch {
 	case d.Override && !std:
-		p.fail("override def %q overrides nothing (no stdlib def by that name)", d.Name)
+		p.fail("override def %q overrides nothing (no stdlib def by that name)", name)
 	case !d.Override && std:
-		p.fail("def %q shadows a stdlib def; use `override def` to replace it", d.Name)
+		p.fail("def %q shadows a stdlib def; use `override def` to replace it", name)
 	}
-	p.userDefs[d.Name] = d
+	p.userDefs[name] = d
 }
 
 func (p *parser) stdHas(name string) bool {
@@ -222,23 +236,36 @@ func catch(dst *error) {
 }
 
 type parser struct {
-	lex      *lexer
-	tok      token
-	baseVars map[string]string // --vars + plan bindings (lower precedence)
-	setVars  map[string]string // --set overrides (highest precedence)
-	caught   map[string]bool   // vars bound with `?` in the current `on` block (ADR-0009)
-	sig      InstructionSig    // stdlib/builtin instruction parameter names (#107)
-	userDefs map[string]Def    // package + imported defs, resolved before the stdlib (ADR-0014/0015)
+	lex       *lexer
+	tok       token
+	baseVars  map[string]string // --vars + plan bindings (lower precedence)
+	setVars   map[string]string // --set overrides (highest precedence)
+	caught    map[string]bool   // vars bound with `?` in the current `on` block (ADR-0009)
+	sig       InstructionSig    // stdlib/builtin instruction parameter names (#107)
+	userDefs  map[string]Def    // package + imported defs, resolved before the stdlib (ADR-0014/0015)
+	defPrefix string            // sub-package prefix for defs declared in this file (ADR-0033)
 
 	imports         map[string][]string // alias → imported package's def sources (ADR-0015)
 	importedAliases map[string]bool     // aliases already imported (duplicate check)
+
+	// trusted exempts this source from the shell detector (ADR-0040 §6). Only the
+	// embedded stdlib is: it is the layer that reaches the system, and `service.ensure`
+	// is *implemented* with systemctl — a rule forbidding that would forbid the
+	// replacement it recommends. An imported module is user code and is checked.
+	trusted bool
+
+	// inDef says the parser is inside a def body, where a `%"…"` is refused: the
+	// allow-list is the operator's declaration, so only a plan writes it (ADR-0043).
+	// Deliberately not paired with `trusted` — the stdlib gets no exemption, having no
+	// literal control path to exempt.
+	inDef bool
 }
 
 // resolveSig looks up an instruction's parameter names and required count: a
 // package user def first (ADR-0014), then the stdlib/builtins.
-func (p *parser) resolveSig(name string) ([]string, int, bool) {
+func (p *parser) resolveSig(name string) ([]Param, int, bool) {
 	if d, ok := p.userDefs[name]; ok {
-		return paramNames(d), requiredCount(d), true
+		return d.Params, requiredCount(d), true
 	}
 	if p.sig != nil {
 		return p.sig(name)
@@ -263,13 +290,11 @@ func isDefStart(t token) bool {
 	return t.kind == tIdent && (t.val == "def" || t.val == "override")
 }
 
-func paramNames(d Def) []string {
-	names := make([]string, len(d.Params))
-	for i, par := range d.Params {
-		names[i] = par.Name
-	}
-	return names
-}
+// isBoolValue reports whether a value *is* a boolean, however it was written: the literal
+// `true`, the string `"true"`, or a variable holding either. ADR-0045 §2 refuses values
+// that are not booleans, not ways of spelling one — a plan holding a flag in a variable
+// (`--set tls=true`) is ordinary, and forbidding it would buy style at the cost of use.
+func isBoolValue(v string) bool { return v == "true" || v == "false" }
 
 func newParser(src string) *parser {
 	p := &parser{lex: newLexer(src), baseVars: map[string]string{}, caught: map[string]bool{}, importedAliases: map[string]bool{}}
@@ -516,7 +541,17 @@ func copyVars(m map[string]string) map[string]string {
 func (p *parser) step() proto.Step {
 	// `shell` and `if` are special forms, handled before the call() path.
 	if p.tok.kind == tIdent && p.tok.val == "shell" {
-		return p.shellStep()
+		return p.shellStep(false)
+	}
+	// `unsafe shell { … }` (ADR-0040 §3): the block runs exactly like `shell { … }`.
+	// The word buys two things and neither is runtime behaviour — it exempts the body
+	// from the detector, and it is what `grep -r 'unsafe shell'` finds.
+	if p.tok.kind == tIdent && p.tok.val == "unsafe" {
+		p.adv()
+		if p.tok.kind != tIdent || p.tok.val != "shell" {
+			p.fail("`unsafe` marks a shell block: write `unsafe shell { … }`")
+		}
+		return p.shellStep(true)
 	}
 	if p.tok.kind == tIdent && p.tok.val == "if" {
 		return p.ifStep()
@@ -583,7 +618,18 @@ func (p *parser) ifStep() proto.Step {
 // `.changed` flag; or a bare capture (`s` = `s == ok`). See ADR-0008/0009.
 func (p *parser) condition() (*proto.Step, *proto.ResultRef, bool) {
 	if p.tok.kind == tIdent && p.tok.val == "shell" {
-		s := p.shellStep()
+		s := p.shellStep(false)
+		return &s, nil, false
+	}
+	// A guard is shell like any other, so it is checked like any other — and it can be
+	// marked: `if !unsafe shell { mkdir /var/lock/x } { … }`. An escape hatch that does
+	// not reach every position is a hole, not a hatch.
+	if p.tok.kind == tIdent && p.tok.val == "unsafe" {
+		p.adv()
+		if p.tok.kind != tIdent || p.tok.val != "shell" {
+			p.fail("`unsafe` marks a shell block: write `unsafe shell { … }`")
+		}
+		s := p.shellStep(true)
 		return &s, nil, false
 	}
 	name := p.expect(tIdent, "condition").val
@@ -649,7 +695,7 @@ func (p *parser) inlineCond(s proto.Step) (*proto.Step, *proto.ResultRef, bool) 
 // shellStep parses `shell <line>` or `shell { … }` with an optional
 // `unless { … }` guard. When p.tok is the `shell`/`unless` keyword, the lexer
 // sits right after it, so raw capture reads from there.
-func (p *parser) shellStep() proto.Step {
+func (p *parser) shellStep(unsafe bool) proto.Step {
 	// `shell(<interp>) as <user> { … }` — both read from the raw stream, since
 	// the shell body itself is raw-captured (ADR-0012 / ADR-0011).
 	interp := p.shellInterp()
@@ -662,6 +708,11 @@ func (p *parser) shellStep() proto.Step {
 	body, err := p.lex.rawShellBody()
 	if err != nil {
 		panic(parseErr{err})
+	}
+	if !unsafe && !p.trusted {
+		if msg := checkShellBody(body); msg != "" {
+			p.fail("%s", msg)
+		}
 	}
 	p.adv() // resync to the token after the shell body
 
@@ -729,17 +780,43 @@ func (p *parser) asBlock() proto.Step {
 	return proto.Step{Become: user, Block: p.block()}
 }
 
+// Renamed maps every pre-ADR-0032 instruction name to its package form. It exists
+// only to turn "unknown instruction" into an actionable message — the old names are
+// NOT accepted (ADR-0032 §4: no aliases, no transition). A plan using one still fails;
+// it just says what to write instead.
+var Renamed = map[string]string{
+	"file-write": "file.write", "file-mode": "file.mode", "file-line": "file.line",
+	"file-delete": "file.delete", "file-replace": "file.replace",
+	"file-exists": "file.exists", "file-download": "file.download",
+	"file-copy": "file.copy", "template": "file.template",
+	"dir-ensure": "dir.ensure", "dir-exists": "dir.exists", "dir-owner": "dir.owner",
+	"dir-copy":        "dir.copy",
+	"archive-extract": "archive.extract", "archive-extract-member": "archive.extract-member",
+	"git-clone": "git.clone", "git-sync": "git.sync",
+	"service": "service.ensure", "service-restart": "service.restart",
+	"service-reload":        "service.reload",
+	"systemd-daemon-reload": "systemd.daemon-reload",
+	"user-ensure":           "user.ensure", "user-group": "user.group",
+	"http-check": "http.check", "wait-for": "http.wait-for",
+}
+
 func (p *parser) call(name string) proto.Step {
-	argNames, required, ok := p.resolveSig(name)
+	params, required, ok := p.resolveSig(name)
 	if !ok {
+		if to, was := Renamed[name]; was {
+			p.fail("unknown instruction %q — renamed to %q (ADR-0032)", name, to)
+		}
 		p.fail("unknown instruction %q", name)
 	}
 	p.expect(tLParen, "(")
-	type argv struct{ val, ref string }
+	type argv struct {
+		val, ref string
+		control  bool
+	}
 	var vals []argv
 	for p.tok.kind != tRParen {
-		v, r := p.callArg()
-		vals = append(vals, argv{v, r})
+		v, r, ctl := p.callArg()
+		vals = append(vals, argv{v, r, ctl})
 		if p.tok.kind == tComma {
 			p.adv()
 		} else {
@@ -753,28 +830,48 @@ func (p *parser) call(name string) proto.Step {
 		caught = true
 	}
 
-	if len(vals) < required || len(vals) > len(argNames) {
-		if required == len(argNames) {
+	if len(vals) < required || len(vals) > len(params) {
+		if required == len(params) {
 			p.fail("%s expects %d argument(s), got %d", name, required, len(vals))
 		}
-		p.fail("%s expects %d–%d argument(s), got %d", name, required, len(argNames), len(vals))
+		p.fail("%s expects %d–%d argument(s), got %d", name, required, len(params), len(vals))
 	}
 	// Map the supplied args positionally; omitted trailing params (which must be
 	// defaulted) are filled by the def at eval (ADR-0013).
 	args := map[string]string{}
 	var refs map[string]string
+	var control []string
 	for i := 0; i < len(vals); i++ {
-		n := argNames[i]
+		n := params[i].Name
 		if vals[i].ref != "" {
+			// A bare identifier is a reference: a plan binding, or a captured result
+			// resolved on the target. When it names something known here, its value is
+			// checked like any other (ADR-0045 §2) — `flag = "yes"` must fail at the plan,
+			// not at the service. A captured result cannot be checked here, and does not
+			// need to be: `r.changed` is a boolean by construction.
+			if v, known := p.lookup(vals[i].ref); known && params[i].Type == "bool" && !isBoolValue(v) {
+				p.fail("%s: %s expects a boolean, got %q from %s — write true or false",
+					name, n, v, vals[i].ref)
+			}
 			if refs == nil {
 				refs = map[string]string{}
 			}
 			refs[n] = vals[i].ref
 		} else {
+			// The declared type, checked against the value the plan actually passes
+			// (ADR-0045 §2). Variables are already interpolated here, so `"yes"` is
+			// caught before a host is contacted rather than stopping a service on one.
+			// A `ref` is skipped: what a captured result holds is only known at run time.
+			if params[i].Type == "bool" && !isBoolValue(vals[i].val) {
+				p.fail("%s: %s expects a boolean, got %q — write true or false", name, n, vals[i].val)
+			}
 			args[n] = vals[i].val
+			if vals[i].control {
+				control = append(control, n)
+			}
 		}
 	}
-	return proto.Step{Instruction: name, Args: args, Refs: refs, Caught: caught, With: p.parseWith()}
+	return proto.Step{Instruction: name, Args: args, Refs: refs, Control: control, Caught: caught, With: p.parseWith()}
 }
 
 // arg resolves a binding's value (plan top-level binding or --vars file entry)
@@ -813,27 +910,38 @@ func (p *parser) arg() string {
 // returned as a ref name (empty value), NOT resolved: bare-identifier arguments
 // are resolved per host at orchestration time (ADR-0003 §5). Strings are still
 // interpolated at parse time (interpolation is global-only).
-func (p *parser) callArg() (value, ref string) {
+func (p *parser) callArg() (value, ref string, control bool) {
 	switch {
+	case p.tok.kind == tPercent:
+		// `%"conf.j2"` — a path on the control host (ADR-0034 §1). The value travels as
+		// an ordinary string; the marker is recorded on the step, so the set of files
+		// the plan needs can be derived before anything is sent (ADR-0031 §3).
+		p.adv()
+		if p.tok.kind != tString && p.tok.kind != tRawString {
+			p.fail("%% must be followed by a path string in an argument, got %q", p.tok.val)
+		}
+		v := p.interpolate(p.tok.val)
+		p.adv()
+		return v, "", true
 	case p.tok.kind == tString:
 		v := p.interpolate(p.tok.val)
 		p.adv()
-		return v, ""
+		return v, "", false
 	case p.tok.kind == tRawString:
 		v := p.tok.val
 		p.adv()
-		return v, ""
+		return v, "", false
 	case p.tok.kind == tIdent && (p.tok.val == "true" || p.tok.val == "false"):
 		v := p.tok.val
 		p.adv()
-		return v, ""
+		return v, "", false
 	case p.tok.kind == tIdent:
 		name := p.tok.val
 		p.adv()
-		return "", name
+		return "", name, false
 	default:
 		p.fail("expected a string, bool, or variable argument, got %q", p.tok.val)
-		return "", "" // unreachable
+		return "", "", false // unreachable
 	}
 }
 

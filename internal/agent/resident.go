@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -22,12 +23,29 @@ func ServeResident(workdir, binPath string, ex engine.Executor, ttl time.Duratio
 	if err := os.MkdirAll(workdir, 0o700); err != nil {
 		return err
 	}
+	// Defence in depth (#413). The control host creates this directory exclusively and
+	// vets it before launching us, so reaching here with a workdir somebody else can write
+	// means that guard was bypassed or the directory changed under it. MkdirAll above does
+	// not fix an existing directory's mode, and this agent executes every `req-*.json` it
+	// finds — including steps that escalate. Refuse rather than serve.
+	if err := ownedAndUnwritable(workdir); err != nil {
+		return fmt.Errorf("refusing to serve from %s: %v", workdir, err)
+	}
 	_ = os.WriteFile(filepath.Join(workdir, "agent.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600)
+
+	// The control channel (ADR-0031). Best-effort: a target where the socket cannot be
+	// created still runs every plan that asks nothing of the control host, which is
+	// almost all of them. Failing the agent outright would trade a working majority for
+	// a feature the plan may never use.
+	ch, cherr := Listen(workdir)
+	if cherr == nil {
+		defer func() { _ = ch.Close() }()
+	}
 
 	last := time.Now()
 	for {
 		if req := nextRequest(workdir); req != "" {
-			processJob(workdir, req, ex)
+			processJob(workdir, req, ex, ch)
 			last = time.Now()
 			continue
 		}
@@ -61,7 +79,7 @@ func nextRequest(workdir string) string {
 
 // processJob runs a claimed request (req-<id>.json.claiming) and writes
 // out-<id>.json (atomically) + done-<id>, then removes the claimed file.
-func processJob(workdir, reqPath string, ex engine.Executor) {
+func processJob(workdir, reqPath string, ex engine.Executor, ch *Channel) {
 	base := strings.TrimSuffix(filepath.Base(reqPath), ".claiming")
 	id := strings.TrimSuffix(strings.TrimPrefix(base, "req-"), ".json")
 
@@ -75,7 +93,7 @@ func processJob(workdir, reqPath string, ex engine.Executor) {
 	if err := json.Unmarshal(data, &req); err != nil {
 		resp.Error = "decode: " + err.Error()
 	} else {
-		resp = runRequest(req, ex) // shared path: pre-flight + run (ADR-0012)
+		resp = runRequest(req, ex, ch) // shared path: pre-flight + run (ADR-0012)
 	}
 
 	out, _ := json.Marshal(resp)

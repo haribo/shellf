@@ -1,0 +1,112 @@
+# Every stdlib def, exercised against a real target (#367).
+#
+# Not a showcase and not an example: it is the plan that makes "every def is tested, no
+# exception" a fact rather than an intention. `test/e2e/def-coverage.sh` reads the calls
+# below and fails the build when a def has none, so a new instruction arrives with its
+# coverage or turns the build red.
+#
+# It runs twice in the harness: once to apply, once to assert every def reports `already`.
+# A def that cannot converge is a def whose idempotence nobody checked.
+on target {
+    # --- files and directories ------------------------------------------------------
+    dir.ensure("/tmp/cov")
+    shell { touch /tmp/cov/lined.txt /tmp/cov/env.txt }
+    # One file each: `file.write` rewrites its whole content, so sharing a file with
+    # `file.line` and `file.replace` would have the three undo each other every run and
+    # none of them would ever converge.
+    file.write("/tmp/cov/written.txt", "one")
+    file.mode("/tmp/cov/written.txt", "640")
+    file.line("/tmp/cov/lined.txt", "appended-line")
+    file.replace("/tmp/cov/env.txt", "KEY", "value")
+    file.copy(%"tree/hello.txt", "/tmp/cov/copied.txt")
+    file.delete("/tmp/cov/gone.txt")
+
+    if dir.exists("/tmp/cov") { file.write("/tmp/cov/dir-exists", "yes") }
+
+    # --- users, groups, ownership ---------------------------------------------------
+    user.ensure("covuser", "/bin/sh")
+    user.group("covuser", "adm")
+    # Its own directory, not the shared one: chowning /tmp/cov to another user would take
+    # away the connecting user's access to everything else this plan puts there.
+    dir.ensure("/tmp/cov/owned")
+    dir.owner("/tmp/cov/owned", "covuser")
+
+    # --- archives -------------------------------------------------------------------
+    # `archive.extract` reads a *target* path, so the tarball is delivered first: two
+    # defs chained, which is also how a real plan uses them.
+    file.copy(%"cov/sample.tar.gz", "/tmp/cov/sample.tar.gz")
+    archive.extract("/tmp/cov/sample.tar.gz", "/tmp/cov/extracted")
+    archive.extract-member("/tmp/cov/sample.tar.gz", "/tmp/cov/member", "inner/one.txt")
+
+    # `dir.sync` deletes what the source does not have — the one word that separates it
+    # from `dir.copy`. The extra file is created here so the removal is observable: a
+    # sync that deletes nothing proves nothing.
+    dir.ensure("/tmp/cov/mirror")
+    shell { touch /tmp/cov/mirror/stale.txt }
+    dir.sync(%"tree", "/tmp/cov/mirror")
+
+    # `compare` is the third argument both transfers take. It was documented and refused
+    # for `dir.copy` — a stale builtin signature shadowed the def (#414) — so it is
+    # exercised here in the form the docs print.
+    dir.copy(%"tree", "/tmp/cov/compared", "sha256")
+
+    # --- validated configs ----------------------------------------------------------
+    sudo.write("covrule", "covuser ALL=(ALL) NOPASSWD: /bin/true")
+    sshd.config("covlimit", "MaxAuthTries 4")
+
+    # --- services -------------------------------------------------------------------
+    service.ensure("ssh", "true", "true")
+    service.restart("ssh")
+    service.reload("ssh")
+    systemd.daemon-reload()
+
+    # --- packages -------------------------------------------------------------------
+    apt.update()
+    apt.install("nginx-light")
+
+    # --- http, over the nginx just installed ----------------------------------------
+    service.ensure("nginx", "true", "true")
+    as root {
+        shell { printf 'shellf-download-probe\n' > /var/www/html/probe.txt }
+    }
+    http.wait-for("http://127.0.0.1/probe.txt", "20")
+    http.check("http://127.0.0.1/probe.txt", "200")
+    file.download("http://127.0.0.1/probe.txt", "/tmp/cov/downloaded.txt",
+                  "3bafea9566bf656dbaafd4655764dad11e8f537c1d937ceefcc4e6c90a0058ac")
+
+    # --- git, against a local bare repo ---------------------------------------------
+    # Created as the connecting user, not root: git refuses a repository owned by someone
+    # else ("dubious ownership"), so a root-owned seed would fail the clone for a reason
+    # that has nothing to do with shellf.
+    # `unsafe shell` (ADR-0040): this seeds a git repository, and the `mkdir -p` is one
+    # step of a sequence that also `cd`s into it — splitting it out would change what the
+    # block does. Marked rather than rewritten, which is what the marker is for, and it
+    # puts the new form on a real target rather than only in a unit test.
+    unsafe shell {
+        if [ ! -d /tmp/cov/repo.git ]; then
+            mkdir -p /tmp/cov/seed && cd /tmp/cov/seed
+            git init -q -b main . && git config user.email e@x && git config user.name e
+            echo seed > seed.txt && git add -A && git commit -qm seed
+            git clone -q --bare /tmp/cov/seed /tmp/cov/repo.git
+        fi
+    }
+    git.clone("/tmp/cov/repo.git", "/tmp/cov/cloned")
+    git.sync("/tmp/cov/repo.git", "/tmp/cov/synced", "main")
+
+    # --- docker ---------------------------------------------------------------------
+    docker.network("covnet")
+    dir.ensure("/tmp/cov/stack")
+    file.write("/tmp/cov/stack/docker-compose.yml",
+               "services:\n  idle:\n    image: debian:stable-slim\n    command: sleep 300\n")
+    docker.compose-up("/tmp/cov/stack")
+    docker.compose-restart("/tmp/cov/stack", "idle")
+
+    # --- firewall -------------------------------------------------------------------
+    # Order matters and is the point: opening 22 before denying inbound is what keeps the
+    # harness's own SSH alive. A plan that enables a firewall before opening its own way
+    # in locks the operator out — the exact class of mistake shellf exists to make
+    # previewable.
+    ufw.open("22", "tcp")
+    ufw.default("deny", "allow")
+    ufw.enable()
+}

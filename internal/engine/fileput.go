@@ -12,13 +12,13 @@ import (
 // Request — decoded in Go, never through a shell arg/env (which would hit ARG_MAX
 // for a large file). To honor `as root`, the decoded bytes are staged in a temp
 // file and placed by the (possibly escalated) executor. Idempotent by content
-// sha256. Built by `dir-copy`'s control-side resolution (ADR-0028).
+// sha256. Built by `dir.copy`'s control-side resolution (ADR-0028).
 type FilePut struct {
 	Path    string
 	Content string // base64
 }
 
-func (f FilePut) Name() string       { return "file-put" }
+func (f FilePut) Name() string       { return "file.put" }
 func (f FilePut) ChangedTag() string { return "written" }
 
 func (f FilePut) decode() ([]byte, error) { return base64.StdEncoding.DecodeString(f.Content) }
@@ -53,6 +53,26 @@ func (f FilePut) Guard(ex Executor) *Result {
 
 func (f FilePut) Preview(Executor) *ShellResult { return nil } // binary — nothing to diff
 
+// placeCmd puts the staged bytes at $dst, atomically. `cp "$tmp" "$dst"` wrote *through*
+// the destination's inode — measured, 544 → 544 across a rewrite — so a reader that opens
+// the file mid-copy, a daemon reloading its config, sees it truncated. A rename on the
+// same filesystem cannot be observed half-done, which is why the `file.write` def has
+// always staged and renamed; the primitive underneath it did not (#389).
+//
+// The staging file sits beside the destination and is created **by the executor**, not by
+// os.CreateTemp: the agent's own user may not be able to write in that directory while the
+// escalated executor can, and moving the temp there directly would break `as root`.
+//
+// `cp -p` of the existing destination first carries its mode and owner onto the staging
+// file, so a rewrite preserves them; when there is nothing to copy from, the staging file
+// inherits the 0600 of the temp, which is what a fresh delivery already produced.
+const placeCmd = `mkdir -p "$(dirname "$dst")"
+staged="$dst.shellf.$$"
+trap 'rm -f "$staged"' EXIT
+if [ -f "$dst" ]; then cp -p "$dst" "$staged"; fi
+cp "$tmp" "$staged"
+mv -f "$staged" "$dst"`
+
 func (f FilePut) Apply(ex Executor) Result {
 	b, err := f.decode()
 	if err != nil {
@@ -72,7 +92,7 @@ func (f FilePut) Apply(ex Executor) Result {
 	}
 	// Place it through the (possibly escalated) executor so `as root` is honored;
 	// the bytes are in the temp file, never on a command line.
-	r := ex.Shell(`mkdir -p "$(dirname "$dst")" && cp "$tmp" "$dst"`, Env{"tmp": tmp.Name(), "dst": f.Path})
+	r := ex.Shell(placeCmd, Env{"tmp": tmp.Name(), "dst": f.Path})
 	if !r.OK() {
 		return ErrShell("runtime", r)
 	}

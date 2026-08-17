@@ -1,0 +1,50 @@
+# Deliver a validated sudoers drop-in (#328).
+#
+# An invalid sudoers file breaks `sudo`, and shellf escalates through sudo — so a bad
+# one locks the operator out of their own machine, and out of shellf's own way back in.
+# `visudo -cf` is the official checker and is useless once the file is in place.
+#
+# The validation lives in `check`, which runs before any `apply` and whose outcome wins:
+# a refused content never reaches `file.write`. It writes its own temporary, so nothing
+# is staged at the destination and nothing is left behind on a refusal. `check` also
+# runs in `--dry-run`, so a broken rule is caught before any real run.
+#
+# Two things `visudo -cf` does not check, and that make a rule silently inert:
+#   - the file mode: sudo requires 0440 and ignores the file otherwise;
+#   - the filename: sudo skips names containing a dot or ending in `~`.
+# Both are handled here, because a rule that looks installed and does nothing is worse
+# than one that fails.
+def write(name: str, content: str) as root {
+    # This def composes in `apply`, and `apply` never runs in `--dry-run` — so without an
+    # `observe` of its own it has no opinion there, and previews `would.written` on a host
+    # whose drop-in is already correct (#340). The two fields mirror what `apply` does:
+    # the content, and the mode sudo insists on.
+    observe {
+        f = "/etc/sudoers.d/${name}"
+        return state(synced: shell { test -f "$f" && printf '%s\n' "$content" | cmp -s - "$f" }.exit == 0, secured: shell { [ "$(stat -c '%a' "$f" 2>/dev/null)" = "440" ] }.exit == 0)
+    }
+    check {
+        n = shell { printf '%s' "$name" | grep -qE '^[A-Za-z0-9_-]+$' }
+        if !n { return err.badName(n) }
+
+        r = shell {
+            tmp=$(mktemp)
+            trap 'rm -f "$tmp"' EXIT
+            printf '%s\n' "$content" > "$tmp"
+            visudo -cf "$tmp"
+        }
+        if !r { return err.validation(r) }
+    }
+    apply {
+        file.write("/etc/sudoers.d/${name}", "${content}\n")
+        # 0440 is not decoration: sudo *ignores* a drop-in with any other mode and
+        # reports "bad permissions", so a rule written 644 looks installed and does
+        # nothing. Verified with `visudo -c` on a real file.
+        #
+        # Written "440", not "0440": file.mode compares against `stat -c %a`, which
+        # prints no leading zero — "0440" would never converge and would re-chmod on
+        # every run, making `.changed` always true.
+        file.mode("/etc/sudoers.d/${name}", "440")
+        return ok.written
+    }
+}

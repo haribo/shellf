@@ -73,7 +73,7 @@ func TestArchiveExtractMember(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "rel.tgz")
 	dst := filepath.Join(dir, "bin", "tool")
-	def, ok := Lookup("archive-extract-member")
+	def, ok := Lookup("archive.extract-member")
 	if !ok {
 		t.Fatal("archive-extract-member not found")
 	}
@@ -120,7 +120,7 @@ func TestArchiveExtract_ReExtractsOnArchiveChange(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "a.tgz")
 	dst := filepath.Join(dir, "out")
-	def, ok := Lookup("archive-extract")
+	def, ok := Lookup("archive.extract")
 	if !ok {
 		t.Fatal("archive-extract not found")
 	}

@@ -171,7 +171,7 @@ func TestAgentBecome_ShellStepEscalates(t *testing.T) {
 
 func TestServe_Sequential_HaltsOnErr(t *testing.T) {
 	f := newFake()
-	f.set(dpkgScript, "a", 1) // a not installed
+	f.set(dpkgScript, "a", 1)  // a not installed
 	f.set(aptScript, "a", 100) // a install fails → err.runtime
 
 	resp := serve(t, f, proto.Request{Mode: "apply", Steps: []proto.Step{apt("a"), apt("b")}})
@@ -215,7 +215,7 @@ func TestServe_UserDef_Resolves(t *testing.T) {
 	f.set(`echo "$msg"`, "", 0)
 	resp := serve(t, f, proto.Request{
 		Mode:  "apply",
-		Defs:  map[string]string{"greet": `def greet(msg: str) { apply { shell { echo "$msg" } } }`},
+		Defs:  map[string]string{"greet": `def greet(msg: str) { apply { shell { echo "$msg" } return ok.done } }`},
 		Steps: []proto.Step{{Instruction: "greet", Args: map[string]string{"msg": "hi"}}},
 	})
 	if len(resp.Results) != 1 || resp.Results[0].Category != "ok" {
@@ -233,7 +233,7 @@ func TestServe_ImportedDef_QualifiedName(t *testing.T) {
 	f.set(`run-deploy`, "", 0)
 	resp := serve(t, f, proto.Request{
 		Mode:  "apply",
-		Defs:  map[string]string{"web.deploy": `def deploy(port: str) { apply { shell { run-deploy } } }`},
+		Defs:  map[string]string{"web.deploy": `def deploy(port: str) { apply { shell { run-deploy } return ok.done } }`},
 		Steps: []proto.Step{{Instruction: "web.deploy", Args: map[string]string{"port": "8080"}}},
 	})
 	if len(resp.Results) != 1 || resp.Results[0].Category != "ok" {
@@ -245,16 +245,17 @@ func TestServe_ImportedDef_QualifiedName(t *testing.T) {
 }
 
 func TestServe_UserDef_OverridesStdlib(t *testing.T) {
-	// `override def dir-ensure` replaces the stdlib one — the user shell runs, the
-	// stdlib's own observe/apply shells do not (ADR-0014). Only bare-named stdlib
-	// defs are overridable; a qualified name like `apt.install` has no def-name
-	// spelling.
+	// An override replaces the stdlib def — the user shell runs, the stdlib's own
+	// observe/apply shells do not (ADR-0014). The source declares a bare `ensure`
+	// (a dot is never valid in a def name, ADR-0033); the qualification lives in the
+	// map key, which is what the agent looks up. Since ADR-0032 gave every stdlib
+	// instruction a package, this is how any of them is overridden.
 	f := newFake()
 	f.set(`my-mkdir "$path"`, "", 0)
 	resp := serve(t, f, proto.Request{
 		Mode:  "apply",
-		Defs:  map[string]string{"dir-ensure": `override def dir-ensure(path: str) { apply { shell { my-mkdir "$path" } } }`},
-		Steps: []proto.Step{{Instruction: "dir-ensure", Args: map[string]string{"path": "/opt"}}},
+		Defs:  map[string]string{"dir.ensure": `override def ensure(path: str) { apply { shell { my-mkdir "$path" } return ok.done } }`},
+		Steps: []proto.Step{{Instruction: "dir.ensure", Args: map[string]string{"path": "/opt"}}},
 	})
 	if resp.Results[0].Category != "ok" {
 		t.Fatalf("override def should run: %+v", resp.Results)

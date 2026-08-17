@@ -1,0 +1,106 @@
+# Deploy a containerized blog: a docker-compose stack behind ufw, its .env
+# rendered per host, its DB password passed in as a secret. A fuller tour of the
+# language than the webserver example.
+#
+#   shellf run --inventory examples/inventories/inventory.shellf \
+#     --secret-file db_password=./db_password \
+#     --dry-run examples/plans/blog.shellf
+#
+#   shellf run    --inventory examples/inventories/inventory.shellf --secret-file db_password=./db_password examples/plans/blog.shellf
+#   shellf status --inventory examples/inventories/inventory.shellf examples/plans/blog.shellf
+#
+# Flags come before the plan file. The stack's compose file is delivered from
+# `assets/blog/`, so the plan is self-contained; the point here is the shellf
+# orchestration around it.
+
+# Defs live under `defs/<package>/` and are called qualified by the directory
+# (ADR-0038 §2): `common.banner` is defs/common/, `blog.data-dir` is defs/blog/.
+# No import and no flag — the name says where the def is.
+
+# LOCAL IMPORT (ADR-0015): a def package that lives outside this project's `defs/`,
+# named by its path and called qualified. Inside the project a package is found by the
+# layout and needs no import — this shows the other case, sharing across projects.
+import site "../shared"
+
+on app {
+    common.banner("Managed by shellf — do not edit by hand")
+    site.login-notice("blog host — managed by shellf")
+
+    # Firewall: deny inbound by default, then open exactly the stack's ports. A
+    # `for` over a literal list (ADR-0017) is the clearest form for N ports.
+    #
+    # **22 comes first, and the order is the lesson.** Enabling a deny-inbound firewall
+    # without an SSH rule locks you out of the machine you are configuring — and shellf
+    # would report every step green while doing it. This example shipped in that order
+    # until it was run for the first time (#356).
+    ufw.open("22", "tcp")
+    ufw.default("deny", "allow")
+    for port in ["80", "443"] {
+        ufw.open("${port}", "tcp")
+    }
+    ufw.enable()
+
+    # A private network for the stack's services.
+    docker.network("blog-net")
+
+    # The stack's files live under /opt/blog. `blog.data-dir` is a USER DEF from
+    # `defs/blog/` (ADR-0038): the directory names the package, so it resolves as
+    # `blog.data-dir` with no import.
+    blog.data-dir("/opt/blog/data")
+
+    # `parallel { }` runs independent steps at once on this host (ADR-0018). Declared, not
+    # inferred: the shell is opaque, so shellf cannot know two commands do not collide —
+    # the author says so. It sits *after* `blog.data-dir` and under `as root` because
+    # both siblings live under the /opt/blog it creates: parallelism removes the wait
+    # between two steps, never the order between a directory and its parent.
+    as root {
+        parallel {
+            dir.ensure("/opt/blog/logs")
+            dir.ensure("/opt/blog/cache")
+        }
+    }
+
+    # Render the .env per host (ADR-0019/0024): `@{domain}` is the host's inventory
+    # var, `@{db_password}` is the secret passed via --secret-file (redacted in all
+    # output, ADR-0018). Config files keep their own `${...}` untouched.
+    # `as root`, because `blog.data-dir` created /opt/blog as root and the connecting
+    # user cannot write there. `file.template` is path-dependent, not intrinsically
+    # privileged (ADR-0011), so the caller escalates — the same reason `webserver.shellf`
+    # wraps its writes to /opt/dogfood.
+    as root {
+        file.template(%"blog/compose.env.tmpl", "/opt/blog/.env")
+    }
+
+    # The stack's compose file, delivered from `assets/` like any other content. An
+    # example that assumes a file it does not ship is an example nobody can run — and one
+    # nothing can test.
+    as root {
+        file.copy(%"blog/docker-compose.yml", "/opt/blog/docker-compose.yml")
+
+        # A triple-quoted string is RAW: `${…}` stays verbatim, because it is compose's
+        # own syntax and the target resolves it (ADR-0021). A plain string would have
+        # shellf substitute it here, and compose would receive an empty value.
+        file.write("/opt/blog/stack.env", """
+            COMPOSE_PROJECT_NAME=blog
+            LOG_PATH=${PWD}/logs
+            """)
+    }
+
+    # Bring the stack up. `compose-up` is action-shaped; `--dry-run` still previews
+    # what it would recreate (docker compose --dry-run, ADR-0029).
+    # The two defs written for this project: a delegation over a primitive, and a job with
+    # its own phases. `keep` is omitted — its default applies (ADR-0013).
+    # `blog.deliver` is path-dependent, so the *caller* escalates — same rule as
+    # `file.template` above. `blog.backup` needs none: it declares `as root` on the def
+    # itself, because a backup of a root-owned tree is privileged wherever it is called
+    # from (ADR-0011). Which of the two applies is a property of the def, not a habit.
+    as root {
+        blog.deliver(%"blog/docker-compose.yml", "/opt/blog/compose.reference.yml")
+    }
+    blog.backup("/opt/blog/data")
+
+    # `with { }` overrides a variable for this call only (ADR-0022) — here the compare
+    # mode, without touching any other transfer in the plan.
+    stack = docker.compose-up("/opt/blog") with { build = "false" }
+    if stack.changed { shell { logger "shellf: blog stack recreated" } }
+}

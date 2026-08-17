@@ -1,11 +1,14 @@
 package lang
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseDef_Install(t *testing.T) {
 	src := `
 def install(pkg: str) {
-    pre-check {
+    check {
         if pkg == "" { return err.pkgMustNotBeNull }
     }
     observe {
@@ -39,16 +42,16 @@ def install(pkg: str) {
 		t.Fatalf("return: %+v", d.Return)
 	}
 
-	// pre-check: `if pkg == "" { return err.pkgMustNotBeNull }`
+	// check: `if pkg == "" { return err.pkgMustNotBeNull }`
 	iff, ok := d.Phases[0].Stmts[0].(IfStmt)
 	if !ok {
-		t.Fatalf("pre-check stmt: %T", d.Phases[0].Stmts[0])
+		t.Fatalf("check stmt: %T", d.Phases[0].Stmts[0])
 	}
 	if b, ok := iff.Cond.(Binary); !ok || b.Op != "==" {
-		t.Fatalf("pre-check cond: %+v", iff.Cond)
+		t.Fatalf("check cond: %+v", iff.Cond)
 	}
 	if r, ok := iff.Body[0].(ReturnStmt); !ok || r.Outcome.Category != "err" || r.Outcome.Tag != "pkgMustNotBeNull" {
-		t.Fatalf("pre-check return: %+v", iff.Body)
+		t.Fatalf("check return: %+v", iff.Body)
 	}
 
 	// observe: `return state(installed: shell {…}.ok)` — a StateReturnStmt whose
@@ -161,15 +164,39 @@ func TestParseDef_Interp_Unknown(t *testing.T) {
 
 func TestParseDef_Errors(t *testing.T) {
 	cases := []string{
-		`def x(pkg str) { return ok.a }`,                 // missing colon in param
-		`def x() { apply { if a { return nope.tag } } }`, // unknown outcome category
-		`def x() { apply { shell { echo hi } }`,          // unterminated def (missing })
-		`def x() { apply { 5 == } }`,                     // dangling operator
-		`def x() { apply {} return ok.a }`,               // return outside a phase (ADR-0007)
+		`def x(pkg str) { return ok.a }`,                                // missing colon in param
+		`def x() { apply { if a { return nope.tag } return ok.done } }`, // unknown outcome category
+		`def x() { apply { shell { echo hi } return ok.done }`,          // unterminated def (missing })
+		`def x() { apply { 5 == return ok.done } }`,                     // dangling operator
+		`def x() { apply { return ok.done } return ok.a }`,              // return outside a phase (ADR-0007)
 	}
 	for _, src := range cases {
 		if _, err := ParseDefs(src); err == nil {
 			t.Fatalf("expected error for: %s", src)
 		}
+	}
+}
+
+// #418, ADR-0045 §1: the type vocabulary is closed. `def t(p: banana)` parsed and ran —
+// the parser read an identifier and nothing read it back, so the annotation documented an
+// intent no one enforced.
+func TestParams_TypeVocabularyIsClosed(t *testing.T) {
+	for _, ok := range []string{
+		`def t(p: str) { apply { shell { echo "$p" } return ok.done } }`,
+		`def t(p: bool) { apply { shell { echo "$p" } return ok.done } }`,
+	} {
+		if _, err := ParseDefs(ok); err != nil {
+			t.Fatalf("must parse: %s\n%v", ok, err)
+		}
+	}
+	_, err := ParseDefs(`def t(p: banana) { apply { shell { echo "$p" } return ok.done } }`)
+	if err == nil {
+		t.Fatal("an invented type must be refused, not carried as decoration")
+	}
+	if !strings.Contains(err.Error(), "banana") {
+		t.Fatalf("the refusal must name what was written: %v", err)
+	}
+	if !strings.Contains(err.Error(), "str") || !strings.Contains(err.Error(), "bool") {
+		t.Fatalf("the refusal must name what is accepted: %v", err)
 	}
 }

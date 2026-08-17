@@ -1,6 +1,7 @@
 package lang
 
 import (
+	"strings"
 	"testing"
 
 	"shellf/internal/engine"
@@ -9,7 +10,7 @@ import (
 // The dogfood target: apt-install expressed as a shellf def.
 const aptDef = `
 def apt-install(pkg: str) {
-    pre-check {
+    check {
         if pkg == "" { return err.pkgMustNotBeNull }
     }
     observe {
@@ -86,13 +87,13 @@ func runApt(t *testing.T, f *evalFake, pkg string, mode engine.Mode) engine.Resu
 	return res
 }
 
-func TestEvalDef_PreCheckEmpty(t *testing.T) {
+func TestEvalDef_CheckEmpty(t *testing.T) {
 	f := &evalFake{}
 	if got := runApt(t, f, "", engine.Apply).String(); got != "err.pkgMustNotBeNull" {
 		t.Fatalf("got %s, want err.pkgMustNotBeNull", got)
 	}
 	if len(f.calls) != 0 {
-		t.Fatal("pre-check must not touch the executor")
+		t.Fatal("check must not touch the executor")
 	}
 }
 
@@ -186,7 +187,7 @@ func TestEvalDef_WithOverridesEnv(t *testing.T) {
 
 // ADR-0010: `.ok` on a shell result is gone — success is `if r` / `.exit == 0`.
 func TestEvalDef_ShellDotOkRejected(t *testing.T) {
-	src := `def q(p: str) { apply { r = shell { test -d "$p" } if r.ok { return ok.yes } } }`
+	src := `def q(p: str) { apply { r = shell { test -d "$p" } if r.ok { return ok.yes } return ok.done } }`
 	defs, err := ParseDefs(src) // `.ok` still parses as a Field; it fails at eval
 	if err != nil {
 		t.Fatal(err)
@@ -197,22 +198,48 @@ func TestEvalDef_ShellDotOkRejected(t *testing.T) {
 	}
 }
 
-// ADR-0007: an apply with no trailing return yields an implicit, tag-less `ok`
-// (and a tag-less `would` in check).
-func TestEvalDef_ImplicitOk_NoTrailingReturn(t *testing.T) {
+// ADR-0037 §1 reverses ADR-0007 §4: an `apply` names its verdict. The implicit tag-less
+// `ok` is gone, because it made a forgotten `return` and a deliberate "nothing to
+// declare" report identically — an omission read as a success. Measured before removing
+// it: no stdlib def relied on it, all 31 `apply` blocks already returned.
+func TestParseDef_ApplyMustEndWithAReturn(t *testing.T) {
+	for name, src := range map[string]string{
+		"no trailing return": `def touch(path: str) {
+    apply {
+        r = shell { touch "$path" }
+        if r.exit != 0 { return err.runtime(r) }
+    }
+}`,
+		"empty apply": `def touch(path: str) { apply { } }`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := ParseDefs(src)
+			if err == nil {
+				t.Fatal("an apply without a trailing return must be refused")
+			}
+			// The message has to say what to write: a refusal the author cannot act on
+			// is worse than the implicit ok it replaces.
+			if !strings.Contains(err.Error(), "return ok.") {
+				t.Fatalf("the error must name the fix, got %v", err)
+			}
+		})
+	}
+}
+
+// A trailing return is still what `would.<tag>` is derived from in check mode, where
+// apply never runs (ADR-0007 §3, kept by ADR-0037).
+func TestEvalDef_TrailingReturnDrivesWould(t *testing.T) {
 	src := `
 def touch(path: str) {
     apply {
         r = shell { touch "$path" }
         if r.exit != 0 { return err.runtime(r) }
+        return ok.touched
     }
 }`
 	defs, err := ParseDefs(src)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if defs[0].Return != nil {
-		t.Fatalf("no trailing return → def.Return must be nil, got %+v", defs[0].Return)
 	}
 	f := &evalFake{resp: map[string]engine.ShellResult{`touch "$path"`: {Exit: 0}}}
 	args := map[string]string{"path": "/tmp/x"}
@@ -221,16 +248,16 @@ def touch(path: str) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Category != engine.OK || res.Tag != "" {
-		t.Fatalf("apply: want tag-less ok, got %s", res)
+	if res.Category != engine.OK || res.Tag != "touched" {
+		t.Fatalf("apply: want ok.touched, got %s", res)
 	}
 
 	res, err = EvalDef(defs[0], args, nil, f, engine.Check)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Category != engine.WOULD || res.Tag != "" {
-		t.Fatalf("check: want tag-less would, got %s", res)
+	if res.Category != engine.WOULD || res.Tag != "touched" {
+		t.Fatalf("check: want would.touched, got %s", res)
 	}
 }
 

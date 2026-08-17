@@ -32,7 +32,7 @@ func TestParsePlan(t *testing.T) {
 	src := `
 on db { apt.install("postgres") }
 on web {
-  file-copy("/tmp/nginx.conf", "/etc/nginx.conf")
+  file.copy("/tmp/nginx.conf", "/etc/nginx.conf")
   parallel {
     apt.install("nginx")
     apt.install("redis")
@@ -54,7 +54,7 @@ on web {
 		t.Fatalf("block web: %+v", web)
 	}
 	fc := web.Steps[0]
-	if fc.Instruction != "file-copy" || fc.Args["src"] != "/tmp/nginx.conf" || fc.Args["dst"] != "/etc/nginx.conf" {
+	if fc.Instruction != "file.copy" || fc.Args["src"] != "/tmp/nginx.conf" || fc.Args["dst"] != "/etc/nginx.conf" {
 		t.Fatalf("file-copy step: %+v", fc)
 	}
 	if par := web.Steps[1]; len(par.Parallel) != 2 {
@@ -66,8 +66,8 @@ func TestParsePlanVariables(t *testing.T) {
 	src := `
 owner = "haribo"
 on server {
-  user-group(owner, "docker")
-  dir-owner("/opt", owner)
+  user.group(owner, "docker")
+  dir.owner("/opt", owner)
 }
 `
 	base := map[string]string{}
@@ -124,9 +124,9 @@ func TestParseWithBlock(t *testing.T) {
 
 func TestParseWithBlock_Errors(t *testing.T) {
 	for _, src := range []string{
-		`on s { dir-ensure("/o") with { } }`,       // empty with
-		`on s { dir-ensure("/o") with { x } }`,     // missing `=`
-		`on s { dir-ensure("/o") with { x = "a" }`, // unterminated block
+		`on s { dir.ensure("/o") with { } }`,       // empty with
+		`on s { dir.ensure("/o") with { x } }`,     // missing `=`
+		`on s { dir.ensure("/o") with { x = "a" }`, // unterminated block
 	} {
 		if _, err := ParsePlanWithVars(src, nil, nil, defaultSig); err == nil {
 			t.Fatalf("expected error for: %s", src)

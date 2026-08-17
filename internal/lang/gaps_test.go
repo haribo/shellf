@@ -9,7 +9,7 @@ import (
 
 func TestUnescape_InStringArg(t *testing.T) {
 	// A double-quoted arg processes \n \t \" \\ ; anything else stays literal.
-	plan, err := ParsePlan("on s { file-write(\"/p\", \"a\\nb\\tc\\\"d\\\\e\\q\") }")
+	plan, err := ParsePlan("on s { file.write(\"/p\", \"a\\nb\\tc\\\"d\\\\e\\q\") }")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ raw = """verbatim ${keep}"""
 flag = true
 base = "b"
 ref = base
-on s { file-write("/p", "${raw}|${ref}") }
+on s { file.write("/p", "${raw}|${ref}") }
 `
 	plan, err := ParsePlan(src)
 	if err != nil {
@@ -41,19 +41,20 @@ on s { file-write("/p", "${raw}|${ref}") }
 }
 
 func TestArg_UndefinedBinding(t *testing.T) {
-	_, err := ParsePlan("x = nope\non s { file-write(\"/p\", x) }")
+	_, err := ParsePlan("x = nope\non s { file.write(\"/p\", x) }")
 	if err == nil || !strings.Contains(err.Error(), "undefined variable") {
 		t.Fatalf("a binding to an unknown name must error: %v", err)
 	}
 }
 
-func TestShellExpr_InterpAndUnless(t *testing.T) {
-	// shellExpr in a def: an interpreter annotation + an `unless` guard block
-	// (rawBracesRequired). Parsing only — no eval.
+func TestShellExpr_Interp(t *testing.T) {
+	// shellExpr in a def: the interpreter annotation is captured. Parsing only — no eval.
+	// This test also asserted an `unless` guard until #415, which refused the clause: it
+	// was stored and read by nobody, so a def carrying it ran its command regardless.
 	defs, err := ParseDefs(`
 def d() {
     apply {
-        r = shell(bash) { echo hi } unless { test -f /x }
+        r = shell(bash) { echo hi }
         if !r { return err.x }
         return ok
     }
@@ -61,27 +62,25 @@ def d() {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Find the shell expr and check the captured interp/unless.
 	le := defs[0].Phases[0].Stmts[0].(LetStmt)
 	se := le.Value.(ShellExpr)
 	if se.Interp != "bash" {
 		t.Fatalf("shell(bash) interp not captured: %q", se.Interp)
 	}
-	if !strings.Contains(se.Unless, "test -f /x") {
-		t.Fatalf("unless guard not captured: %q", se.Unless)
-	}
 }
 
-func TestShellExpr_UnlessRequiresBraces(t *testing.T) {
-	_, err := ParseDefs(`
-def d() {
-    apply {
-        r = shell { echo hi } unless test -f /x
-        return ok
-    }
-}`)
-	if err == nil || !strings.Contains(err.Error(), "expected '{' after unless") {
-		t.Fatalf("unless without a brace block must error: %v", err)
+// #415: whatever follows the keyword, the keyword itself is the error. The braced form
+// used to parse into a field nobody read; the unbraced one used to complain about braces,
+// which sent the author to fix the punctuation of a construct that does not exist.
+func TestShellExpr_UnlessIsRefusedInAnyForm(t *testing.T) {
+	for _, src := range []string{
+		"def d() { apply { r = shell { echo hi } unless test -f /x\n return ok } }",
+		"def d() { apply { r = shell { echo hi } unless { test -f /x }\n return ok } }",
+	} {
+		_, err := ParseDefs(src)
+		if err == nil || !strings.Contains(err.Error(), "if !shell") {
+			t.Fatalf("unless must be refused naming its replacement: %v", err)
+		}
 	}
 }
 

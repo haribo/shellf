@@ -34,7 +34,7 @@ func ResolveRefs(steps []Step, env map[string]string, interp string) ([]Step, er
 			if err != nil {
 				return nil, err
 			}
-			out[i] = Step{If: &IfBlock{Cond: cond, Match: s.If.Match, CondRef: s.If.CondRef, Negate: s.If.Negate, Then: then, Else: els}}
+			out[i] = Step{If: &IfBlock{Cond: cond, Match: s.If.Match, CondRef: s.If.CondRef, Negate: s.If.Negate, Then: then, Else: els}, Control: s.Control}
 			continue
 		}
 		if len(s.Block) > 0 {
@@ -42,7 +42,7 @@ func ResolveRefs(steps []Step, env map[string]string, interp string) ([]Step, er
 			if err != nil {
 				return nil, err
 			}
-			out[i] = Step{Block: sub, Become: s.Become}
+			out[i] = Step{Block: sub, Become: s.Become, Control: s.Control}
 			continue
 		}
 		if len(s.Parallel) > 0 {
@@ -64,7 +64,11 @@ func ResolveRefs(steps []Step, env map[string]string, interp string) ([]Step, er
 			}
 			args[argName] = v
 		}
-		step := Step{Instruction: s.Instruction, Args: args, Bind: s.Bind, Caught: s.Caught, Become: s.Become, Interp: s.Interp, With: s.With}
+		// Control must survive: it says which arguments the plan marked `%"…"`, and
+		// dropping it makes the agent read those paths on the target instead of the
+		// control host — silently, since a path is a path (#334).
+		step := Step{Instruction: s.Instruction, Args: args, Bind: s.Bind, Caught: s.Caught,
+			Become: s.Become, Interp: s.Interp, With: s.With, Control: s.Control}
 		if s.Instruction == "shell" { // a plan-level shell sees the per-host env via $name (#106)
 			step.Env = env
 			if len(s.With) > 0 { // a `with` binding overrides the host env for this call (ADR-0022)
@@ -100,9 +104,14 @@ type Step struct {
 	Interp      string            `json:"interp,omitempty"` // shell interpreter for a `shell(<interp>)` step (ADR-0012)
 	Env         map[string]string `json:"env,omitempty"`    // per-host env for a plan-level `shell` step (#106)
 	With        map[string]string `json:"with,omitempty"`   // per-call variable override (ADR-0022)
-	Block       []Step            `json:"block,omitempty"`  // an `as <user> { … }` sequential group (ADR-0011)
-	Parallel    []Step            `json:"parallel,omitempty"`
-	If          *IfBlock          `json:"if,omitempty"`
+	// Control lists the argument names written `%"path"`: paths on the control host
+	// (ADR-0034). The value travels as an ordinary string; this records which ones the
+	// control host must be prepared to serve, so the allow-list is known before the
+	// plan is sent (ADR-0031 §3).
+	Control  []string `json:"control,omitempty"`
+	Block    []Step   `json:"block,omitempty"` // an `as <user> { … }` sequential group (ADR-0011)
+	Parallel []Step   `json:"parallel,omitempty"`
+	If       *IfBlock `json:"if,omitempty"`
 }
 
 // IfBlock is a conditional. The condition is either Cond (an instruction run
@@ -203,14 +212,19 @@ type Request struct {
 }
 
 type StepResult struct {
-	Label    string              `json:"label"`
-	Category string              `json:"category"`
-	Tag      string              `json:"tag,omitempty"`
-	Changed  bool                `json:"changed,omitempty"`
-	Shell    *engine.ShellResult `json:"shell,omitempty"`
-	Fields   []engine.FieldDiff  `json:"fields,omitempty"`  // status mode: observed vs desired (ADR-0013)
-	Preview  string              `json:"preview,omitempty"` // check mode: what an action would do (ADR-0029)
-	Sub      []StepResult        `json:"sub,omitempty"`
+	Label    string `json:"label"`
+	Category string `json:"category"`
+	Tag      string `json:"tag,omitempty"`
+	Changed  bool   `json:"changed,omitempty"`
+	// Caught marks a step whose `?` handed its error to the plan (ADR-0009). It rides the
+	// result because the *report* has to tell the two apart: an error the plan handled is
+	// not a failed run, and counting it as one made `shellf run … && …` unusable for any
+	// plan using `?` (#356).
+	Caught  bool                `json:"caught,omitempty"`
+	Shell   *engine.ShellResult `json:"shell,omitempty"`
+	Fields  []engine.FieldDiff  `json:"fields,omitempty"`  // status mode: observed vs desired (ADR-0013)
+	Preview string              `json:"preview,omitempty"` // check mode: what an action would do (ADR-0029)
+	Sub     []StepResult        `json:"sub,omitempty"`
 }
 
 type Response struct {

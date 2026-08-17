@@ -1,0 +1,83 @@
+def ensure(path: str) {
+    observe { return state(present: shell { test -d "$path" }.exit == 0) }
+    apply {
+        r = shell { mkdir -p "$path" }
+        if !r { return err.runtime(r) }
+        return ok.created
+    }
+}
+
+# `chown` accepts both `user` and `user:group`, so the comparison has to accept both too.
+# It happens in the shell, not by comparing an observed string to the argument: `stat`
+# always prints `user:group`, so a plan asking for `covuser` never matched what was read
+# and the def reported `changed` on every single run — firing every `if x.changed { … }`
+# downstream for nothing (#367). Caught by running it twice against a real target; no unit
+# test had, because a fake executor answers whatever the test asks for.
+def owner(path: str, owner: str) as root {
+    observe {
+        return state(owned: shell {
+            cur="$(stat -c '%U:%G' "$path" 2>/dev/null)"
+            [ "$cur" = "$owner" ] || [ "${cur%%:*}" = "$owner" ]
+        }.exit == 0)
+    }
+    apply {
+        r = shell { chown -R "$owner" "$path" }
+        if !r { return err.runtime(r) }
+        return ok.changed
+    }
+}
+
+# A read-only question: no apply phase, deterministic in check (never `would`).
+def exists(path: str) {
+    check {
+        r = shell { test -d "$path" }
+        if r { return ok.present }
+        return err.absent
+    }
+}
+
+# Deliver a control-host tree to the target (ADR-0036 §6, ADR-0039). A def over
+# `~dir.sync` with `delete = "false"`: **a copy is a sync that deletes nothing** — what is
+# already on the target and absent from the source is left alone.
+#
+# `src` must be marked `%"…"` at the call site: the tree is read on the control host, and
+# an unmarked path would name a directory on the target, which is a different operation.
+#
+# The transfer sends only what differs, so a converged tree costs one round trip and zero
+# bytes — the property the old control-side expansion never had, since it inlined the
+# whole tree into the request on every run and refused above 32 MB.
+#
+# `compare` defaults to size+mtime. Its limit is documented rather than discovered: a
+# change that preserves both is invisible to it — a restored backup with preserved
+# timestamps is the realistic case. Pass `compare = "sha256"` when that matters.
+def copy(src: str, dst: str, compare: str = "meta") {
+    apply {
+        # The transfer reports how many files it wrote, so the verdict comes from the work
+        # itself — no `observe` walking the tree a second time to ask a question the sync
+        # already answered.
+        n = ~dir.sync(src, dst, "false", compare)
+        if n == "0" { return ok.already }
+        return ok.copied
+    }
+}
+
+# Make the target match the source exactly — including by **removing** what the source
+# does not have (ADR-0036 §6, #373). One word apart from `dir.copy`, and that word
+# deletes, so the difference is stated everywhere it can be:
+#
+#   dir.copy(%"site", "/var/www")   delivers, leaves anything else alone
+#   dir.sync(%"site", "/var/www")   delivers, and removes the rest
+#
+# The `preview` phase is not decoration. `apply` never runs in `--dry-run`, so without it
+# this def would announce `would.synced` and name not one file it would delete — in a tool
+# whose thesis is that a run is readable before it happens, that is a design defect. The
+# primitive is inert in check mode, so previewing costs a manifest exchange and touches
+# nothing.
+def sync(src: str, dst: str, compare: str = "meta") {
+    preview { ~dir.sync(src, dst, "true", compare) }
+    apply {
+        n = ~dir.sync(src, dst, "true", compare)
+        if n == "0" { return ok.already }
+        return ok.synced
+    }
+}

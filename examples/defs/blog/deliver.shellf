@@ -1,0 +1,15 @@
+# A **delegation** (ADR-0037 §2): this def *is* `file.copy`, with the same arguments. One
+# call, outside every phase — so the callee's own phases run, and `--dry-run` reports
+# `already` on a converged host instead of announcing a write.
+#
+# It used to delegate to `file.write` with `~file.read(src)` as its content, and that
+# **silently delivered an empty file**: `file.write` takes a `str`, `~file.read` returns
+# opaque bytes (ADR-0034 §4), and the conversion between them had no case — so the content
+# became "" and the run still said `ok`. Refused since #411.
+#
+# The rule to take away: bytes go from a primitive to a primitive. `file.copy` is the
+# instruction that delivers a file, and `%"…"` at the call site says the source is on the
+# operator's machine.
+def deliver(src: str, dst: str) {
+    file.copy(src, dst)
+}

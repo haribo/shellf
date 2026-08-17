@@ -1,10 +1,10 @@
 package main
 
 import (
-	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -25,7 +25,11 @@ import (
 func main() {
 	// Agent mode: hidden, invoked on each target after being pushed over SSH.
 	if len(os.Args) > 1 && os.Args[1] == "__agent" {
-		if err := agent.Serve(os.Stdin, os.Stdout, engine.ShellExecutor{}); err != nil {
+		sockDir := "" // optional: a workdir to open the control channel in
+		if len(os.Args) > 2 {
+			sockDir = os.Args[2]
+		}
+		if err := agent.ServeOn(os.Stdin, os.Stdout, engine.ShellExecutor{}, sockDir); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -43,6 +47,39 @@ func main() {
 		}
 		self, _ := os.Executable()
 		if err := agent.ServeResident(os.Args[2], self, engine.ShellExecutor{}, ttl); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// The escalated half of a tree transfer (ADR-0044). The agent re-invokes itself through
+	// the executor so `as <user>` applies to the placement, which used to be done from the
+	// agent's own process and therefore ignored the escalation entirely (#390).
+	//
+	// Bounded on purpose: paths and flags, no socket, no control host, no plan, no def.
+	// Whatever reads these arguments may be running as root.
+	if len(os.Args) > 3 && os.Args[1] == "__sync-scan" {
+		if err := agent.SyncScan(os.Args[2], os.Args[3], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) > 3 && os.Args[1] == "__sync-commit" {
+		del := len(os.Args) > 4 && os.Args[4] == "--delete"
+		if err := agent.SyncCommit(os.Args[2], os.Args[3], del, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Bridge: copies this session's stdin/stdout to the detached agent's Unix socket
+	// (ADR-0031). Hidden, launched by the control host over SSH for the duration of a
+	// job that needs the channel. It dies with its session by design.
+	if len(os.Args) > 2 && os.Args[1] == "__bridge" {
+		if err := agent.Bridge(os.Args[2], os.Stdin, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -74,7 +111,7 @@ func main() {
 	}
 
 	fmt.Fprint(os.Stderr, "usage:\n"+
-		"  shellf run --inventory <hosts.shellf> [--vars <f>] [--set k=v] [--secret-file n=path] [--check] [--insecure] <plan.shellf>\n"+
+		"  shellf run --inventory <hosts.shellf> [--vars <f>] [--set k=v] [--secret-file n=path] [--dry-run] [--insecure] <plan.shellf>\n"+
 		"  shellf status --inventory <hosts.shellf> [--insecure] <plan.shellf>\n"+
 		"  shellf clean --inventory <hosts.shellf> [--insecure] [target...]\n"+
 		"  shellf version\n")
@@ -87,7 +124,7 @@ var version = "dev"
 
 func versionLine() string { return "shellf " + version }
 
-// runCmd: shellf run <plan.shellf> --inventory <hosts.shellf> [--check] [flags].
+// runCmd: shellf run <plan.shellf> --inventory <hosts.shellf> [--dry-run] [flags].
 func runCmd(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	invPath := fs.String("inventory", "", "inventory file (required)")
@@ -96,14 +133,24 @@ func runCmd(args []string) {
 	fs.Var(&sets, "set", "override a variable, k=v (repeatable); wins over --vars and plan bindings")
 	fs.Var(&secretFiles, "secret-file", "secret from a file, name=path (repeatable); redacted in output")
 	fs.Var(&secretEnvs, "secret-env", "secret from an env var, name=VAR (repeatable); redacted in output")
-	check := fs.Bool("check", false, "dry-run: decide without mutating")
+	dryRun := fs.Bool("dry-run", false, "decide and preview without mutating")
+	// `--check` was the old name (ADR-0035). Accepting it silently would keep two
+	// spellings alive; this only exists to say what to type instead.
+	oldCheck := fs.Bool("check", false, "")
 	insecure := fs.Bool("insecure", false, "skip host-key verification (dev only)")
 	knownHosts := fs.String("known-hosts", "", "known_hosts path (default ~/.ssh/known_hosts)")
 	agentTTL := fs.Duration("agent-ttl", 0, "resident agent inactivity TTL before it self-erases (0 = 2h)")
 	_ = fs.Parse(args) // flag.ExitOnError already exits on a parse error
 
+	// Before anything is read: a wrong flag must be the error the operator sees, not a
+	// missing file that happens to be reported first.
+	if msg := removedFlag(*oldCheck); msg != "" {
+		fmt.Fprintln(os.Stderr, msg)
+		os.Exit(2)
+	}
+
 	if fs.NArg() < 1 || *invPath == "" {
-		fmt.Fprintln(os.Stderr, "usage: shellf run --inventory <hosts.shellf> [--vars <f>] [--set k=v] [--secret-file n=path] [--check] [--insecure] <plan.shellf>")
+		fmt.Fprintln(os.Stderr, "usage: shellf run --inventory <hosts.shellf> [--vars <f>] [--set k=v] [--secret-file n=path] [--dry-run] [--insecure] <plan.shellf>")
 		os.Exit(2)
 	}
 
@@ -132,8 +179,8 @@ func runCmd(args []string) {
 	}
 
 	mode := "apply"
-	if *check {
-		mode = "check"
+	if *dryRun {
+		mode = "check" // the engine mode keeps its internal name
 	}
 
 	self, err := os.Executable()
@@ -142,19 +189,106 @@ func runCmd(args []string) {
 		os.Exit(1)
 	}
 
+	channelFor := controlChannel(fs.Arg(0), plan, inv, baseVars, setVars)
+
 	dial := func(alias string) transport.Transport {
 		h, _ := inv.Resolve(alias)
 		if h.Local { // reached on the control host, no SSH (ADR-0027)
-			return transport.Local{}
+			return transport.Local{Channel: channelFor(alias)}
 		}
 		return transport.SSH{
 			User: h.User, Host: h.Address, Port: h.Port, Key: h.Key,
 			KnownHosts: *knownHosts, Insecure: *insecure, AgentTTL: *agentTTL,
+			Channel: channelFor(alias), // nil when the plan asks nothing: no bridge
 		}
 	}
 
-	render := templateRenderer(filepath.Dir(fs.Arg(0)))
-	printReports(orchestrator.Run(plan, inv, self, mode, dial, baseVars, setVars, defsSrc, render), secretValues)
+	printReports(orchestrator.Run(plan, inv, self, mode, dial, baseVars, setVars, defsSrc), secretValues)
+}
+
+// controlChannel builds the per-host control-host server (ADR-0031), or returns a
+// function yielding nil when the plan asks the control host for nothing — no bridge is
+// opened then.
+//
+// Shared by `run` and `status` on purpose. `status` runs each def's `observe`, and an
+// observe may call a primitive — `file.template` renders there to decide whether the
+// destination is in sync (#334). Wiring this in `run` alone made `status` report
+// `err.agent` for every template, which is how it was found.
+func controlChannel(planPath string, plan []orchestrator.Block, inv inventory.Inventory,
+	baseVars, setVars map[string]string) func(alias string) func(io.Reader, io.WriteCloser) error {
+
+	// What the plan may ask for (ADR-0034 §5 → ADR-0031 §3). Derived from the plan
+	// before anything is sent: the channel serves this set and refuses the rest by
+	// name, which is what keeps an imported def from reading ~/.ssh.
+	// The plan is inside the project by the time a run reaches here — loadPlanPackage
+	// refuses otherwise — so this cannot fail for a reason the operator has not been told
+	// about already.
+	root, err := projectRoot(planPath)
+	if err != nil {
+		root = filepath.Dir(filepath.Dir(planPath))
+	}
+	assetsDir := filepath.Join(root, dirAssets)
+	var allSteps []proto.Step
+	for _, b := range plan {
+		allSteps = append(allSteps, b.Steps...)
+	}
+	// The plan's steps are the whole source of the allow-list: a def may not name a
+	// control-host file (ADR-0043), so there is nothing to extract from the def sources.
+	declared := lang.ControlResources(allSteps)
+	// A render names a declared template since #392, so the allow-list answers on its
+	// own: nothing asks the control host for anything when it is empty.
+	needsChannel := len(declared) > 0
+
+	// One channel per host: rendering substitutes over *that host's* environment
+	// (ADR-0024), and the variables never leave the control host (ADR-0018).
+	return func(alias string) func(io.Reader, io.WriteCloser) error {
+		if !needsChannel {
+			return nil
+		}
+		host, _ := inv.Resolve(alias)
+		env := mergeVars(baseVars, host.Vars, setVars)
+		allow := orchestrator.NewAllowed(assetsDir, declared)
+		allow.Render = func(content string, scope map[string]string) (string, error) {
+			// The call site wins over the host environment: that is what `with { }`
+			// means (ADR-0022), and a def's own params are more local still.
+			return lang.Template(content, func(n string) (string, bool) {
+				if v, ok := scope[n]; ok {
+					return v, true
+				}
+				v, ok := env[n]
+				return v, ok
+			})
+		}
+		return func(r io.Reader, w io.WriteCloser) error {
+			c := proto.NewConnRW(r, w)
+			if err := c.Handshake(); err != nil {
+				return err
+			}
+			return orchestrator.Serve(c, allow)
+		}
+	}
+}
+
+// mergeVars layers the variable tables the way the orchestrator does: globals, then the
+// host's own, then --set (ADR-0022 precedence).
+func mergeVars(base, host, set map[string]string) map[string]string {
+	out := map[string]string{}
+	for _, m := range []map[string]string{base, host, set} {
+		for k, v := range m {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// removedFlag reports what to type instead of a flag ADR-0035 removed, or "" when none
+// was passed. The old name is not accepted — this only replaces "unknown flag" with
+// something actionable, the same way a renamed instruction does.
+func removedFlag(oldCheck bool) string {
+	if oldCheck {
+		return "unknown flag --check — renamed to --dry-run (ADR-0035)"
+	}
+	return ""
 }
 
 // loadPlanPackage loads the plan file together with its package — every other
@@ -166,7 +300,11 @@ func loadPlanPackage(planPath, invPath string, baseVars, setVars map[string]stri
 	if err != nil {
 		return nil, nil, err
 	}
-	libs, err := packageLibs(planPath, invPath)
+	root, err := projectRoot(planPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	libs, err := packageLibs(root)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -178,150 +316,65 @@ func loadPlanPackage(planPath, invPath string, baseVars, setVars map[string]stri
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s: %v", planPath, err)
 	}
-	// `template` steps are NOT resolved here: they render per host, in the
+	// A call cycle is a writing error, refused from reading the files (ADR-0030 §6). Here
+	// and not in `lang`, because the graph spans two sets no single package sees: these
+	// user defs, and the stdlib, which `lang` cannot import. The evaluator keeps its own
+	// guard, but it fires on the target, after earlier steps have already acted (#311).
+	if err := lang.CheckCycles(defs, cycleResolver(defs)); err != nil {
+		return nil, nil, fmt.Errorf("%s: %v", planPath, err)
+	}
+	// `file.template` steps are NOT resolved here: they render per host, in the
 	// orchestrator, over each host's env (ADR-0024). See templateRenderer.
 	//
-	// `dir-copy` IS resolved here: its bytes are control-side and identical for
+	// `dir.copy` IS resolved here: its bytes are control-side and identical for
 	// every host, so it expands once into dir-ensure + file-put steps (ADR-0028).
-	planDir := filepath.Dir(planPath)
-	for bi := range plan {
-		expanded, err := resolveDirCopy(plan[bi].Steps, planDir)
-		if err != nil {
-			return nil, nil, err
-		}
-		plan[bi].Steps = expanded
-	}
+	// No control-side expansion left: `file.template` stopped being one in #334, and
+	// `dir.copy` is a def over `~dir.sync` since #335. A plan now reaches the agent as
+	// written.
 	return plan, defSource(defs), nil
 }
 
-// dirCopyCeiling bounds the base64-encoded payload a single dir-copy may carry, so
-// a large tree is refused with a clear error instead of OOMing the agent (ADR-0028).
-// A var, not a const, so a test can lower it without a 32 MB fixture.
-var dirCopyCeiling int64 = 32 << 20
-
-// resolveDirCopy expands every `dir-copy(src, dst)` step into a `dir-ensure` per
-// directory and a `file-put(dst, base64)` per file, reading src relative to the
-// plan dir. Recurses into if/block/parallel; other steps pass through.
-func resolveDirCopy(steps []proto.Step, dir string) ([]proto.Step, error) {
-	var out []proto.Step
-	for _, s := range steps {
-		switch {
-		case s.Instruction == "dir-copy":
-			if s.Refs["src"] != "" || s.Refs["dst"] != "" {
-				return nil, fmt.Errorf("dir-copy: src and dst must be literal paths, not per-host refs")
-			}
-			expanded, err := expandTree(srcPath(dir, s.Args["src"]), s.Args["dst"])
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, expanded...)
-		case s.If != nil:
-			then, err := resolveDirCopy(s.If.Then, dir)
-			if err != nil {
-				return nil, err
-			}
-			els, err := resolveDirCopy(s.If.Else, dir)
-			if err != nil {
-				return nil, err
-			}
-			ib := *s.If
-			ib.Then, ib.Else = then, els
-			ns := s
-			ns.If = &ib
-			out = append(out, ns)
-		case len(s.Block) > 0:
-			sub, err := resolveDirCopy(s.Block, dir)
-			if err != nil {
-				return nil, err
-			}
-			ns := s
-			ns.Block = sub
-			out = append(out, ns)
-		case len(s.Parallel) > 0:
-			sub, err := resolveDirCopy(s.Parallel, dir)
-			if err != nil {
-				return nil, err
-			}
-			ns := s
-			ns.Parallel = sub
-			out = append(out, ns)
-		default:
-			out = append(out, s)
-		}
-	}
-	return out, nil
-}
-
-// srcPath resolves a control-side `src`: absolute paths are used as-is, relative
-// ones are joined to the plan dir (#281). Shared by `dir-copy` and `template` so
-// the two cannot drift.
-func srcPath(planDir, src string) string {
-	if filepath.IsAbs(src) {
-		return src
-	}
-	return filepath.Join(planDir, src)
-}
-
-// expandTree walks srcRoot (control host) and returns the dir-ensure + file-put
-// steps that deliver it verbatim under dstRoot (target). Refuses a tree whose
-// base64 payload exceeds the ceiling (ADR-0028).
-func expandTree(srcRoot, dstRoot string) ([]proto.Step, error) {
-	info, err := os.Stat(srcRoot)
+// readSubPackage reads one sub-package directory into libs, keyed `<name>/<file>`.
+// A directory holding no `.shellf` file is ignored (it is content, not code — a
+// `templates/` or `html/` tree next to a plan is ordinary). A directory that does hold
+// code but nests another one is refused: ADR-0032 fixes exactly one dot per name, so a
+// second level would produce `a.b.c`.
+func readSubPackage(parent, name string, libs map[string]string) error {
+	sub := filepath.Join(parent, name)
+	entries, err := os.ReadDir(sub)
 	if err != nil {
-		return nil, fmt.Errorf("dir-copy: %v", err)
+		return err
 	}
-	if !info.IsDir() {
-		return nil, fmt.Errorf("dir-copy: %s is not a directory", srcRoot)
+	var code []os.DirEntry
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".shellf") {
+			code = append(code, e)
+		}
 	}
-	steps := []proto.Step{{Instruction: "dir-ensure", Args: map[string]string{"path": dstRoot}}}
-	var total int64
-	walkErr := filepath.WalkDir(srcRoot, func(path string, d os.DirEntry, err error) error {
+	if len(code) == 0 {
+		return nil // content directory, not a sub-package
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			return fmt.Errorf("%s: a sub-package may not contain a directory (%q) — one level only, ADR-0033", sub, e.Name())
+		}
+	}
+	for _, e := range code {
+		src, err := os.ReadFile(filepath.Join(sub, e.Name()))
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(srcRoot, path)
-		if err != nil {
-			return err
-		}
-		if rel == "." {
-			return nil
-		}
-		dst := filepath.Join(dstRoot, rel)
-		if d.IsDir() {
-			steps = append(steps, proto.Step{Instruction: "dir-ensure", Args: map[string]string{"path": dst}})
-			return nil
-		}
-		b, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		enc := base64.StdEncoding.EncodeToString(b)
-		total += int64(len(enc))
-		if total > dirCopyCeiling {
-			return fmt.Errorf("dir-copy: %s exceeds the %d MB payload ceiling (ADR-0028)", srcRoot, dirCopyCeiling>>20)
-		}
-		steps = append(steps, proto.Step{Instruction: "file-put", Args: map[string]string{"path": dst, "content": enc}})
-		return nil
-	})
-	if walkErr != nil {
-		return nil, walkErr
+		libs[name+"/"+e.Name()] = string(src)
 	}
-	return steps, nil
+	return nil
 }
 
 // templateRenderer builds the per-host renderer the orchestrator injects
 // (ADR-0024): it reads a template `src` relative to the plan dir and interpolates
-// `@{var}` over the host's vars. `src` stays a control-host path.
-func templateRenderer(planDir string) orchestrator.TemplateRenderer {
-	return func(src string, vars map[string]string) (string, error) {
-		return renderTemplate(srcPath(planDir, src), vars)
-	}
-}
-
 func renderTemplate(path string, vars map[string]string) (string, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return "", fmt.Errorf("template: %v", err)
+		return "", fmt.Errorf("file.template: %v", err)
 	}
 	return lang.Template(string(b), func(n string) (string, bool) { v, ok := vars[n]; return v, ok })
 }
@@ -338,8 +391,15 @@ func readImports(planPath, planSrc string) (map[string][]string, error) {
 	if len(imps) == 0 {
 		return nil, nil
 	}
+	// A local import path is relative to the plan file (ADR-0015, unchanged). The lock is
+	// not: it pins what the *project* depends on, like go.sum, so it belongs at the root
+	// rather than among the plans. ADR-0038 did not foresee this; recorded in the PR.
 	dir := filepath.Dir(planPath)
-	lock, err := module.LoadLock(dir)
+	lockDir := dir
+	if root, err := projectRoot(planPath); err == nil {
+		lockDir = root
+	}
+	lock, err := module.LoadLock(lockDir)
 	if err != nil {
 		return nil, err
 	}
@@ -367,7 +427,7 @@ func readImports(planPath, planSrc string) (map[string][]string, error) {
 		out[imp.Alias] = srcs
 	}
 	if lockChanged {
-		if err := module.SaveLock(dir, lock); err != nil {
+		if err := module.SaveLock(lockDir, lock); err != nil {
 			return nil, err
 		}
 	}
@@ -405,32 +465,82 @@ func shellfSources(dir string) ([]string, error) {
 }
 
 // packageLibs reads every sibling `*.shellf` file in the plan's directory (the
-// package), excluding the plan file itself and the inventory file.
-func packageLibs(planPath, invPath string) (map[string]string, error) {
-	dir := filepath.Dir(planPath)
-	entries, err := os.ReadDir(dir)
+// package), excluding the plan file itself and the inventory file. It also reads one
+// level of subdirectories: each is a sub-package, and its files are keyed `<dir>/<file>`
+// so the parser qualifies their defs as `<dir>.<def>` (ADR-0033). Two levels down is an
+// error, not a silent skip — a skipped directory is how an override fails to apply
+// while the plan reports success.
+// packageLibs reads every def package under `<root>/defs/` (ADR-0038 §2). Each
+// `defs/<name>/` is one package, and its files are keyed `<name>/<file>` — the same key
+// shape ADR-0033 already uses for sub-packages, so the parser qualifies the defs
+// `<name>.<def>` with no further work.
+//
+// A plan's siblings are no longer defs. That is the convenience ADR-0014 §1 bought and
+// this layout removes: a def is addressed by name, so it lives where the name says.
+func packageLibs(root string) (map[string]string, error) {
+	defsDir := filepath.Join(root, dirDefs)
+	entries, err := os.ReadDir(defsDir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]string{}, nil // a project may have no defs of its own
+		}
 		return nil, err
 	}
-	planAbs, _ := filepath.Abs(planPath)
-	invAbs, _ := filepath.Abs(invPath)
 	libs := map[string]string{}
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".shellf") {
+		if !e.IsDir() {
+			if strings.HasSuffix(e.Name(), ".shellf") {
+				return nil, fmt.Errorf("%s: a def belongs to a package directory — "+
+					"move it to defs/<package>/%s (ADR-0038)", filepath.Join(defsDir, e.Name()), e.Name())
+			}
 			continue
 		}
-		path := filepath.Join(dir, e.Name())
-		abs, _ := filepath.Abs(path)
-		if abs == planAbs || abs == invAbs {
-			continue // the plan carries the `on` blocks; the inventory is parsed apart
-		}
-		src, err := os.ReadFile(path)
-		if err != nil {
+		if err := readSubPackage(defsDir, e.Name(), libs); err != nil {
 			return nil, err
 		}
-		libs[e.Name()] = string(src)
 	}
 	return libs, nil
+}
+
+// Project layout (ADR-0038). A plan lives in `<root>/plans/`, so the root is its parent —
+// and `defs/`, `assets/` and `inventories/` hang off the same root. Directory names, not
+// a marker file: the layout already identifies the project, and a second mechanism to say
+// the same thing is one to keep in sync.
+const (
+	dirPlans  = "plans"
+	dirDefs   = "defs"
+	dirAssets = "assets"
+)
+
+// projectRoot returns the directory holding the layout, given the invoked plan.
+//
+// The error is most of this function's value: it is the first thing anyone running shellf
+// outside a project will see, so it names the layout rather than reporting a file that
+// could not be found somewhere inside the loader.
+func projectRoot(planPath string) (string, error) {
+	abs, err := filepath.Abs(planPath)
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Dir(abs)
+	if filepath.Base(dir) != dirPlans {
+		return "", fmt.Errorf("%s is not inside a shellf project: a plan lives in `plans/`, "+
+			"beside `defs/`, `assets/` and `inventories/` (ADR-0038)", planPath)
+	}
+	return filepath.Dir(dir), nil
+}
+
+// cycleResolver is the lookup a run uses — a package user def first, so an
+// `override def` wins, then the stdlib (ADR-0014). Giving the cycle check the same order
+// is the point: it must see the graph the run will walk, or it misses the case where a
+// user def redirects a stdlib one back into itself.
+func cycleResolver(defs map[string]lang.Def) lang.DefResolver {
+	return func(name string) (lang.Def, bool) {
+		if d, ok := defs[name]; ok {
+			return d, true
+		}
+		return std.Lookup(name)
+	}
 }
 
 // defSource maps each resolved instruction name to its def source, for the
@@ -456,25 +566,27 @@ func loadInventory(invPath string) (inventory.Inventory, error) {
 	return inv, nil
 }
 
-// stdSignatures resolves an instruction's parameter names from the embedded
-// stdlib (signatures live with the defs, self-hosting) plus the Go builtins —
-// so adding a def needs no parser-side edit (#107).
+// stdSignatures resolves an instruction's parameter names from the embedded stdlib —
+// signatures live with the defs, self-hosting, so adding a def needs no parser-side edit
+// (#107).
+//
+// There is no builtin table beside it any more. It held `file.copy` and `dir.copy` from
+// when both were Go transformations; both became defs, and the stale entry shadowed the
+// real signature — `dir.copy(%"src", dst, "sha256")` was documented and refused, because
+// the table still said two parameters while the def had grown `compare` (#414). A
+// signature written in two places is a signature that drifts.
 func stdSignatures() lang.InstructionSig {
-	builtins := map[string][]string{"file-copy": {"src", "dst"}, "template": {"src", "dst"}, "dir-copy": {"src", "dst"}}
-	return func(name string) ([]string, int, bool) {
-		if p, ok := builtins[name]; ok {
-			return p, len(p), true // builtins have no optional params
-		}
+	return func(name string) ([]lang.Param, int, bool) {
 		if def, ok := std.Lookup(name); ok {
-			names := make([]string, len(def.Params))
 			required := 0
-			for i, p := range def.Params {
-				names[i] = p.Name
+			for _, p := range def.Params {
 				if p.Default == nil {
 					required++
 				}
 			}
-			return names, required, true
+			// The def's own parameters, types included: a signature written twice is a
+			// signature that drifts (#414), and the type is what ADR-0045 checks against.
+			return def.Params, required, true
 		}
 		return nil, 0, false
 	}
@@ -654,18 +766,24 @@ func statusCmd(args []string) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	// `status` needs the channel too: an `observe` may call a primitive (#334).
+	// `secrets` sits in the --set layer here, exactly as `run` merges it (ADR-0018):
+	// a template naming a secret must render in `status` too, or `status` reports an
+	// error on a plan that applies cleanly.
+	channelFor := controlChannel(fs.Arg(0), plan, inv, base, secrets)
+
 	dial := func(alias string) transport.Transport {
 		h, _ := inv.Resolve(alias)
 		if h.Local { // reached on the control host, no SSH (ADR-0027)
-			return transport.Local{}
+			return transport.Local{Channel: channelFor(alias)}
 		}
 		return transport.SSH{
 			User: h.User, Host: h.Address, Port: h.Port, Key: h.Key,
 			KnownHosts: *knownHosts, Insecure: *insecure,
+			Channel: channelFor(alias),
 		}
 	}
-	render := templateRenderer(filepath.Dir(fs.Arg(0)))
-	fmt.Print(redact(statusReport(orchestrator.Run(plan, inv, self, "status", dial, base, secrets, defsSrc, render)), secretValues))
+	fmt.Print(redact(statusReport(orchestrator.Run(plan, inv, self, "status", dial, base, secrets, defsSrc)), secretValues))
 }
 
 // statusReport renders the per-host state report: one line per resource, with a
@@ -702,12 +820,18 @@ func statusStep(b *strings.Builder, s proto.StepResult, indent string) {
 		}
 	case s.Tag == "action":
 		fmt.Fprintf(b, "%s%-28s action (no observable state)\n", indent, s.Label)
-	default: // control-flow wrappers, questions, pre-check errors — one line, no recursion
+	default: // control-flow wrappers, questions, check errors — one line, no recursion
 		label := s.Category
 		if s.Tag != "" {
 			label += "." + s.Tag
 		}
 		fmt.Fprintf(b, "%s%-28s %s\n", indent, s.Label, label)
+		// An error with no message is a dead end: `err.agent` alone sends the operator
+		// looking at the target when the cause may be on their own machine. `run`
+		// already prints it; `status` was silent.
+		if s.Category == "err" && s.Shell != nil && strings.TrimSpace(s.Shell.Stderr) != "" {
+			fmt.Fprintf(b, "%s  ! %s\n", indent, strings.TrimSpace(s.Shell.Stderr))
+		}
 	}
 	for _, sub := range s.Sub {
 		statusStep(b, sub, indent+"  ")
@@ -748,7 +872,10 @@ func reportText(reports []orchestrator.BlockReport) (string, bool) {
 			fmt.Fprintf(&b, "  %s:\n", h.Host)
 			for _, s := range h.Response.Results {
 				stepText(&b, s, "    ")
-				anyErr = anyErr || s.Category == "err"
+				// A caught error is not a failed run: `?` means the plan handles it,
+				// and it did (ADR-0009). Counting it made `shellf run … && …` never
+				// succeed for any plan using the language's own error handling (#356).
+				anyErr = anyErr || (s.Category == "err" && !s.Caught)
 			}
 			if h.Response.Halted {
 				fmt.Fprintf(&b, "    (halted)\n")
@@ -768,6 +895,14 @@ func stepText(b *strings.Builder, s proto.StepResult, indent string) {
 	if s.Shell != nil && s.Shell.Stdout != "" {
 		for _, line := range strings.Split(strings.TrimRight(s.Shell.Stdout, "\n"), "\n") {
 			fmt.Fprintf(b, "%s    | %s\n", indent, line)
+		}
+	}
+	// On a failure, what went wrong. Without this the diagnostics the agent attaches —
+	// an unbound variable, a refused resource, a call cycle — are written and never
+	// seen, leaving `err.agent` to mean "something broke, good luck".
+	if s.Category == "err" && s.Shell != nil && s.Shell.Stderr != "" {
+		for _, line := range strings.Split(strings.TrimRight(s.Shell.Stderr, "\n"), "\n") {
+			fmt.Fprintf(b, "%s    ! %s\n", indent, line)
 		}
 	}
 	// An action-shaped def's `--check` preview: what apply would do, marked so it

@@ -1,6 +1,6 @@
 # shellf — historique de la conception
 
-> Digest fidèle de la discussion qui a fait émerger shellf. But : que tout Claude reprenant le projet connaisse **le pourquoi** de chaque décision, pas seulement le quoi. Lire après `DESIGN.md`.
+> Digest fidèle de la discussion qui a fait émerger shellf. But : que tout Claude reprenant le projet connaisse **le pourquoi** de chaque décision, pas seulement le quoi. Lire après `docs/design.md`.
 >
 > Ton de collaboration explicitement demandé par l'utilisateur : **avis sévère, challenger tout, contredire, zéro flatterie.** Réponses en français.
 
@@ -67,10 +67,10 @@ L'utilisateur a acté : **« coder pour affiner c'est du bullshit »**, on cadre
 
 ## `apt-install` v0 — deux réussites, trois trous
 
-(Voir le code dans `DESIGN.md §04`.)
+(Le code de cette v0 employait une syntaxe antérieure à la grammaire réelle ; il a été retiré de `docs/design.md` avec les sections langage. Forme actuelle : `internal/std/apt/install.shellf`, et `docs/language.md` pour la grammaire.)
 **Réussites à garder :** (1) **une seule règle de haltage** pour `sh` et instructions ; (2) le **« changed » est un tag** (`ok.pkgInstalled` vs `ok.pkgAlreadyInstalled`), pas un champ `changed_when` séparé → comparaison à deux niveaux (`== ok` / `== ok.tag`).
 **Trous :** (1) l'état **`would.*`** manquant en mode check ; (2) **injection** (interpolation shell) ; (3) **`post`** finally-vs-success. Plus la preuve vivante du mont Everest : `apt-cache show` ment si le cache est périmé.
-**Avertissement :** un langage prouvé sur `apt-install` seul **overfitte** (forme binaire installé/pas-installé). Il faut aussi **`file-copy`** (garde par contenu = hash/diff) et **`service`** (deux dimensions orthogonales).
+**Avertissement :** un langage prouvé sur `apt-install` seul **overfitte** (forme binaire installé/pas-installé). Il faut aussi **`file.copy`** (garde par contenu = hash/diff) et **`service`** (deux dimensions orthogonales).
 
 ## Le nom
 
@@ -82,4 +82,4 @@ Décision du **contrat d'interpolation `sh`** (le trou 🔴 injection). Proposit
 - `sh "cmd" [args...]` → exec direct, **pas de shell**, zéro injection (défaut).
 - `shell "..."` → `/bin/sh -c`, pipes/glob/`&&`, **utilisateur responsable** (le nom signale le danger).
 
-Prochaine étape après validation : écrire **`file-copy`** pour faire hurler le langage sur une autre forme de garde.
+Prochaine étape après validation : écrire **`file.copy`** pour faire hurler le langage sur une autre forme de garde.

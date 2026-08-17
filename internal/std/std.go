@@ -21,7 +21,9 @@ import (
 	"shellf/internal/lang"
 )
 
-//go:embed *.shellf apt/*.shellf docker/*.shellf ufw/*.shellf
+//go:embed apt/*.shellf archive/*.shellf dir/*.shellf docker/*.shellf file/*.shellf
+//go:embed git/*.shellf http/*.shellf service/*.shellf systemd/*.shellf ufw/*.shellf
+//go:embed sshd/*.shellf sudo/*.shellf user/*.shellf
 var files embed.FS
 
 var (
@@ -42,7 +44,7 @@ func load() {
 		if err != nil {
 			return err
 		}
-		parsed, err := lang.ParseDefs(string(src))
+		parsed, err := lang.ParseStdlibDefs(string(src))
 		if err != nil {
 			return fmt.Errorf("%s: %w", p, err)
 		}

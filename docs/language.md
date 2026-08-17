@@ -1,6 +1,9 @@
 # shellf — language spec
 
-> Living doc. Only **stable** primitives are documented here. Instruction syntax is still moving → not yet included.
+> Living doc, and incomplete on purpose: what is written here is current, what is missing
+> is missing. Two shipped constructs have no chapter yet — `as <user>` escalation
+> ([ADR-0011](adr/0011-privilege-escalation.md)) and `import`
+> ([ADR-0015](adr/0015-local-imports.md), [ADR-0016](adr/0016-remote-modules.md)).
 
 ## `Result` — an instruction's outcome
 
@@ -25,6 +28,65 @@ Result = ok.<tag>(payload?) | err.<tag>(payload?) | would.<tag>(payload?)
 
 An instruction **reads** the `ShellResult` and **translates** it into a `Result` (via `when`/tags). A `Result` may *carry* a `ShellResult` in its payload; it is not one. Flattening `Result` to exit/stdout/stderr = branching on exit codes = plain bash — the exact regression shellf exists to avoid.
 
+## Phases and modes
+
+A `def` declares phases; a run picks a mode. Which phases a mode runs (ADR-0035):
+
+| Mode | `check` | `observe` | `preview` | `apply` |
+|---|---|---|---|---|
+| `shellf run` | yes | yes | no | yes |
+| `shellf run --dry-run` | yes | yes | yes | **no**, except below |
+| `shellf status` | yes | yes | no | no |
+
+`check` decides before acting — its outcome wins and halts. `observe` reports current
+state; equal to the desired one means the apply is skipped. `preview` describes what the
+apply would do and runs only in `--dry-run`. `apply` acts.
+
+**The exception (ADR-0041).** A def with no `observe` whose `apply` contains only
+primitives, control flow and `return` *is* evaluated in `--dry-run` — every primitive is
+inert there, so nothing can happen. The verdict then comes from what the primitives found:
+`ok.already` when nothing would change, `would.<tag>` when something would. This is how
+`file.copy`, `dir.copy` and `dir.sync` report honestly on a converged host instead of
+announcing writes that would not happen.
+
+Put a `shell { }` in that apply and the exception lapses — a shell can do anything, so the
+def falls back to `would.<tag>` on every dry-run. That is the cost of reaching for the
+shell where a primitive would do, and it is the only place the choice shows.
+
+An `apply` **must end with a `return`** naming what it did (ADR-0037 §1):
+
+```
+apply {
+    r = shell { apt-get install -y "$pkg" }
+    if !r { return err.runtime(r) }
+    return ok.installed          # required: the verdict is never implicit
+}
+```
+
+## Delegation — a def that *is* another def (ADR-0037 §2)
+
+A def may hold **one** call outside every phase. It then *is* that def with rebound
+arguments: the callee's own phases run, in every mode.
+
+```
+def template(src: str, dst: str) {
+    file.write(dst, ~file.render(src))
+}
+```
+
+Why not put the call in `apply`: the table above says `apply` does not run in
+`--dry-run`. A call placed there loses the callee's `check` and `observe`, so a wrapper
+previews a write on a host it would not touch. A delegation keeps them.
+
+Three rules, each a parse error when broken:
+
+- **Exactly one call.** Two calls are a sequence of effects, which is what `apply` is for
+  — and they have no single verdict.
+- **Only `check` beside it.** `observe`, `preview` and `apply` each answer a question the
+  callee already answers. You delegate the decision or you make it.
+- **No `shell` in the arguments.** They are evaluated in `--dry-run` too, because the
+  callee's `observe` needs their value; a shell there would run for real.
+
 ## `shell` — run shell
 
 A `shell { … }` block sends its body to `/bin/sh -c` (POSIX, not bash) and returns a `ShellResult`.
@@ -43,7 +105,14 @@ type ShellResult {
 
 ### `set -e` by default
 
-shellf injects `set -e` + `set -o pipefail` at the top of every block. `exit` = the code of the **first** failing command (else `0`). Without it, `exit` would be the last command's and a mid-block failure would be masked.
+shellf injects `set -e` at the top of every block, so `exit` is the code of the **first**
+failing command (else `0`). Without it, `exit` would be the last command's and a mid-block
+failure would be masked.
+
+**`set -o pipefail` only under `bash`.** It is a bashism — `dash`, which is `/bin/sh` on a
+Debian target, does not have it. So in a default `sh` block, `cmd | grep x` reports the
+exit code of `grep`, and a failure of `cmd` is invisible. Write `shell(bash) { … }` when a
+pipeline's left-hand side must be able to fail the block.
 
 `shell(raw) { … }` removes the net for the user who wants control.
 
@@ -61,11 +130,45 @@ shell { apt-get install -y "$pkg" }
 
 // captured: read the return
 s = shell { systemctl is-active --quiet "$name" }
-s.ok == want -> ...
+if s { … }                       // `.ok` is exit == 0; `if s` / `if !s` reads it
 
-// one line, explicit tag
-shell { … } -> err.runtime when err
+// tag a failure explicitly: name the outcome the block yields when it fails
+r = shell { … }
+if !r { return err.runtime(r) }
 ```
+
+### `unsafe shell` — shell a def already does (ADR-0040)
+
+A `shell { }` block whose command has an **exact** def equivalent does not parse. The def
+is re-runnable by construction — it observes, it reports, it converges — and a step that
+tolerates being re-run is what makes a failed run recoverable instead of wedged:
+
+```
+shell { mkdir -p /opt/app }
+→ mkdir here — dir.ensure(path) is idempotent and previewable.
+  Write `unsafe shell { … }` to keep the shell.
+```
+
+Two rules today: `mkdir` → `dir.ensure`, and `cp` → `file.copy` for a file or `dir.copy`
+for a tree (neither carries mode or ownership — that is `file.mode` / `dir.owner`).
+
+`unsafe shell { … }` keeps the shell, and runs exactly like `shell { … }`. It composes
+with the interpreter override and works in a condition:
+
+```
+unsafe shell { mkdir /var/lock/deploy || exit 1 }     // an atomic lock: no def does this
+unsafe shell(bash) { … }
+if !unsafe shell { … } { … }
+```
+
+**`unsafe` does not mean dangerous.** It means shellf cannot vouch for what the block
+does — the lock above is irreproachable shell that no def replaces, and it is marked,
+correctly. That is what keeps the word usable, and what makes `grep -r 'unsafe shell'` the
+list of every place shellf's guarantees stop, imported modules included.
+
+The detector is a heuristic and does not claim otherwise: `$CMD`, `eval`, `xargs`,
+`install -d` and `find -exec` go through it. It runs on plans and on your own defs; the
+standard library is exempt, since it is the layer that reaches the system.
 
 ## Variables
 
@@ -77,17 +180,17 @@ r = shell { usermod -aG docker "$owner" }
 ```
 
 - **Immutable**: no reassignment (which is why no `let`/`const` is needed).
-- **Reference**: a bare identifier in argument position resolves to its value — `user-group(owner, "docker")`.
+- **Reference**: a bare identifier in argument position resolves to its value — `user.group(owner, "docker")`.
 - **Interpolation** `${name}` in **simple strings only**:
 
 ```
-dir-owner("/opt/hosting", "${owner}:${owner}")   // → "haribo:haribo"
+dir.owner("/opt/hosting", "${owner}:${owner}")   // → "haribo:haribo"
 ```
 
 - **Triple-quoted strings are RAW** — `${…}` is left verbatim (it is shell/compose syntax the target resolves):
 
 ```
-file-write("/app/compose.yaml", """
+file.write("/app/compose.yaml", """
     environment:
       - DB=${DATABASE_URL}      // stays literal: ${DATABASE_URL}
     """)
@@ -101,27 +204,27 @@ See [ADR-0003](adr/0003-variable-scoping.md).
 ## Control flow — `if` / `else`
 
 ```
-if dir-create("/opt/app") {     // condition = an instruction; branch on its Result being ok
-  apt-install("nginx")
+if dir.exists("/opt/app") {     // condition = an instruction; branch on its Result being ok
+  apt.install("nginx")
 } else {
-  apt-install("apache")
+  apt.install("apache")
 }
 ```
 
 - The **condition is an instruction** (or a `shell` block); the branch is taken on its Result being `ok`.
 - The condition runs **on the target** — the agent interprets the flow.
 - A failing condition takes `else` (or is skipped): the `if` **captures** the result, so it does **not** halt (halting rule).
-- **Negation**: `if !<cond> { … }` flips the branch. This replaces the old `unless` guard (**removed from plans**): `shell { cmd } unless { g }` becomes `if !shell { g } { shell { cmd } }`, and `if !dir-exists("/opt") { dir-ensure("/opt") }` acts only when absent.
-- **Preview** (`--check`): a `would` condition (an effect not applied) makes the branch **`undetermined`** — honest, never guessed. An `ok`/`err` condition is deterministic. See [ADR-0004](adr/0004-control-flow-preview.md).
+- **Negation**: `if !<cond> { … }` flips the branch. This replaces the old `unless` guard (**removed from plans**): `shell { cmd } unless { g }` becomes `if !shell { g } { shell { cmd } }`, and `if !dir.exists("/opt") { dir.ensure("/opt") }` acts only when absent.
+- **Preview** (`--dry-run`): a `would` condition (an effect not applied) makes the branch **`undetermined`** — honest, never guessed. An `ok`/`err` condition is deterministic. See [ADR-0004](adr/0004-control-flow-preview.md).
 
 Put the effect **inside** the `if` (not a separate action followed by a `test`) so the preview stays honest.
 
 ### Capturing a result
 
 ```
-x = dir-ensure("/opt/app")   // capture the instruction's Result under `x`
+x = dir.ensure("/opt/app")   // capture the instruction's Result under `x`
 if x.changed {               // acted this run (apply ran, not a converged skip)
-  service("nginx", true, true)
+  service.ensure("nginx", true, true)
 }
 if x { … }                   // sugar for `if x == ok`
 if x != ok { … }             // `!=` negates
@@ -130,7 +233,7 @@ if x != ok { … }             // `!=` negates
 - **Outcome test** (ADR-0008): `x == ok` / `x == err` match the category; `x == ok.created` / `x == err.dbLocked` also match the tag (tag omitted = any tag of that category). `!=` negates; bare `if x` = `if x == ok`.
 - `.changed` = it actually acted (apply ran, not a converged skip). It is **orthogonal** to the outcome category, so it stays a field, not a pattern.
 - The old `.ok` / `.err` field tests are **removed** — use `== ok` / `== err`.
-- In `--check`, a captured `would` result makes the branch **`undetermined`** — same never-lie rule.
+- In `--dry-run`, a captured `would` result makes the branch **`undetermined`** — same never-lie rule.
 - A capture is block-scoped; capturing an `if`/`parallel` is rejected.
 
 ### Handling errors — `?`
@@ -160,11 +263,11 @@ See [ADR-0009](adr/0009-error-handling.md).
 
 ### Read-only questions
 
-`dir-exists` / `file-exists` are **questions**: read-only defs with **no `apply` phase**, so they resolve in pass 1 and are **deterministic in check** (never `undetermined`), unlike an effectful instruction.
+`dir.exists` / `file.exists` are **questions**: read-only defs with **no `apply` phase**, so they resolve in pass 1 and are **deterministic in check** (never `undetermined`), unlike an effectful instruction.
 
 ```
-if dir-exists("/opt/app") {   // present → then, absent → else — deterministic even in --check
-  apt-install("nginx")
+if dir.exists("/opt/app") {   // present → then, absent → else — deterministic even in --dry-run
+  apt.install("nginx")
 }
 ```
 
@@ -178,12 +281,12 @@ variable is referenced with `${var}`.
 ```
 on host {
   for port in ["80", "443"] { ufw.open("${port}", "tcp") }
-  for svc in ["traefik", "app"] { file-mode("/opt/${svc}/run", "755") }
+  for svc in ["traefik", "app"] { file.mode("/opt/${svc}/run", "755") }
 }
 ```
 
 - **Parse-time unrolling**: the loop expands to one copy of the body per item
-  before anything runs — `--check` and `status` show each iteration. There is no
+  before anything runs — `--dry-run` and `status` show each iteration. There is no
   runtime loop and no list value.
 - `${var}` works anywhere a string does, including inside one (`/opt/${svc}/run`).
   A **bare** `var` would be a per-host ref, not the loop item — always use `${var}`.
@@ -194,16 +297,114 @@ on host {
 - Lists are literals of strings; glob/range iteration and list variables are not
   in this version.
 
+## Parameter types — `str` and `bool` (ADR-0045)
+
+A def declares what each parameter is, and the declaration is enforced:
+
+```
+def ensure(name: str, running: bool, enabled: bool) { … }
+```
+
+Those two names are the whole vocabulary; anything else is a parse error. A `bool`
+parameter takes a **boolean value**, however it is written — what is refused is a value
+that is not one:
+
+```
+service.ensure("nginx", true, true)        # fine
+service.ensure("nginx", "true", "true")    # fine — that is a boolean, written as text
+tls = "true"
+service.ensure("nginx", tls, true)         # fine — the variable holds a boolean
+service.ensure("nginx", "yes", true)       # refused: "yes" is not a boolean
+```
+
+The refusal happens when the plan is read, before any host is contacted. It matters more
+than it looks: a def receiving `"yes"` for `running` used to read it as *not true* and
+**stop** the service, reporting `ok.converged`.
+
+## `%"…"` — a file on your machine, named by the plan (ADR-0043)
+
+A `%` marks a path the control host owns: `file.copy(%"conf.j2", "/etc/app.conf")`. What a
+plan marks is what the control host will serve — the list is built from the plan before
+the run, and any other request is refused by name.
+
+**Only a plan may write one.** A `%"…"` inside a def is a parse error: the def takes the
+path as a parameter, and the plan passes it marked.
+
+```
+# refused — the def would be adding to the list that bounds it
+def deliver() { apply { file.copy(%"conf.j2", "/etc/app.conf") return ok.done } }
+
+# how it is written
+def deliver(src: str) { apply { file.copy(src, "/etc/app.conf") return ok.done } }
+on web { deliver(%"conf.j2") }
+```
+
+The rule has no exception — not for the standard library, not for a def in your own
+project. A def written locally today is an imported def tomorrow, and a rule that depended
+on where the file lives would change meaning when it moves.
+
+It bounds *which* files a def can obtain, not what it does with them: a def still runs
+shell on the target.
+
+## Delivering a tree — `dir.copy` (ADR-0039)
+
+```
+dir.copy(%"assets/site", "/var/www/site")
+dir.copy(%"assets/site", "/var/www/site", "sha256")
+```
+
+The source is read on the control host, so it carries `%"…"`; an unmarked path would name
+a directory on the target, which is a different operation.
+
+The agent sends what it already has, the control host answers only what differs. A
+converged tree therefore transfers **zero bytes** and reports `ok.already` — not merely
+"wrote nothing". There is no size limit: files stream in chunks, and each is written
+beside its destination and renamed once complete, so a dropped connection never leaves a
+half-written file.
+
+`compare` decides what "identical" means:
+
+| value | compares | limit |
+|---|---|---|
+| `"meta"` (default) | size + mtime | **misses a change that preserves both** — a restored backup with preserved timestamps is the realistic case |
+| `"sha256"` | content | reads every file on both sides |
+
+The default's limit is documented rather than discovered: when it matters, pass
+`"sha256"`. What is on the target and absent from the source is left alone — a copy is a
+sync that deletes nothing.
+
+### `dir.sync` — the same transfer, and it deletes
+
+```
+dir.sync(%"assets/site", "/var/www/site")
+```
+
+One word apart from `dir.copy`, and that word removes: everything on the target and absent
+from the source is deleted. Use it when the destination must *match* the source, not
+merely contain it.
+
+`--dry-run` names what it would remove, one file per line, before removing anything:
+
+```
+dir.sync(dst=/var/www/site, src=site) would.synced
+    preview ▸ 2 file(s) would be transferred; 2 file(s) would be REMOVED from the target:
+    preview ▸   - old-page.html
+    preview ▸   - stale/asset.css
+```
+
+That preview is not a nicety. A destructive instruction whose dry-run says nothing tells
+the operator what they lost only afterwards.
+
 ## Per-call override — `with { … }` (ADR-0022)
 
-Any instruction call — a def, `shell`, `template`, or a builtin — may be followed
+Any instruction call — a def, `shell`, `file.template`, or a builtin — may be followed
 by `with { k = <value>, … }` to add or override variables **for that call only**:
 
 ```
 on host {
   # explicit, local inputs — no need to read the file to know what it uses
-  template("nginx.conf", "/etc/nginx/a.conf") with { port = "8080", root = "/srv/a" }
-  template("nginx.conf", "/etc/nginx/b.conf") with { port = "8081", root = "/srv/b" }
+  file.template(%"nginx.conf", "/etc/nginx/a.conf") with { port = "8080", root = "/srv/a" }
+  file.template(%"nginx.conf", "/etc/nginx/b.conf") with { port = "8081", root = "/srv/b" }
 
   shell { echo "$msg" } with { msg = "hi" }
 }
@@ -218,16 +419,16 @@ on host {
 
 ### Template render scope (ADR-0024)
 
-A `template(src, dst)` file is rendered **per host**, over that host's full
+A `file.template(src, dst)` file is rendered **per host**, over that host's full
 variable scope — `--vars`, plan bindings, **per-host inventory vars**, `--set`,
 secrets — plus the call's `with { }`. `dst` may be a bare per-host ref
-(`template("nginx.conf", conf_path)`); `src` is always a literal control-host
+(`file.template(%"nginx.conf", conf_path)`); `src` is always a literal control-host
 path. A `for` loop variable is **not** in that scope, so to use the loop item
 inside a template's content, pass it with `with { }`:
 
 ```
 for svc in ["traefik", "app"] {
-  template("unit.tmpl", "/opt/${svc}/unit") with { svc = "${svc}" }
+  file.template(%"unit.tmpl", "/opt/${svc}/unit") with { svc = "${svc}" }
 }
 ```
 

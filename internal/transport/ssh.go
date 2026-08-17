@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -34,6 +36,12 @@ type SSH struct {
 	KnownHosts  string        // known_hosts path; empty = ~/.ssh/known_hosts
 	Insecure    bool          // bypass host-key verification (dev only)
 
+	// Channel serves the running job's requests for control-host resources
+	// (ADR-0031). Nil — the common case — means the plan asks for nothing, and no
+	// bridge is opened at all: a plan that needs nothing keeps today's behaviour
+	// exactly, including surviving a dropped session while detached.
+	Channel func(io.Reader, io.WriteCloser) error
+
 	dialFn func() (conn, error) // test seam: overrides the real SSH dial
 }
 
@@ -42,6 +50,10 @@ type SSH struct {
 type conn interface {
 	run(cmd string, stdin []byte) (stdout []byte, err error) // like session.Run; nil err = exit 0
 	start(cmd string) error                                  // like session.Start (detached agent)
+	// duplex runs cmd with pipes on both ends, for the control channel bridge
+	// (ADR-0031). The returned closer ends the session, which is what kills the
+	// bridge on the target.
+	duplex(cmd string) (io.Reader, io.WriteCloser, io.Closer, error)
 	close() error
 }
 
@@ -63,6 +75,31 @@ func (cc clientConn) run(cmd string, stdin []byte) ([]byte, error) {
 		return stdout.Bytes(), fmt.Errorf("%v: %s", err, stderr.String())
 	}
 	return stdout.Bytes(), nil
+}
+
+// duplex opens a session with both pipes wired, for the bridge. The session — not the
+// SSH client — is what closing ends, so the bridge dies with it and leaves no third
+// process on the target (ADR-0005's "no trace").
+func (cc clientConn) duplex(cmd string) (io.Reader, io.WriteCloser, io.Closer, error) {
+	sess, err := cc.c.NewSession()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	stdout, err := sess.StdoutPipe()
+	if err != nil {
+		_ = sess.Close()
+		return nil, nil, nil, err
+	}
+	stdin, err := sess.StdinPipe()
+	if err != nil {
+		_ = sess.Close()
+		return nil, nil, nil, err
+	}
+	if err := sess.Start(cmd); err != nil {
+		_ = sess.Close()
+		return nil, nil, nil, err
+	}
+	return stdout, stdin, sess, nil
 }
 
 // start runs cmd detached: Start (not Run) then close after a brief pause, so
@@ -171,9 +208,13 @@ func donePath(wd, jobid string) string { return fmt.Sprintf("%s/done-%s", wd, jo
 func outPath(wd, jobid string) string  { return fmt.Sprintf("%s/out-%s.json", wd, jobid) }
 
 // pushCmd streams stdin to a temp then renames onto path (atomic, +x).
+// 700 and not `+x`: `chmod +x` keeps whatever the account's umask left, which on a target
+// with umask 0002 is 775 — any member of the SSH user's group can then rewrite the binary
+// shellf is about to execute. It also makes the mode an invariant the cache probe can
+// check, instead of something that varies per account (#391).
 func pushCmd(path string) string {
 	tmp := path + ".tmp"
-	return fmt.Sprintf("cat > %[1]s && chmod +x %[1]s && mv %[1]s %[2]s", tmp, path)
+	return fmt.Sprintf("cat > %[1]s && chmod 700 %[1]s && mv %[1]s %[2]s", tmp, path)
 }
 
 // depositCmd writes the request (stdin) atomically into the workdir. `umask 077`
@@ -182,7 +223,9 @@ func pushCmd(path string) string {
 func depositCmd(wd, jobid string) string {
 	tmp := fmt.Sprintf("%s/req-%s.json.tmp", wd, jobid)
 	final := fmt.Sprintf("%s/req-%s.json", wd, jobid)
-	return fmt.Sprintf("umask 077 && mkdir -p %[1]s && cat > %[2]s && mv %[2]s %[3]s", wd, tmp, final)
+	// No `mkdir` here: the workdir was created and vetted by workdirEnsureCmd, and creating
+	// it again with `-p` was what accepted a directory somebody else had put there (#413).
+	return fmt.Sprintf("umask 077 && cat > %[1]s && mv %[1]s %[2]s", tmp, final)
 }
 
 // launchCmd starts a detached resident agent with an inactivity TTL.
@@ -236,11 +279,36 @@ func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
 	// The workdir goes on tmpfs so secret plaintext stays off disk (ADR-0025);
 	// probed on this connection since it depends on the target.
 	wd := s.workDir(workBase(cn), bin)
-	if !cached(cn, path) {
+	// Fail closed, and name what was found: a foreign binary at our path is not a cache
+	// miss to paper over by re-pushing — the file is not ours to replace, and executing it
+	// is the whole of #391.
+	sum := sha256.Sum256(bin)
+	st, err := agentState(cn, path, hex.EncodeToString(sum[:]))
+	if err != nil {
+		_ = cn.close()
+		return nil, err
+	}
+	switch {
+	case st == "ok": // ours, unchanged → skip the transfer
+	case strings.HasPrefix(st, "foreign"):
+		_ = cn.close()
+		return nil, fmt.Errorf("refusing to run %s: it is not ours (%s) — remove it on the target",
+			path, strings.TrimSpace(strings.TrimPrefix(st, "foreign")))
+	default: // absent, or ours with different bytes → (re)transfer
 		if err := push(cn, bin, path); err != nil {
 			_ = cn.close()
 			return nil, err
 		}
+	}
+	wst, err := ensureWorkdir(cn, wd)
+	if err != nil {
+		_ = cn.close()
+		return nil, err
+	}
+	if strings.HasPrefix(wst, "unsafe") {
+		_ = cn.close()
+		return nil, fmt.Errorf("refusing to use %s: another user can write there (%s) — the agent runs any request it finds",
+			wd, strings.TrimSpace(strings.TrimPrefix(wst, "unsafe")))
 	}
 	if err := deposit(cn, wd, jobid, req); err != nil {
 		_ = cn.close()
@@ -254,9 +322,98 @@ func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
 	}
 	_ = cn.close()
 
+	// Bridge the control channel for the duration of the job, when the plan needs it.
+	// A separate session: it must be able to die (a dropped bridge is recoverable)
+	// without taking the poll with it.
+	if s.Channel != nil {
+		stop := s.bridge(path, wd)
+		defer stop()
+	}
+
 	// Poll for the result, re-dialing on a dropped session, until the deadline.
 	// The detached agent keeps running across drops, so a long job survives.
 	return s.poll(wd, jobid, deadline)
+}
+
+// bridge opens a session running `shellf __bridge` and serves the job's requests on it
+// until stop() is called. Best-effort by design: if the session cannot be opened, the
+// job simply gets a failure on its first request, naming the resource — which is a far
+// better diagnostic than refusing to start a plan that may never ask anything.
+func (s SSH) bridge(binPath, wd string) (stop func()) {
+	var (
+		mu       sync.Mutex
+		sessions []io.Closer
+		stopped  bool
+	)
+	isStopped := func() bool { mu.Lock(); defer mu.Unlock(); return stopped }
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// Relaunch the bridge when its session drops, which is the property that makes a
+		// socket worth having over a pipe (ADR-0031 §2): the agent stays detached and
+		// keeps listening, so a dropped session costs a reconnection, not the job. Until
+		// #347 this loop ran once, so a flaky link or an idle timeout killed every
+		// remaining `~file.read` in the job.
+		for attempt := 0; attempt <= bridgeRetries; attempt++ {
+			if isStopped() {
+				return
+			}
+			if attempt > 0 {
+				// Back off, and re-check: a host that has genuinely gone away must not
+				// keep the run alive by spinning on a dial that cannot succeed.
+				time.Sleep(bridgeRetryWait)
+				if isStopped() {
+					return
+				}
+			}
+			cn, err := s.dialConn()
+			if err != nil {
+				continue
+			}
+			out, in, sess, err := cn.duplex(posix(bridgeCmd(binPath, wd)))
+			if err != nil {
+				_ = cn.close()
+				continue
+			}
+			mu.Lock()
+			sessions = append(sessions, sess)
+			mu.Unlock()
+			_ = s.Channel(out, in)
+			_ = cn.close()
+			// Serving returned: either the session dropped, or stop() closed it. Only
+			// the first deserves another bridge — mistaking our own shutdown for a drop
+			// would reopen a session nobody will use, on a host we are done with.
+			if isStopped() {
+				return
+			}
+		}
+	}()
+
+	// stop closes the session, which kills the bridge on the target and unblocks the
+	// serving goroutine. Closing is what ends it: waiting alone would hang, since
+	// serving only returns when the channel closes.
+	//
+	// The wait that follows is bounded: the run must not hang because a bridge did not
+	// notice its session went away — the job's result is already in hand by then.
+	return func() {
+		mu.Lock()
+		stopped = true // set before closing, so the loop reads it as shutdown, not a drop
+		for _, c := range sessions {
+			_ = c.Close()
+		}
+		mu.Unlock()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+// bridgeCmd runs the bridge from the pushed agent binary (in /tmp, cached by hash)
+// against the socket in the job workdir (on tmpfs).
+func bridgeCmd(binPath, wd string) string {
+	return fmt.Sprintf("%s __bridge %s/sock", binPath, wd)
 }
 
 // Clean kills any resident agent on the target and removes every shellf file
@@ -273,11 +430,81 @@ func (s SSH) Clean() error {
 	return nil
 }
 
-// cached reports whether the agent binary is already present and executable on
-// the target (a cache hit → skip the transfer).
-func cached(cn conn, path string) bool {
-	_, err := cn.run(posix("test -x "+path), nil)
-	return err == nil
+// agentStateCmd asks what sits at the cached agent path. `test -x` used to answer this,
+// and it answers none of the questions that matter: the path is
+// `/tmp/shellf-agent-<digest of the binary>-<user>`, both halves public, so any local user
+// can create that file first and have it executed — often to run work under `as root`
+// (#391).
+//
+// Three questions, one round trip. `find … ! -perm /022` is the "nobody else can write
+// it" test; `-user` is the "it is ours" test; the digest is the "it is the binary we would
+// have sent" test. It always exits 0 and answers in a word, so a refusal can name what it
+// found rather than surfacing a shell exit code.
+func agentStateCmd(path, wantSum string) string {
+	return fmt.Sprintf(`if [ ! -e %[1]s ]; then echo absent; exit 0; fi
+if [ -z "$(find %[1]s -maxdepth 0 -type f -user "$(id -un)" ! -perm /022 2>/dev/null)" ]; then
+echo "foreign $(stat -c '%%U:%%a' %[1]s 2>/dev/null)"; exit 0; fi
+s=$(sha256sum %[1]s 2>/dev/null | cut -d' ' -f1)
+if [ "$s" = "%[2]s" ]; then echo ok; else echo "stale $s"; fi`, path, wantSum)
+}
+
+// workdirStateCmd checks the rendezvous directory before a request is deposited in it.
+// The agent runs **any** `req-*.json` it finds there without asking who wrote it
+// (internal/agent/resident.go), so a directory another user can write to is a way to have
+// a request of their choosing executed, `become: root` included. `umask 077` does not
+// cover this: it sets the mode of a directory it *creates*, and both `/tmp` and `/dev/shm`
+// are world-writable, so the path can be pre-created (#391).
+// workdirEnsureCmd creates the workdir and answers what it found: `ok`, or `unsafe …`.
+//
+// Creating and checking are one command on purpose (#413). They used to be two: a probe
+// answering `absent` — the ordinary state on a first run, after the agent's TTL erased it,
+// or after `shellf clean` — was accepted, and the deposit that followed did `mkdir -p`,
+// which succeeds on a directory somebody else created in between and changes neither its
+// owner nor its mode. The path is derived from the published binary's digest and the SSH
+// user, so it is calculable; an attacker loops on creating it and waits for a deployment.
+// The agent then runs every `req-*.json` it finds there, `as root` steps included.
+//
+// `mkdir` without `-p` is the whole fix: it fails when the path exists, so whoever created
+// the directory is the one that owns it. On the sticky /dev/shm or /tmp a local user cannot
+// remove ours to put theirs in its place, so winning the creation is winning outright.
+// `umask 077` makes what we create private without a second `chmod` to race against.
+func workdirEnsureCmd(wd string) string {
+	return fmt.Sprintf(`umask 077
+if mkdir %[1]s 2>/dev/null; then echo ok; exit 0; fi
+if [ ! -d %[1]s ]; then echo "unsafe $(stat -c '%%U:%%a' %[1]s 2>/dev/null) (not a directory)"; exit 0; fi
+if [ -z "$(find %[1]s -maxdepth 0 -type d -user "$(id -un)" ! -perm /022 2>/dev/null)" ]; then
+echo "unsafe $(stat -c '%%U:%%a' %[1]s 2>/dev/null)"; exit 0; fi
+echo ok`, wd)
+}
+
+// agentState returns the word agentStateCmd answered: absent | ok | foreign … | stale …
+//
+// A probe that cannot answer refuses. Returning "absent" here would have been the natural
+// reflex and is the wrong one: a guard that fails open reads as protection while granting
+// the same execution, which is worse than having none. The three tools it needs —
+// `find`, `stat -c`, `sha256sum` — are the ones the stdlib already requires of a target.
+func agentState(cn conn, path, wantSum string) (string, error) {
+	out, err := cn.run(posix(agentStateCmd(path, wantSum)), nil)
+	if err != nil {
+		return "", fmt.Errorf("cannot check the cached agent at %s: %w", path, err)
+	}
+	st := strings.TrimSpace(string(out))
+	if st == "" {
+		return "", fmt.Errorf("cannot check the cached agent at %s: the probe answered nothing", path)
+	}
+	return st, nil
+}
+
+func ensureWorkdir(cn conn, wd string) (string, error) {
+	out, err := cn.run(posix(workdirEnsureCmd(wd)), nil)
+	if err != nil {
+		return "", fmt.Errorf("cannot check the workdir %s: %w", wd, err)
+	}
+	st := strings.TrimSpace(string(out))
+	if st == "" {
+		return "", fmt.Errorf("cannot check the workdir %s: the probe answered nothing", wd)
+	}
+	return st, nil
 }
 
 func (s SSH) dial() (*ssh.Client, error) {
@@ -361,6 +588,15 @@ func (s SSH) hostKeyCallback() (ssh.HostKeyCallback, error) {
 }
 
 var pollWait = time.Second // poll cadence; a var so tests can shrink it
+
+// How hard the control host tries to put a bridge back after its session drops (#347).
+// Bounded on purpose: a host that has genuinely gone away must let the run end, and the
+// job then fails on its next ask, naming the resource it waited for (ADR-0031 §2) rather
+// than hanging. Vars so a test need not sit through the waits.
+var (
+	bridgeRetries   = 5
+	bridgeRetryWait = 500 * time.Millisecond
+)
 
 // push streams the binary (stdin) to a temp then renames onto path (atomic, +x):
 // an interrupted push never leaves a partial binary, and a concurrent run sees

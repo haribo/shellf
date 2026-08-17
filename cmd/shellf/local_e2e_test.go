@@ -21,17 +21,18 @@ func TestLocalTransport_EndToEnd(t *testing.T) {
 		t.Fatalf("build shellf: %v\n%s", err, out)
 	}
 
+	proj := project(t, filepath.Join(tmp, "proj"))
 	target := filepath.Join(tmp, "provisioned")
-	writeFile(t, tmp, "inv.shellf", `host self = { local: "true" }`)
-	writeFile(t, tmp, "plan.shellf", `on self {
-    dir-ensure("`+target+`")
-    file-write("`+filepath.Join(target, "marker")+`", "made locally")
+	writeFile(t, filepath.Join(proj, "inventories"), "inv.shellf", `host self = { local: "true" }`)
+	writeFile(t, filepath.Join(proj, "plans"), "plan.shellf", `on self {
+    dir.ensure("`+target+`")
+    file.write("`+filepath.Join(target, "marker")+`", "made locally")
 }`)
 
 	shellf := func() (string, error) {
 		out, err := exec.Command(bin, "run",
-			"--inventory", filepath.Join(tmp, "inv.shellf"),
-			filepath.Join(tmp, "plan.shellf")).CombinedOutput()
+			"--inventory", filepath.Join(proj, "inventories", "inv.shellf"),
+			filepath.Join(proj, "plans", "plan.shellf")).CombinedOutput()
 		return string(out), err
 	}
 

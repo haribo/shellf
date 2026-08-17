@@ -67,7 +67,7 @@ func TestAgentIf_QuestionDeterministicInCheck(t *testing.T) {
 	f.set(`test -d "$path"`, "", 0) // dir present → ok.present
 	f.set("thencmd", "", 0)
 	steps := []proto.Step{{If: &proto.IfBlock{
-		Cond: &proto.Step{Instruction: "dir-exists", Args: map[string]string{"path": "/opt"}},
+		Cond: &proto.Step{Instruction: "dir.exists", Args: map[string]string{"path": "/opt"}},
 		Then: []proto.Step{{Instruction: "shell", Args: map[string]string{"cmd": "thencmd"}}},
 	}}}
 	resp := serve(t, f, proto.Request{Mode: "check", Steps: steps})

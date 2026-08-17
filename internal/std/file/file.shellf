@@ -1,0 +1,152 @@
+# chmod a path to an exact mode. Path-dependent (not intrinsically root — the
+# caller escalates with `as root` for system paths), like dir-ensure/file-write.
+def mode(path: str, mode: str) {
+    observe { return state(mode: shell { stat -c '%a' "$path" 2>/dev/null }.stdout) }
+    apply {
+        r = shell { chmod "$mode" "$path" }
+        if !r { return err.runtime(r) }
+        return ok.changed
+    }
+}
+
+# Ensure a `key=value` line in a file (e.g. an .env): replace the line if the key
+# is present, else append it. Idempotent on the exact line. Note: key/value are
+# used in a sed pattern, so keep them free of sed metacharacters (`|`, `&`, `/`).
+def replace(path: str, key: str, value: str) {
+    observe { return state(set: shell { grep -qxF -- "$key=$value" "$path" 2>/dev/null }.exit == 0) }
+    apply {
+        r = shell {
+            if grep -q "^$key=" "$path" 2>/dev/null; then
+                sed -i "s|^$key=.*|$key=$value|" "$path"
+            else
+                printf '%s=%s\n' "$key" "$value" >> "$path"
+            fi
+        }
+        if !r { return err.runtime(r) }
+        return ok.set
+    }
+}
+
+def download(url: str, dst: str, sha256: str) {
+    observe {
+        return state(present: shell { test -f "$dst" && echo "$sha256  $dst" | sha256sum -c --status }.exit == 0)
+    }
+    apply {
+        r = shell {
+            curl -fsSLo "$dst" "$url"
+            echo "$sha256  $dst" | sha256sum -c --status
+        }
+        if !r { return err.runtime(r) }
+        return ok.downloaded
+    }
+}
+
+# Stage-then-rename, never a redirection at the destination (#298). `> "$path"`
+# truncates the file before writing it, so on the happy path — not just on a crash —
+# there is a window where a reader sees an empty or partial file. For an sshd_config
+# picked up by a concurrent reload, that window is a lockout.
+#
+# The staging file sits in the destination's own directory so the rename is within one
+# filesystem, hence atomic. `cp -p` first (when the destination exists) carries its
+# mode and owner onto the staging file: a redirection preserved them, a bare rename
+# would silently reset them to the umask default. The trap removes the staging file if
+# anything fails; after a successful rename it is already gone.
+# Stage-then-rename, never a redirection at the destination (#298). `> "$path"`
+# truncates the file before writing it, so on the happy path — not just on a crash —
+# there is a window where a reader sees an empty or partial file. For an sshd_config
+# picked up by a concurrent reload, that window is a lockout.
+#
+# The staging file sits in the destination's own directory so the rename is within one
+# filesystem, hence atomic. `cp -p` first (when the destination exists) carries its
+# mode and owner onto the staging file: a redirection preserved them, a bare rename
+# would silently reset them to the umask default. The trap removes the staging file if
+# anything fails; after a successful rename it is already gone.
+#
+# Content validation is deliberately NOT here (#323): whether a file is valid sudoers or
+# a valid sshd_config is the business of an instruction that knows the format, in its
+# `check` phase — it writes its own temporary, and `check` runs before any `apply`, so a
+# refused content never reaches this def.
+def write(path: str, content: str) {
+    observe {
+        return state(synced: shell { test -f "$path" && printf '%s' "$content" | cmp -s - "$path" }.exit == 0)
+    }
+    apply {
+        r = shell {
+            staged="$path.shellf.$$"
+            trap 'rm -f "$staged"' EXIT
+            if [ -f "$path" ]; then cp -p "$path" "$staged"; fi
+            printf '%s' "$content" > "$staged"
+            mv -f "$staged" "$path"
+        }
+        if !r { return err.runtime(r) }
+        return ok.written
+    }
+}
+
+# `-x` and not merely `-F`: without it the observe matches a **substring**, so adding
+# `foo` to a file already holding `foobar` reports `present` and the line is never
+# appended. `file.replace` above has always had the `-x`; this one did not (#388).
+def line(path: str, line: str) {
+    observe { return state(present: shell { grep -qxF -- "$line" "$path" }.exit == 0) }
+    apply {
+        r = shell { printf '%s\n' "$line" >> "$path" }
+        if !r { return err.runtime(r) }
+        return ok.added
+    }
+}
+
+def delete(path: str) {
+    observe { return state(absent: shell { test ! -e "$path" }.exit == 0) }
+    apply {
+        r = shell { rm -rf -- "$path" }
+        if !r { return err.runtime(r) }
+        return ok.deleted
+    }
+}
+
+# A read-only question: no apply phase -> deterministic in check (never `would`).
+def exists(path: str) {
+    check {
+        r = shell { test -f "$path" }
+        if r { return ok.present }
+        return err.absent
+    }
+}
+
+# Deliver a file from the control host to the target (ADR-0036). `src` must be marked
+# `%"…"` at the call site — an unmarked path would be read on the target, which is a
+# copy, not a delivery. Binary-safe: the content travels as bytes, never through a shell
+# variable, which would stop at the first null byte.
+#
+# No `observe`: the verdict comes from the work itself, as in `dir.copy`. `~file.write` is
+# idempotent by content sha256 and reports whether it wrote, so asking a second question
+# here would be a second implementation of one rule — free to drift, and it did: the
+# `observe` this def used to carry asked *"does the destination exist"*, answered `true`
+# forever after the first run, and left a changed source undelivered under an `ok.already`
+# (#378).
+def copy(src: str, dst: str) {
+    apply {
+        n = ~file.write(dst, ~file.read(src))
+        if n == "0" { return ok.already }
+        return ok.copied
+    }
+}
+
+# Render a control-host template and deliver it (ADR-0036). An ordinary def since #334:
+# `~file.render` runs on the control host, where the host's variables live, so per-host
+# rendering (ADR-0024) works exactly as the Go transformation did.
+#
+# `src` must be marked `%"…"` at the call site: the control host reads the template
+# itself, from what the plan declared. An unmarked path is refused rather than rendered —
+# text the target chose was substituted over this host's variables until #392.
+#
+# A delegation (ADR-0037 §2): this def *is* `file.write`, with the rendered content as
+# its argument. The callee's own phases therefore run in every mode — it decides whether
+# the destination is already in sync, so `--dry-run` reports `already` on a converged host
+# instead of announcing a write that would not happen.
+#
+# The `observe` this def grew in #334 is gone with it: re-deciding what `file.write`
+# already knows was two implementations of one rule, free to drift.
+def template(src: str, dst: str) {
+    file.write(dst, ~file.render(src))
+}

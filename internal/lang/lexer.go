@@ -30,6 +30,8 @@ const (
 	tArrow     // ->
 	tBang      // !
 	tQuestion  // ? — marks a failible instruction as caught (ADR-0009)
+	tPercent   // % — the path that follows is on the control host (ADR-0036)
+	tTilde     // ~ — the call that follows is an engine primitive (ADR-0036)
 	tRawString // """ … """ — raw, never interpolated
 )
 
@@ -98,6 +100,8 @@ var punctuation = map[byte]tokKind{
 	'{': tLBrace, '}': tRBrace, '[': tLBrack, ']': tRBrack,
 	'(': tLParen, ')': tRParen, '=': tEq, ':': tColon, ',': tComma, '.': tDot,
 	'!': tBang, // '!=' is handled before this map, so a lone '!' lands here
+	'%': tPercent,
+	'~': tTilde,
 	'?': tQuestion,
 }
 

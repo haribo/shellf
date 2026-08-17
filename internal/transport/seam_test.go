@@ -4,6 +4,8 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +19,11 @@ import (
 // It records every run/start command in order; responder decides each run's
 // reply so a test can script "not cached", "agent dead", "job done", a drop, etc.
 type fakeConn struct {
+	duplexes  []string
+	duplexErr error
+	bridgeIn  io.Reader
+	bridgeOut io.WriteCloser
+
 	runs      []string
 	starts    []string
 	closed    int
@@ -42,7 +49,24 @@ func unwrapPosix(cmd string) string {
 }
 
 func (f *fakeConn) start(cmd string) error { f.starts = append(f.starts, cmd); return nil }
-func (f *fakeConn) close() error           { f.closed++; return nil }
+
+// duplex records the bridge command and wires it to an in-memory peer, so a test can
+// drive the channel without SSH. Nil peer = the target refuses the session.
+func (f *fakeConn) duplex(cmd string) (io.Reader, io.WriteCloser, io.Closer, error) {
+	f.duplexes = append(f.duplexes, cmd)
+	if f.duplexErr != nil {
+		return nil, nil, nil, f.duplexErr
+	}
+	toBridge, fromCtl := io.Pipe() // control writes → bridge reads
+	fromBridge, toCtl := io.Pipe() // bridge writes → control reads
+	f.bridgeIn, f.bridgeOut = toBridge, toCtl
+	return fromBridge, fromCtl, closerFunc(func() error { _ = toCtl.Close(); return nil }), nil
+}
+
+type closerFunc func() error
+
+func (c closerFunc) Close() error { return c() }
+func (f *fakeConn) close() error  { f.closed++; return nil }
 
 func (f *fakeConn) ran(sub string) bool {
 	for _, c := range f.runs {
@@ -58,8 +82,10 @@ func (f *fakeConn) ran(sub string) bool {
 func doneResponder(payload string) func(string) ([]byte, error) {
 	return func(cmd string) ([]byte, error) {
 		switch {
-		case strings.HasPrefix(cmd, "test -x "): // cache probe → miss
-			return nil, errFake("absent")
+		case strings.Contains(cmd, "sha256sum"): // cache probe → absent (#391)
+			return []byte("absent\n"), nil
+		case strings.Contains(cmd, "-type d -user"): // workdir probe → safe (#391)
+			return []byte("ok\n"), nil
 		case strings.Contains(cmd, "agent.pid"): // agentAlive → dead
 			return nil, errFake("dead")
 		case strings.HasPrefix(cmd, "if test -f "): // checkDone → ready
@@ -94,8 +120,10 @@ func TestRun_HappyPath_PushDepositLaunchPoll(t *testing.T) {
 	if string(out) != `{"ok":true}` {
 		t.Fatalf("job payload should pass through: %q", out)
 	}
-	// Full sequence: cache probe → push → deposit → agentAlive → checkDone → rmJob.
-	if !fc.ran("test -x ") || !fc.ran("chmod +x") || !fc.ran("mkdir -p ") ||
+	// Full sequence: cache probe → push → workdir → deposit → agentAlive → checkDone →
+	// rmJob. The workdir step is a bare `mkdir` since #413: creating it exclusively is what
+	// makes the directory ours, where `mkdir -p` accepted one another user had put there.
+	if !fc.ran("sha256sum") || !fc.ran("chmod 700") || !fc.ran("mkdir /") ||
 		!fc.ran("agent.pid") || !fc.ran("if test -f ") || !fc.ran("rm -f ") {
 		t.Fatalf("missing a step in the sequence: %v", fc.runs)
 	}
@@ -107,8 +135,10 @@ func TestRun_HappyPath_PushDepositLaunchPoll(t *testing.T) {
 func TestRun_Cached_SkipsPush(t *testing.T) {
 	fc := &fakeConn{responder: func(cmd string) ([]byte, error) {
 		switch {
-		case strings.HasPrefix(cmd, "test -x "): // cache probe → HIT
-			return nil, nil
+		case strings.Contains(cmd, "sha256sum"): // cache probe → HIT: ours, unchanged (#391)
+			return []byte("ok\n"), nil
+		case strings.Contains(cmd, "-type d -user"): // workdir probe → safe (#391)
+			return []byte("ok\n"), nil
 		case strings.Contains(cmd, "agent.pid"): // agentAlive → alive
 			return nil, nil
 		case strings.HasPrefix(cmd, "if test -f "):
@@ -121,7 +151,7 @@ func TestRun_Cached_SkipsPush(t *testing.T) {
 	if _, err := s.Run(tmpBin(t), []byte(`{}`)); err != nil {
 		t.Fatal(err)
 	}
-	if fc.ran("chmod +x") {
+	if fc.ran("chmod 700") {
 		t.Fatal("a cache hit must skip the push")
 	}
 	if len(fc.starts) != 0 {
@@ -152,8 +182,8 @@ func TestWorkBase_PrefersTmpfsElseTmp(t *testing.T) {
 
 func TestRun_PushError_StopsBeforeDeposit(t *testing.T) {
 	fc := &fakeConn{responder: func(cmd string) ([]byte, error) {
-		if strings.HasPrefix(cmd, "test -x ") {
-			return nil, errFake("absent") // not cached
+		if strings.Contains(cmd, "sha256sum") {
+			return []byte("absent\n"), nil // not cached (#391)
 		}
 		if strings.HasPrefix(cmd, "cat > ") {
 			return nil, errFake("disk full") // push fails
@@ -284,5 +314,65 @@ func TestRun_AllCommandsPosixWrapped(t *testing.T) {
 		if !strings.HasPrefix(cmd, "sh -c '") {
 			t.Fatalf("transport command not POSIX-wrapped (#241): %q", cmd)
 		}
+	}
+}
+
+// The bridge session, driven through the fake conn. It covers the command actually
+// sent — which was wrong in the first draft: it ran the agent from the workdir, where
+// the binary is not (it lives in /tmp, cached by hash).
+func TestSSH_BridgeCommandAndServing(t *testing.T) {
+	fc := &fakeConn{}
+	served := make(chan struct{})
+	s := SSH{
+		dialFn:  func() (conn, error) { return fc, nil },
+		Channel: func(r io.Reader, w io.WriteCloser) error { close(served); return nil },
+	}
+
+	stop := s.bridge("/tmp/shellf-agent-abc", "/dev/shm/shellf-xyz")
+	select {
+	case <-served:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the bridge must hand its pipes to the channel server")
+	}
+	stop()
+
+	if len(fc.duplexes) != 1 {
+		t.Fatalf("exactly one bridge session expected: %v", fc.duplexes)
+	}
+	cmd := fc.duplexes[0]
+	if !strings.Contains(cmd, "/tmp/shellf-agent-abc __bridge") {
+		t.Fatalf("the bridge must run the pushed binary, not a path in the workdir: %q", cmd)
+	}
+	if !strings.Contains(cmd, "/dev/shm/shellf-xyz/sock") {
+		t.Fatalf("the bridge must target the socket in the job workdir: %q", cmd)
+	}
+}
+
+// A plan that needs nothing opens no bridge at all: today's behaviour is untouched,
+// including a detached job surviving a dropped session.
+func TestSSH_NoChannelNoBridge(t *testing.T) {
+	fc := &fakeConn{}
+	s := SSH{dialFn: func() (conn, error) { return fc, nil }}
+	if s.Channel != nil {
+		t.Fatal("Channel must default to nil")
+	}
+	if len(fc.duplexes) != 0 {
+		t.Fatalf("no bridge session may be opened: %v", fc.duplexes)
+	}
+}
+
+// An unreachable target must not wedge the run: the job gets a failure on its first
+// request instead, naming the resource.
+func TestSSH_BridgeDialFailureIsNotFatal(t *testing.T) {
+	s := SSH{
+		dialFn:  func() (conn, error) { return nil, errors.New("dial refused") },
+		Channel: func(io.Reader, io.WriteCloser) error { t.Fatal("must not serve"); return nil },
+	}
+	done := make(chan struct{})
+	go func() { s.bridge("/bin/agent", "/wd")(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a failed bridge dial must return, not hang the job")
 	}
 }

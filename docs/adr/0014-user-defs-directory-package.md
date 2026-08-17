@@ -2,7 +2,10 @@
 
 ## Status
 
-Active
+Active — **§1 superseded by [ADR-0038](0038-project-layout.md)**, which moves the anchor
+from the invoked plan's directory to the project root. §2 and §3 stand and are not
+restated there, which is why this record is not marked wholly superseded: a reader
+following the chain must find §2/§3 alive here, not assume the file is dead.
 
 ## Context
 

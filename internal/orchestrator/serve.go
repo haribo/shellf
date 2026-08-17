@@ -1,0 +1,195 @@
+package orchestrator
+
+import (
+	"encoding/base64"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"shellf/internal/proto"
+)
+
+// Serving control-host resources to a running job (ADR-0031 §3).
+//
+// The rule that makes the channel safe: the control host answers **only** what the plan
+// declared. Defs can come from third parties (ADR-0016); without this, an imported def
+// could ask for ~/.ssh/id_ed25519 and be served by the machine holding every key and
+// every secret. So the allow-list is derived from the plan before it is sent, and
+// anything outside it is refused by name.
+
+// Allowed is the set of control-host resources a job may request, resolved to absolute
+// paths so a request cannot escape by way of `..` or a symlink-shaped string.
+type Allowed struct {
+	paths map[string]string // as written in the plan → absolute path on disk
+
+	// root is `assets/` resolved. Kept because the allow-list's check is *lexical* — a
+	// path that reads as `assets/x` passes it — and a symlink is not a lexical thing.
+	// Containment is therefore re-established at read time, against links that may not
+	// have existed when the list was built (#393).
+	root string
+
+	// Render substitutes `@{var}` over this host's environment (ADR-0024), with `scope`
+	// — the variables in scope where the call was made — layered on top. It lives here
+	// because rendering needs the operator's variables, which never leave the control
+	// host; the agent names a declared template plus its scope, and receives the result.
+	//
+	// The content substituted into is read here, from the allow-list, never taken from
+	// the ask: the substituted values are this host's, secrets included, so text the
+	// target composed would be a way to ask for them by name (#392, ADR-0042).
+	Render func(content string, scope map[string]string) (string, error)
+}
+
+// NewAllowed builds the set from the resources a plan declared. A declaration is
+// `<primitive>:<path>` — `file.read:conf.j2` — so the primitive is part of the key: a
+// `dir.list` cannot be answered with a file's contents, and a path declared for reading
+// does not become listable.
+//
+// Every path resolves under assetsDir (ADR-0038 §3), and one that lands outside it is
+// dropped rather than resolved: the answer to "where does this file come from" is a
+// single directory, not a search, and a plan cannot reach the rest of the operator's
+// disk. The test is containment after resolution, so an absolute path pointing inside
+// assets/ is fine and a `../` climbing out of it is not — what matters is where the path
+// ends up, not how it was written.
+func NewAllowed(assetsDir string, declared []string) *Allowed {
+	a := &Allowed{paths: map[string]string{}}
+	rootAbs, err := filepath.Abs(assetsDir)
+	if err != nil {
+		return a
+	}
+	// The root itself is resolved, so a project whose `assets/` *is* a symlink still
+	// matches the resolved paths compared against it below.
+	if r, err := filepath.EvalSymlinks(rootAbs); err == nil {
+		a.root = r
+	} else {
+		a.root = rootAbs
+	}
+	for _, d := range declared {
+		primitive, path, ok := strings.Cut(d, ":")
+		if !ok {
+			continue // not a resource key: nothing to allow
+		}
+		p := path
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(rootAbs, p)
+		}
+		abs, err := filepath.Abs(p)
+		if err != nil || !underRoot(rootAbs, abs) {
+			continue // `../` out of assets/: not declared, so the ask is refused by name
+		}
+		a.paths[primitive+":"+path] = abs
+	}
+	return a
+}
+
+// underRoot reports whether abs is root itself or inside it. Compared on cleaned absolute
+// paths, so `assets/../assets-secret` does not pass for being a prefix of `assets`.
+func underRoot(root, abs string) bool {
+	if abs == root {
+		return true
+	}
+	return strings.HasPrefix(abs, root+string(filepath.Separator))
+}
+
+// resolve returns the absolute path for a requested resource, or false when the plan
+// never declared it. Matching is on the string the plan carried, not on the resolved
+// path: two different spellings of one file are two declarations, and a request that
+// matches none of them is refused whatever it points at.
+func (a *Allowed) resolve(resource string) (string, bool) {
+	p, ok := a.paths[resource]
+	return p, ok
+}
+
+// Serve answers one job's requests until the channel closes. It reads, it answers, and
+// it never executes: a resource name is a lookup key, never a command.
+func Serve(ch *proto.Conn, allow *Allowed) error {
+	for {
+		m, err := ch.Recv()
+		if err != nil {
+			return err // includes io.EOF: the peer is gone, this job is over
+		}
+		if m.Kind != proto.KindAsk {
+			continue // hello, or something a newer peer knows and we do not
+		}
+		// A tree transfer answers with a sequence, so it writes to the connection itself
+		// instead of returning one payload (ADR-0039 §2).
+		if strings.HasPrefix(m.Resource, "dir.sync:") {
+			if err := serveSync(ch, allow, m); err != nil {
+				return err
+			}
+			continue
+		}
+		data, aerr := answer(allow, m)
+		ans := proto.Msg{Kind: proto.KindAnswer, ID: m.ID}
+		if aerr != nil {
+			ans.Error = aerr.Error()
+		} else {
+			ans.Data = base64.StdEncoding.EncodeToString(data)
+		}
+		if err := ch.Send(ans); err != nil {
+			return err
+		}
+	}
+}
+
+// answer dispatches an ask: every resource names a file to read, and `file.render` reads
+// one and substitutes over it before answering.
+func answer(allow *Allowed, m proto.Msg) ([]byte, error) {
+	if strings.HasPrefix(m.Resource, "file.render:") {
+		if allow.Render == nil {
+			return nil, fmt.Errorf("no renderer configured on the control host")
+		}
+		// Read through the same door as every other ask, so an undeclared template is
+		// refused by name. The ask brings a resource and its scope, never the text: that
+		// text was substituted over this host's variables, which made the render an
+		// unbounded read of them (#392, ADR-0042).
+		content, err := readResource(allow, m.Resource)
+		if err != nil {
+			return nil, err
+		}
+		out, err := allow.Render(string(content), m.Vars)
+		if err != nil {
+			return nil, fmt.Errorf("file.render: %v", err)
+		}
+		return []byte(out), nil
+	}
+	return readResource(allow, m.Resource)
+}
+
+func readResource(allow *Allowed, resource string) ([]byte, error) {
+	path, ok := allow.resolve(resource)
+	if !ok {
+		// Naming the resource is deliberate: a refusal the operator cannot read is a
+		// support ticket. Naming it is safe — the requester already knows what it asked.
+		return nil, fmt.Errorf("refused: %q was not declared by the plan", resource)
+	}
+	// A symlink is not a lexical thing, and the allow-list's check is lexical: a link at
+	// `assets/x` pointing at `~/.ssh/id_ed25519` reads as declared and was served. Resolve
+	// the path — which also covers a link in an intermediate directory — and refuse what
+	// lands outside `assets/`. `dir.sync` has always skipped non-regular files, so the two
+	// halves of the same question answered differently (#393).
+	if allow.root != "" {
+		real, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil, fmt.Errorf("no such file on the control host")
+			}
+			return nil, fmt.Errorf("refused: %q cannot be resolved on the control host", resource)
+		}
+		if !underRoot(allow.root, real) {
+			// Name the resource, never what it pointed at: the target must not learn a
+			// path on the operator's machine, which is the whole point of refusing.
+			return nil, fmt.Errorf("refused: %q leaves the project's assets — a link out is not a declaration", resource)
+		}
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		// Do not leak the absolute path of the control host into a target-visible
+		// message; the plan-relative name is what the operator wrote and recognises.
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("no such file on the control host")
+		}
+		return nil, fmt.Errorf("%s", strings.TrimPrefix(err.Error(), path+": "))
+	}
+	return b, nil
+}

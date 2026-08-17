@@ -1,0 +1,9 @@
+# Reload systemd's unit files. Action-shaped: run it after writing/patching a
+# unit, before `service(...)` enables it.
+def daemon-reload() as root {
+    apply {
+        r = shell { systemctl daemon-reload }
+        if !r { return err.runtime(r) }
+        return ok.reloaded
+    }
+}

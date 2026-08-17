@@ -1,0 +1,28 @@
+# Hermetic end-to-end plan: no root, no network, no package manager. It only
+# provisions a marker tree under /tmp, so it runs on a barebones sshd target and
+# is fully idempotent — a second real run changes nothing.
+#
+# `mark` is a USER def in the sibling mark.shellf, resolved by name with no
+# def package (ADR-0038 §2): `m.mark` lives in defs/m/, `g.hello` in defs/g/. Both are
+# called qualified by their directory, with no import and no flag.
+
+on target {
+    dir.ensure("/tmp/shellf-e2e")
+    file.write("/tmp/shellf-e2e/marker", "provisioned by shellf")
+    m.mark("/tmp/shellf-e2e/custom", "made by a user def")
+    g.hello("/tmp/shellf-e2e/imported")
+    for d in ["one", "two"] {
+        dir.ensure("/tmp/shellf-e2e/${d}")
+    }
+    file.write("/tmp/shellf-e2e/sec", "${apisecret}")
+    # deliver a control-host tree verbatim, binary-safe (ADR-0028)
+    dir.copy(%"tree", "/tmp/shellf-e2e/delivered")
+    file.template(%"motd.tmpl", "/tmp/shellf-e2e/motd")
+    # `with { }` overrides a variable for this one call (ADR-0022): `greeting` is
+    # not a global here — it exists only for this render, and for the shell below.
+    file.template(%"greet.tmpl", "/tmp/shellf-e2e/greet") with { greeting = "hello-with" }
+    shell { echo "$greeting" > /tmp/shellf-e2e/note } with { greeting = "note-with" }
+    if file.exists("/tmp/shellf-e2e/marker") {
+        file.write("/tmp/shellf-e2e/ready", "ok")
+    }
+}

@@ -56,8 +56,10 @@ func TestPaths(t *testing.T) {
 
 func TestCommandBuilders(t *testing.T) {
 	cases := []struct{ got, want string }{
-		{pushCmd("/p"), "cat > /p.tmp && chmod +x /p.tmp && mv /p.tmp /p"},
-		{depositCmd("/w", "7"), "umask 077 && mkdir -p /w && cat > /w/req-7.json.tmp && mv /w/req-7.json.tmp /w/req-7.json"},
+		{pushCmd("/p"), "cat > /p.tmp && chmod 700 /p.tmp && mv /p.tmp /p"},
+		// No `mkdir` in the deposit since #413: the workdir is created and vetted in one
+		// earlier command, and re-creating it with `-p` accepted one another user had made.
+		{depositCmd("/w", "7"), "umask 077 && cat > /w/req-7.json.tmp && mv /w/req-7.json.tmp /w/req-7.json"},
 		{launchCmd("/p", "/w", 7200), "setsid /p __agent-resident /w 7200 >/dev/null 2>&1 </dev/null &"},
 		{checkDoneCmd("/w", "7"), "if test -f /w/done-7; then cat /w/out-7.json; else printf __NOTDONE__; fi"},
 		{rmJobCmd("/w", "7"), "rm -f /w/out-7.json /w/done-7"},

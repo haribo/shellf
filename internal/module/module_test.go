@@ -16,9 +16,9 @@ func TestParseSpec(t *testing.T) {
 	}{
 		{"github.com/alice/web@v1.2.0", "github.com/alice/web", "v1.2.0", true},
 		{"git@github.com:alice/web@v1.0.0", "git@github.com:alice/web", "v1.0.0", true},
-		{"../shared", "", "", false},         // local path, no @
+		{"../shared", "", "", false},             // local path, no @
 		{"github.com/alice/web@", "", "", false}, // empty version
-		{"@v1", "", "", false},                    // empty path
+		{"@v1", "", "", false},                   // empty path
 	}
 	for _, c := range cases {
 		spec, ok := ParseSpec(c.in)
@@ -74,7 +74,7 @@ func TestResolve_LocalGitRepo(t *testing.T) {
 	repo := t.TempDir()
 	run(t, repo, "init", "-q", "-b", "main")
 	if err := os.WriteFile(filepath.Join(repo, "web.shellf"),
-		[]byte(`def deploy(port: str) { apply { shell { echo "$port" } } }`), 0o600); err != nil {
+		[]byte(`def deploy(port: str) { apply { shell { echo "$port" } return ok.done } }`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	run(t, repo, "add", ".")
@@ -109,7 +109,7 @@ func TestResolve_MissingTag(t *testing.T) {
 	}
 	repo := t.TempDir()
 	run(t, repo, "init", "-q", "-b", "main")
-	if err := os.WriteFile(filepath.Join(repo, "x.shellf"), []byte("def a() { apply { shell { echo hi } } }"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, "x.shellf"), []byte("def a() { apply { shell { echo hi } return ok.done } }"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	run(t, repo, "add", ".")

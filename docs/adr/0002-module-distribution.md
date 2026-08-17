@@ -2,8 +2,9 @@
 
 ## Status
 
-Accepted (direction). Implementation deferred: local imports in 0.2, remote
-sharing in phase 3. Nothing here is built yet.
+Accepted (direction). The decisions that carry it out have their own records:
+[ADR-0015](0015-local-imports.md) for local imports, [ADR-0016](0016-remote-modules.md)
+for remote modules.
 
 ## Context
 
@@ -13,7 +14,7 @@ which are neither idempotent nor previewable. Reusable, guarded instructions
 
 The open question is **how instructions are distributed** without falling into
 the ecosystem trap that killed the anti-Ansible tools: their cold-start was a
-central registry no one populated. shellf's thesis (`DESIGN.md` §07) is the
+central registry no one populated. shellf's thesis (`docs/design.md` §02) is the
 opposite — be excellent with raw shell, so no ecosystem is *required*.
 
 ## Decisions

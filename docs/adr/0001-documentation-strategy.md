@@ -18,7 +18,7 @@ PRIMARY: solo dev + Claude assistants. SECONDARY: future contributors. OUT OF SC
 
 | Source | Scope |
 |---|---|
-| `DESIGN.md`, `docs/design/`, `docs/language.md` | WHAT/WHY: language semantics, primitives, user-observable behavior, rationale |
+| `docs/design.md`, `docs/language.md` | WHAT/WHY: language semantics, primitives, user-observable behavior, rationale |
 | Code (Go, once it exists) | HOW: implementation |
 | `docs/adr/` | Decisions with rationale + rejected alternatives |
 
@@ -30,7 +30,7 @@ Three only.
 
 | Type | Location | Scope |
 |---|---|---|
-| Spec / design | `DESIGN.md`, `docs/language.md`, `docs/design/` | Language + product: WHAT, WHY when non-obvious |
+| Spec / design | `docs/design.md`, `docs/language.md` | Language + product: WHAT, WHY when non-obvious |
 | ADR | `docs/adr/` | Decisions, alternatives rejected, consequences |
 | Doc technique | `docs/*.md` (excl. `adr/`) | Conventions neither spec nor ADR |
 

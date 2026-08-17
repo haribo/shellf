@@ -1,7 +1,7 @@
 package lang
 
 // AST for `def` declarations. Instruction bodies are phase-structured
-// (pre-check / check / guard / apply / post), plus a final default outcome.
+// (check / observe / preview / apply), plus a final default outcome.
 
 type Def struct {
 	Name     string
@@ -10,6 +10,11 @@ type Def struct {
 	Interp   string // def-declared interpreter from `def … using <interp>` (ADR-0012)
 	Override bool   // `override def` — deliberately shadows a stdlib def (ADR-0014)
 	Phases   []Phase
+	// Delegate is a call sitting outside every phase: this def *is* that one with
+	// rebound arguments (ADR-0037 §2). Exactly one, and only `check` may sit beside it —
+	// the callee's own phases then run in every mode, which is what an `apply` cannot do,
+	// since `apply` never runs in `--dry-run`.
+	Delegate *Call
 	Return   *Outcome // derived: apply's trailing `return`, for `would` in check (ADR-0007)
 	Source   string   // the def's own source text, to ship to the agent (ADR-0014)
 }
@@ -29,7 +34,7 @@ type Param struct {
 }
 
 type Phase struct {
-	Name  string // pre-check | check | guard | observe | apply | post
+	Name  string // check | observe | preview | apply (ADR-0035)
 	Stmts []Stmt
 }
 
@@ -89,10 +94,15 @@ type Outcome struct {
 type Expr interface{ isExpr() }
 
 type StrLit struct{ Value string }
+
+// ControlPath is `%"conf.j2"` — a path on the control host, not the target (ADR-0034).
+// A distinct node, not a string with a marker inside: the prefix stays visible when the
+// value is read, and the set of files a plan needs is extractable before the run.
+type ControlPath struct{ Value string }
 type BoolLit struct{ Value bool }
 type IntLit struct{ Raw string } // parsed to int by the evaluator
-type Ident struct{ Name string }        // pkg, r, and the when-shorthands ok/err
-type Field struct {                     // r.exit
+type Ident struct{ Name string } // pkg, r, and the when-shorthands ok/err
+type Field struct {              // r.exit
 	Recv Expr
 	Name string
 }
@@ -107,19 +117,27 @@ type Unary struct { // !x — negate truthiness (ADR-0010)
 type Call struct { // apt-cache-show(pkg)
 	Name string
 	Args []Expr
+	// Control marks `~file.read(…)`: a primitive evaluated on the control host rather
+	// than an instruction run on the target (ADR-0034). Only a name from the closed set
+	// may carry it — `%` before a def is a parse error, because a def can run shell and
+	// shell prefixed by `%` would run on the operator's machine.
+	Control bool
 }
-type ShellExpr struct { // shell(<interp>) { … } [unless { … }] or shell <line>
-	Cmd    string
-	Unless string
+type ShellExpr struct { // shell(<interp>) { … } or shell <line>
+	Cmd string
+	// An `Unless` field stood here, filled by the def parser and read by nothing (#415).
+	// The guard lives on `engine.Shell`, filled from a plan step — and plans refuse the
+	// keyword, so a def's `unless` was a silent no-op.
 	Interp string // shell(<interp>) block annotation (ADR-0012)
 }
 
-func (StrLit) isExpr()    {}
-func (BoolLit) isExpr()   {}
-func (IntLit) isExpr()    {}
-func (Ident) isExpr()     {}
-func (Field) isExpr()     {}
-func (Binary) isExpr()    {}
-func (Unary) isExpr()     {}
-func (Call) isExpr()      {}
-func (ShellExpr) isExpr() {}
+func (StrLit) isExpr()      {}
+func (ControlPath) isExpr() {}
+func (BoolLit) isExpr()     {}
+func (IntLit) isExpr()      {}
+func (Ident) isExpr()       {}
+func (Field) isExpr()       {}
+func (Binary) isExpr()      {}
+func (Unary) isExpr()       {}
+func (Call) isExpr()        {}
+func (ShellExpr) isExpr()   {}
