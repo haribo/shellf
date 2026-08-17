@@ -123,9 +123,11 @@ type Call struct { // apt-cache-show(pkg)
 	// shell prefixed by `%` would run on the operator's machine.
 	Control bool
 }
-type ShellExpr struct { // shell(<interp>) { … } [unless { … }] or shell <line>
-	Cmd    string
-	Unless string
+type ShellExpr struct { // shell(<interp>) { … } or shell <line>
+	Cmd string
+	// An `Unless` field stood here, filled by the def parser and read by nothing (#415).
+	// The guard lives on `engine.Shell`, filled from a plan step — and plans refuse the
+	// keyword, so a def's `unless` was a silent no-op.
 	Interp string // shell(<interp>) block annotation (ADR-0012)
 }
 

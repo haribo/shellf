@@ -493,12 +493,12 @@ func (p *parser) shellExpr(unsafe bool) Expr {
 	p.adv()
 	e := ShellExpr{Cmd: body, Interp: interp}
 	if p.tok.kind == tIdent && p.tok.val == "unless" {
-		guard, err := p.lex.rawBracesRequired()
-		if err != nil {
-			panic(parseErr{err})
-		}
-		p.adv()
-		e.Unless = guard
+		// Parsed and stored until #415, and read by nobody: the engine's guard is only
+		// ever filled from a plan step, and plans refuse the keyword. So it held in
+		// exactly one place, where it did nothing — a def doing
+		// `shell { touch "$p" } unless { true }` ran the command with the guard holding.
+		// The message is the plan's, so one construct has one answer.
+		p.fail("`unless` was removed; use `if !shell { <guard> } { shell { <cmd> } }`")
 	}
 	return e
 }

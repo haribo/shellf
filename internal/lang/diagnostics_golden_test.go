@@ -35,9 +35,9 @@ func TestGoldenDiagnostics_Plan(t *testing.T) {
 
 func TestGoldenDiagnostics_Def(t *testing.T) {
 	cases := []struct{ name, src, want string }{
-		{"unless-without-brace",
+		{"unless-is-gone",
 			"def d() { apply { r = shell { echo } unless echo\nreturn ok } }",
-			`1:45: expected '{' after unless`},
+			"1:38: `unless` was removed; use `if !shell { <guard> } { shell { <cmd> } }`"},
 		{"bad-phase",
 			`def d() { badphase { } }`,
 			`1:11: expected a phase, got "badphase"`},
