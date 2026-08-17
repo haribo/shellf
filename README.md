@@ -75,8 +75,8 @@ Then apply:
 shellf run --inventory hosts.shellf plan.shellf
 ```
 
-Hosts run in parallel; steps run in order per host. A re-run is idempotent
-(`ok.alreadyInstalled`, `ok.alreadyConverged`, …).
+Hosts run in parallel; steps run in order per host. A re-run is idempotent: an
+instruction that finds the state it wants reports `ok.already` and does nothing.
 
 ## Inventory
 
@@ -215,8 +215,11 @@ as `current → desired`, without acting.
 
 Most instructions are `def`s written in shellf and embedded in the binary; only
 `shell` and five **primitives** — `~file.read`, `~file.write`, `~file.render`,
-`~dir.list`, `~dir.sync` — are built in. All are idempotent (`observe` skips
-`apply` when the desired state already holds).
+`~dir.list`, `~dir.sync` — are built in. Most are idempotent: a def that declares
+`observe` skips its `apply` when the desired state already holds. Some are
+**action-shaped** and always act — `service.restart`, `docker.compose-up` — because
+restarting a service has no "already restarted" to observe; `--dry-run` says `would`
+for those rather than pretending otherwise.
 
 - **Packages & services** — `apt.install(pkg)` · `apt.update()` · `service.ensure(name, running, enabled)` (running/enabled are `"true"`/`"false"`; a `.timer` unit works as the name) · `service.restart(name)` · `service.reload(name)` · `systemd.daemon-reload()` · `user.group(user, group)` · `user.ensure(name, shell)`
 - **Files & directories** — `file.copy(%"src", dst)` (deliver a file from the control host, binary-safe) · `file.template(%"src", dst)` (render a control-host file's `@{var}` and deliver it — `src` must be marked `%"…"`, an unmarked path is refused) · `dir.copy(%"src", dst, compare)` (deliver a control-host tree verbatim, binary-safe; sends only what differs, so a converged tree transfers nothing — `compare` defaults to size+mtime, pass `"sha256"` when a change may preserve both) · `file.write(path, content)` · `file.mode(path, mode)` · `file.replace(path, key, value)` (a `key=value` line) · `file.line(path, line)` · `file.delete(path)` · `file.download(url, dst, sha256)` · `dir.sync(%"src", dst, compare)` (same transfer, and it **removes** what the source does not have — `--dry-run` names every file it would delete) · `dir.ensure(path)` · `dir.owner(path, owner)` · `archive.extract(src, dst)` · `archive.extract-member(src, dst, member)` (one file out of a tarball) · `git.clone(url, dst)` · `git.sync(url, dst, ref)` (update to a pinned ref)
@@ -229,9 +232,10 @@ Most instructions are `def`s written in shellf and embedded in the binary; only
 `%` marks a path on your machine: `~file.read(path)` reads — on your machine if the path is marked, on the target
 otherwise — `~file.write(path, bytes)` writes on the target, `~file.render(%"path")`
 reads a template on your machine and substitutes its `@{var}` there, and
-`~dir.list(path)` lists a directory. Only those four names may carry a `~`; anything else
-is a parse error, and the control host serves only the paths the plan marked — a render
-included, which is why it names a file rather than carrying one.
+`~dir.list(path)` lists a directory, and `~dir.sync(src, dst, delete, compare)` transfers a
+tree. Only those five names may carry a `~`; anything else is a parse error, and the control
+host serves only the paths the plan marked — a render included, which is why it names a file
+rather than carrying one.
 
 ```
 def deliver(src: str, dst: str) {
@@ -274,15 +278,26 @@ on server {
 ## CLI
 
 ```
-shellf run --inventory <hosts.shellf> [flags] <plan.shellf>
+shellf run    --inventory <hosts.shellf> [flags] <plan.shellf>
+shellf status --inventory <hosts.shellf> [flags] <plan.shellf>
+shellf clean  --inventory <hosts.shellf> [flags] [target...]
+shellf version
 ```
+
+`run` applies, `status` reports observed state without acting, `clean` kills the resident
+agents and wipes shellf's files from the targets.
 
 | Flag | Meaning |
 |---|---|
 | `--inventory <file>` | inventory file (required) |
-| `--dry-run` | dry-run: decide and preview, never mutate |
+| `--dry-run` | decide and preview, never mutate |
+| `--vars <file>` | global `name = value` bindings |
+| `--set k=v` | override one variable (repeatable); wins over `--vars` |
+| `--secret-file n=path` | secret read from a file (repeatable); redacted in all output |
+| `--secret-env n=VAR` | secret read from an environment variable (repeatable) |
 | `--known-hosts <file>` | host-key file (default `~/.ssh/known_hosts`) |
 | `--insecure` | skip host-key verification (dev only) |
+| `--agent-ttl <dur>` | resident agent inactivity TTL before it self-erases (default 2h) |
 
 ## How it works
 

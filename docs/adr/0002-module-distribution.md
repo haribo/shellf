@@ -2,8 +2,9 @@
 
 ## Status
 
-Accepted (direction). Implementation deferred: local imports in 0.2, remote
-sharing in phase 3. Nothing here is built yet.
+Accepted (direction). The decisions that carry it out have their own records:
+[ADR-0015](0015-local-imports.md) for local imports, [ADR-0016](0016-remote-modules.md)
+for remote modules.
 
 ## Context
 

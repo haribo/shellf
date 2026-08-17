@@ -43,8 +43,9 @@ on app {
     # A private network for the stack's services.
     docker.network("blog-net")
 
-    # The stack's files live under /opt/blog. `blog.data-dir` is a USER DEF in the
-    # sibling defs.shellf (ADR-0014), resolved by name with no import.
+    # The stack's files live under /opt/blog. `blog.data-dir` is a USER DEF from
+    # `defs/blog/` (ADR-0038): the directory names the package, so it resolves as
+    # `blog.data-dir` with no import.
     blog.data-dir("/opt/blog/data")
 
     # `parallel { }` runs independent steps at once on this host (ADR-0018). Declared, not
