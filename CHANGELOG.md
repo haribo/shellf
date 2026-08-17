@@ -92,6 +92,18 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The workdir on the target is now **created exclusively**, in the same command that checks
+  it. It used to be probed first and created after, by a `mkdir -p` that succeeds on a
+  directory somebody else made in between and changes neither its owner nor its mode — so
+  the probe's `absent`, which is the ordinary answer on a first run, after the agent's TTL
+  erased the directory, or after `shellf clean`, opened a window. The path is calculable
+  (the published binary's digest plus the SSH user), so winning that window is a matter of
+  looping until a deployment starts; the winner then owns a directory into which the agent
+  runs every `req-*.json` it finds, `as root` steps included. A bare `mkdir` closes it:
+  whoever creates the directory owns it, and on the sticky `/dev/shm` or `/tmp` nobody can
+  remove ours to substitute theirs. The resident agent also refuses to serve from a workdir
+  that is not its own, rather than trusting the check that launched it (#413).
+
 - A symlink **inside** a transfer's destination no longer carries the write out of it. The
   containment check compared path text, and a link is not a lexical thing: with
   `/opt/site/sub → /etc`, delivering `sub/x` wrote `/etc/x` and the run reported

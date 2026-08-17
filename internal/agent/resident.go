@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -21,6 +22,14 @@ const pollInterval = 200 * time.Millisecond
 func ServeResident(workdir, binPath string, ex engine.Executor, ttl time.Duration) error {
 	if err := os.MkdirAll(workdir, 0o700); err != nil {
 		return err
+	}
+	// Defence in depth (#413). The control host creates this directory exclusively and
+	// vets it before launching us, so reaching here with a workdir somebody else can write
+	// means that guard was bypassed or the directory changed under it. MkdirAll above does
+	// not fix an existing directory's mode, and this agent executes every `req-*.json` it
+	// finds — including steps that escalate. Refuse rather than serve.
+	if err := ownedAndUnwritable(workdir); err != nil {
+		return fmt.Errorf("refusing to serve from %s: %v", workdir, err)
 	}
 	_ = os.WriteFile(filepath.Join(workdir, "agent.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600)
 

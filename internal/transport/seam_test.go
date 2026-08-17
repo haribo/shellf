@@ -120,8 +120,10 @@ func TestRun_HappyPath_PushDepositLaunchPoll(t *testing.T) {
 	if string(out) != `{"ok":true}` {
 		t.Fatalf("job payload should pass through: %q", out)
 	}
-	// Full sequence: cache probe → push → deposit → agentAlive → checkDone → rmJob.
-	if !fc.ran("sha256sum") || !fc.ran("chmod 700") || !fc.ran("mkdir -p ") ||
+	// Full sequence: cache probe → push → workdir → deposit → agentAlive → checkDone →
+	// rmJob. The workdir step is a bare `mkdir` since #413: creating it exclusively is what
+	// makes the directory ours, where `mkdir -p` accepted one another user had put there.
+	if !fc.ran("sha256sum") || !fc.ran("chmod 700") || !fc.ran("mkdir /") ||
 		!fc.ran("agent.pid") || !fc.ran("if test -f ") || !fc.ran("rm -f ") {
 		t.Fatalf("missing a step in the sequence: %v", fc.runs)
 	}

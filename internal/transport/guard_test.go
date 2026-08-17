@@ -1,6 +1,9 @@
 package transport
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -105,10 +108,76 @@ func TestGuard_ProbesAskOwnershipModeAndDigest(t *testing.T) {
 			t.Errorf("the agent probe must check %q", want)
 		}
 	}
-	wd := workdirStateCmd("/dev/shm/shellf-abc")
+	wd := workdirEnsureCmd("/dev/shm/shellf-abc")
 	for _, want := range []string{"-type d", "-user \"$(id -un)\"", "! -perm /022"} {
 		if !strings.Contains(wd, want) {
 			t.Errorf("the workdir probe must check %q", want)
 		}
+	}
+	// And it must create rather than probe-then-create: `mkdir -p` is what accepted a
+	// directory another user had put there in between (#413).
+	if !strings.Contains(wd, "mkdir /dev/shm/shellf-abc") || strings.Contains(wd, "mkdir -p") {
+		t.Errorf("the workdir must be created exclusively, got: %s", wd)
+	}
+}
+
+// #413: the workdir was *probed* and then created by a second command. `absent` was
+// accepted, and `mkdir -p` on a directory somebody else had created in the meantime
+// succeeds without changing its owner or its mode — demonstrated in the e2e container: a
+// deposit into a root-owned 0777 directory returned 0 and left it 0777. The agent then
+// runs every `req-*.json` it finds there, `as root` steps included.
+//
+// The fix is to create and check in one command, so the winner is whoever created it.
+// Asserted by running the script, not by reading it: what matters is what `sh` does.
+func TestGuard_WorkdirIsCreatedExclusivelyThenChecked(t *testing.T) {
+	run := func(wd string) (string, error) {
+		out, err := exec.Command("sh", "-c", workdirEnsureCmd(wd)).CombinedOutput()
+		return strings.TrimSpace(string(out)), err
+	}
+
+	base := t.TempDir()
+
+	// Absent: created by us, and private — the umask is part of the guarantee.
+	fresh := filepath.Join(base, "shellf-fresh")
+	got, err := run(fresh)
+	if err != nil || got != "ok" {
+		t.Fatalf("an absent workdir must be created and accepted: %q (%v)", got, err)
+	}
+	fi, err := os.Stat(fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o700 {
+		t.Fatalf("a workdir we create must be private, got %v", fi.Mode().Perm())
+	}
+
+	// Already ours and private: reused, which is the whole point of a resident agent.
+	if got, err := run(fresh); err != nil || got != "ok" {
+		t.Fatalf("our own workdir must be reused: %q (%v)", got, err)
+	}
+
+	// Already there and writable by anyone: refused. This is the state the race produced.
+	hostile := filepath.Join(base, "shellf-hostile")
+	if err := os.Mkdir(hostile, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(hostile, 0o777); err != nil { // umask does not get a say
+		t.Fatal(err)
+	}
+	got, err = run(hostile)
+	if err != nil {
+		t.Fatalf("the check must answer rather than fail: %v", err)
+	}
+	if !strings.HasPrefix(got, "unsafe") {
+		t.Fatalf("a world-writable workdir must be refused, got %q", got)
+	}
+
+	// Not a directory at all: also refused, rather than deposited beside.
+	notDir := filepath.Join(base, "shellf-file")
+	if err := os.WriteFile(notDir, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := run(notDir); !strings.HasPrefix(got, "unsafe") {
+		t.Fatalf("a workdir path that is not a directory must be refused, got %q", got)
 	}
 }
