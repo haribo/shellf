@@ -296,14 +296,6 @@ func isDefStart(t token) bool {
 // (`--set tls=true`) is ordinary, and forbidding it would buy style at the cost of use.
 func isBoolValue(v string) bool { return v == "true" || v == "false" }
 
-func paramNames(d Def) []string {
-	names := make([]string, len(d.Params))
-	for i, par := range d.Params {
-		names[i] = par.Name
-	}
-	return names
-}
-
 func newParser(src string) *parser {
 	p := &parser{lex: newLexer(src), baseVars: map[string]string{}, caught: map[string]bool{}, importedAliases: map[string]bool{}}
 	p.adv()
