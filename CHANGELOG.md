@@ -6,13 +6,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Fixed
-
-- A host whose login shell is not POSIX is reachable again. v0.5.0 escaped the transport's commands with a POSIX-sh quoting idiom, read by the login shell before `sh` exists, so nushell hosts died at the first probe (#439).
-
 ### Changed
 
 - `main` is the repository's default branch, so a visitor lands on what ships rather than on integration (ADR-0047). CI now refuses a PR into `main` from anything but `develop`, since `gh pr create` without `--base` targets the default (#436).
+
+### Fixed
+
+- A host whose login shell is not POSIX is reachable again. v0.5.0 escaped the transport's commands with a POSIX-sh quoting idiom, read by the login shell before `sh` exists, so nushell hosts died at the first probe (#439).
 
 ## [0.5.0] - 2026-08-17
 
