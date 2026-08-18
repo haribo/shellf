@@ -41,7 +41,7 @@ func TestExamplesResolvePerHost(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, blk := range plan {
-				hosts := inv.Members(blk.Target)
+				hosts, _ := inv.Members(blk.Target)
 				if len(hosts) == 0 {
 					t.Fatalf("target %q resolves to no host in the example inventory", blk.Target)
 				}

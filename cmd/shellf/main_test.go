@@ -741,3 +741,33 @@ func TestStdSignatures_ComeFromTheDefs(t *testing.T) {
 		t.Fatalf("file.copy: %v %d %v", params, required, ok)
 	}
 }
+
+// The whole point of #451 is the exit code, so it is asserted here rather than on the
+// report string: the text was already empty-and-harmless, and every string assertion
+// passed while `shellf run … && echo deployed` printed `deployed`.
+func TestReportText_UnknownTargetErrorsTheRun(t *testing.T) {
+	reports := []orchestrator.BlockReport{{
+		Target: "wbe",
+		Err:    &orchestrator.UnknownTargetError{Target: "wbe"},
+	}}
+	text, anyErr := reportText(reports)
+	if !anyErr {
+		t.Fatal("an unknown target must make the run exit non-zero")
+	}
+	if !strings.Contains(text, "wbe") {
+		t.Fatalf("the report must name the target: %q", text)
+	}
+}
+
+// A group with no members is a success, and it must say so: an empty block line reads
+// exactly like a block that converged (#451).
+func TestReportText_EmptyBlockSaysSo(t *testing.T) {
+	reports := []orchestrator.BlockReport{{Target: "spare"}}
+	text, anyErr := reportText(reports)
+	if anyErr {
+		t.Fatal("an empty group is not an error")
+	}
+	if !strings.Contains(text, "no hosts") {
+		t.Fatalf("an empty block must report why it did nothing: %q", text)
+	}
+}

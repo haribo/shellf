@@ -10,6 +10,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - The README no longer names a version in its prose — it announced 0.4.0 while 0.6.0 shipped. A release badge carries it instead, so it cannot go stale (#452).
 
+### Fixed
+
+- A plan targeting a name the inventory does not define is refused before anything runs, instead of reporting an empty block and exiting 0 — a typo in a group name was a deployment that never happened, reported green. A group listing an undeclared alias is caught at load, and a declared-empty group reports `(no hosts)` (#451).
+
 ## [0.6.0] - 2026-08-18
 
 ### Added

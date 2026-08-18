@@ -29,10 +29,19 @@ type HostOutcome struct {
 	Err      error
 }
 
-// BlockReport is a block's per-host outcomes.
+// BlockReport is a block's per-host outcomes. Err is set when the block itself could
+// not run — an unknown target has no host to hang an outcome on.
 type BlockReport struct {
 	Target string
 	Hosts  []HostOutcome
+	Err    error
+}
+
+// UnknownTargetError names a target no host and no group in the inventory declares.
+type UnknownTargetError struct{ Target string }
+
+func (e *UnknownTargetError) Error() string {
+	return fmt.Sprintf("unknown target: the inventory declares no host or group named %q", e.Target)
 }
 
 // Run executes the plan. Blocks run sequentially; each block fans out over its
@@ -42,12 +51,22 @@ type BlockReport struct {
 // resolve each Step's bare-identifier Refs per host, with precedence
 // base < per-host inventory var < --set.
 func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.Dial, baseVars, setVars map[string]string, defs map[string]string) []BlockReport {
+	// Every target is resolved before anything runs. A name the inventory does not
+	// declare is a typo in the plan, knowable without a single connection — and a run
+	// that discovers it at block 3 has already changed the hosts of blocks 1 and 2.
+	// So the whole plan is refused, and the report names every offending target rather
+	// than the first (#451).
+	if bad := unknownTargets(plan, inv); len(bad) > 0 {
+		return bad
+	}
+
 	dead := map[string]bool{}
 	var reports []BlockReport
 
 	for _, block := range plan {
+		members, _ := inv.Members(block.Target) // known: checked above
 		var live []string
-		for _, alias := range inv.Members(block.Target) {
+		for _, alias := range members {
 			if !dead[alias] {
 				live = append(live, alias)
 			}
@@ -91,6 +110,21 @@ func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.D
 		reports = append(reports, report)
 	}
 	return reports
+}
+
+// unknownTargets returns a report per target the inventory does not declare, in plan
+// order and once per distinct name: a plan repeating the same typo says it once.
+func unknownTargets(plan Plan, inv inventory.Inventory) []BlockReport {
+	var bad []BlockReport
+	seen := map[string]bool{}
+	for _, block := range plan {
+		if _, known := inv.Members(block.Target); known || seen[block.Target] {
+			continue
+		}
+		seen[block.Target] = true
+		bad = append(bad, BlockReport{Target: block.Target, Err: &UnknownTargetError{Target: block.Target}})
+	}
+	return bad
 }
 
 // ResolveError is a per-host variable-resolution failure (e.g. an undefined

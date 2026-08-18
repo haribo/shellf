@@ -553,6 +553,12 @@ func loadInventory(invPath string) (inventory.Inventory, error) {
 	if err != nil {
 		return inventory.Inventory{}, fmt.Errorf("%s: %v", invPath, err)
 	}
+	// Structural faults are caught here, once, before any plan is parsed or any host
+	// dialled — a group member no host declares used to surface as an SSH handshake
+	// failure against an empty address (#451).
+	if err := inv.Validate(); err != nil {
+		return inventory.Inventory{}, fmt.Errorf("%s: %v", invPath, err)
+	}
 	return inv, nil
 }
 
@@ -669,14 +675,12 @@ func cleanCmd(args []string) {
 		fmt.Fprintln(os.Stderr, "usage: shellf clean --inventory <hosts.shellf> [--insecure] [target...]")
 		os.Exit(2)
 	}
-	invSrc, err := os.ReadFile(*invPath)
+	// Through loadInventory like every other command, rather than re-reading and
+	// re-parsing here: the duplicate path was one Validate call short, so `clean` was
+	// the one command that still accepted a malformed inventory (#451).
+	inv, err := loadInventory(*invPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	inv, err := lang.ParseInventory(string(invSrc))
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", *invPath, err)
 		os.Exit(1)
 	}
 
@@ -687,10 +691,18 @@ func cleanCmd(args []string) {
 			targets = append(targets, name)
 		}
 	}
+	// A target nobody declared is refused here too: `shellf clean nope` used to expand
+	// to no alias, clean nothing and exit 0, which reads exactly like a target that was
+	// already clean (#451).
 	var aliases []string
 	seen := map[string]bool{}
 	for _, t := range targets {
-		for _, a := range inv.Members(t) {
+		members, known := inv.Members(t)
+		if !known {
+			fmt.Fprintf(os.Stderr, "unknown target: the inventory declares no host or group named %q\n", t)
+			os.Exit(1)
+		}
+		for _, a := range members {
 			if !seen[a] {
 				seen[a] = true
 				aliases = append(aliases, a)
@@ -773,7 +785,22 @@ func statusCmd(args []string) {
 			Channel: channelFor(alias),
 		}
 	}
-	fmt.Print(redact(statusReport(orchestrator.Run(plan, inv, self, "status", dial, base, secrets, defsSrc)), secretValues))
+	// `status` refuses an unknown target like `run` does. The render stays pure — the
+	// exit code is the caller's call, so a report string keeps one job (#451).
+	reports := orchestrator.Run(plan, inv, self, "status", dial, base, secrets, defsSrc)
+	fmt.Print(redact(statusReport(reports), secretValues))
+	exitFor(anyBlockError(reports))
+}
+
+// anyBlockError reports whether any block failed as a whole (an unknown target), as
+// opposed to a per-host outcome.
+func anyBlockError(reports []orchestrator.BlockReport) bool {
+	for _, blk := range reports {
+		if blk.Err != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // statusReport renders the per-host state report: one line per resource, with a
@@ -783,6 +810,19 @@ func statusReport(reports []orchestrator.BlockReport) string {
 	var b strings.Builder
 	for _, blk := range reports {
 		fmt.Fprintf(&b, "on %s:\n", blk.Target)
+		// A block that could not run at all: no host to attach an outcome to, so the
+		// reason goes on the block. Without this the block printed its header and
+		// nothing else, and the run exited 0 (#451).
+		if blk.Err != nil {
+			fmt.Fprintf(&b, "  ! %v\n", blk.Err)
+			continue
+		}
+		// A target that resolves to nobody is a legitimate no-op, and it says so: an
+		// empty block reads exactly like a block where everything converged.
+		if len(blk.Hosts) == 0 {
+			fmt.Fprintf(&b, "  (no hosts)\n")
+			continue
+		}
 		for _, h := range blk.Hosts {
 			if h.Err != nil {
 				fmt.Fprintf(&b, "  %s: unreachable (%v)\n", h.Host, h.Err)
@@ -848,6 +888,20 @@ func reportText(reports []orchestrator.BlockReport) (string, bool) {
 	anyErr := false
 	for _, blk := range reports {
 		fmt.Fprintf(&b, "on %s:\n", blk.Target)
+		// A block that could not run at all: no host to attach an outcome to, so the
+		// reason goes on the block. Without this the block printed its header and
+		// nothing else, and the run exited 0 (#451).
+		if blk.Err != nil {
+			fmt.Fprintf(&b, "  ! %v\n", blk.Err)
+			anyErr = true
+			continue
+		}
+		// A target that resolves to nobody is a legitimate no-op, and it says so: an
+		// empty block reads exactly like a block where everything converged.
+		if len(blk.Hosts) == 0 {
+			fmt.Fprintf(&b, "  (no hosts)\n")
+			continue
+		}
 		for _, h := range blk.Hosts {
 			if h.Err != nil {
 				var re *orchestrator.ResolveError
@@ -872,7 +926,24 @@ func reportText(reports []orchestrator.BlockReport) (string, bool) {
 			}
 		}
 	}
+	// Every target was refused, so no block was executed. Say it: the report above is a
+	// list of names, and nothing distinguishes it from a run that did work.
+	if len(reports) > 0 && allUnknownTargets(reports) {
+		fmt.Fprintf(&b, "nothing ran: fix the target name(s) above, or the inventory\n")
+	}
 	return b.String(), anyErr
+}
+
+// allUnknownTargets reports whether every block failed on an unknown target — the shape
+// `orchestrator.Run` returns when it refuses a plan before executing it.
+func allUnknownTargets(reports []orchestrator.BlockReport) bool {
+	for _, blk := range reports {
+		var ue *orchestrator.UnknownTargetError
+		if !errors.As(blk.Err, &ue) {
+			return false
+		}
+	}
+	return true
 }
 
 func stepText(b *strings.Builder, s proto.StepResult, indent string) {
