@@ -72,7 +72,7 @@ func serveComp(t *testing.T, c *compExec, req proto.Request) proto.Response {
 	t.Helper()
 	body, _ := json.Marshal(req)
 	var out bytes.Buffer
-	if err := Serve(bytes.NewReader(body), &out, c); err != nil {
+	if err := ServeOn(bytes.NewReader(body), &out, c, ""); err != nil {
 		t.Fatal(err)
 	}
 	var resp proto.Response

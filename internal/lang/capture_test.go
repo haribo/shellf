@@ -3,13 +3,13 @@ package lang
 import "testing"
 
 func TestParseCapture(t *testing.T) {
-	plan, err := ParsePlan(`on s {
+	plan, err := parsePlan(`on s {
   x = dir.ensure("/opt")
   if x.changed { apt.install("nginx") }
   if x { apt.install("redis") }
   if x == ok.created { apt.install("etcd") }
   if x != err { apt.install("consul") }
-}`)
+}`, map[string]string{}, nil, defaultSig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,17 +36,17 @@ func TestParseCaptureDeprecatedFields(t *testing.T) {
 		`on s { x = dir.ensure("/o") if x.ok { apt.install("y") } }`,  // `.ok` removed → `== ok`
 		`on s { x = dir.ensure("/o") if x.err { apt.install("y") } }`, // `.err` removed → `== err`
 	} {
-		if _, err := ParsePlan(src); err == nil {
+		if _, err := parsePlan(src, map[string]string{}, nil, defaultSig, nil, nil); err == nil {
 			t.Fatalf("expected a deprecation error for: %s", src)
 		}
 	}
 }
 
 func TestParseCatch_CaughtAndErrTest(t *testing.T) {
-	plan, err := ParsePlan(`on s {
+	plan, err := parsePlan(`on s {
   x = apt.install("nginx")?
   if x == err.dbLocked { dir.ensure("/o") }
-}`)
+}`, map[string]string{}, nil, defaultSig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,23 +60,23 @@ func TestParseCatch_CaughtAndErrTest(t *testing.T) {
 
 func TestParseCatch_ErrTestRequiresCatch(t *testing.T) {
 	// `== err` without `?` on the source is a dead branch → compile error.
-	if _, err := ParsePlan(`on s {
+	if _, err := parsePlan(`on s {
   x = apt.install("nginx")
   if x == err.dbLocked { dir.ensure("/o") }
-}`); err == nil {
+}`, map[string]string{}, nil, defaultSig, nil, nil); err == nil {
 		t.Fatal("expected an error: == err without a caught source")
 	}
 	// `!= err` stays free — it is reachable via the ok path.
-	if _, err := ParsePlan(`on s {
+	if _, err := parsePlan(`on s {
   x = apt.install("nginx")
   if x != err { dir.ensure("/o") }
-}`); err != nil {
+}`, map[string]string{}, nil, defaultSig, nil, nil); err != nil {
 		t.Fatalf("!= err should be allowed without `?`: %v", err)
 	}
 }
 
 func TestParseCatch_InlineErrTest(t *testing.T) {
-	plan, err := ParsePlan(`on s { if apt.install("nginx")? == err.dbLocked { dir.ensure("/o") } }`)
+	plan, err := parsePlan(`on s { if apt.install("nginx")? == err.dbLocked { dir.ensure("/o") } }`, map[string]string{}, nil, defaultSig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,16 +90,16 @@ func TestParseCatch_InlineErrTest(t *testing.T) {
 }
 
 func TestParseCatch_InlineErrTestRequiresCatch(t *testing.T) {
-	if _, err := ParsePlan(`on s { if apt.install("nginx") == err.dbLocked { dir.ensure("/o") } }`); err == nil {
+	if _, err := parsePlan(`on s { if apt.install("nginx") == err.dbLocked { dir.ensure("/o") } }`, map[string]string{}, nil, defaultSig, nil, nil); err == nil {
 		t.Fatal("inline == err without `?` should error")
 	}
 }
 
 func TestParseAsBlock(t *testing.T) {
-	plan, err := ParsePlan(`on s {
+	plan, err := parsePlan(`on s {
   as root { apt.install("nginx") }
   shell as root { systemctl daemon-reload }
-}`)
+}`, map[string]string{}, nil, defaultSig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestParseAsBlock(t *testing.T) {
 }
 
 func TestParseOnAsBlock(t *testing.T) {
-	plan, err := ParsePlan(`on web as root { dir.ensure("/opt") }`)
+	plan, err := parsePlan(`on web as root { dir.ensure("/opt") }`, map[string]string{}, nil, defaultSig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestParseOnAsBlock(t *testing.T) {
 
 func TestParseIfQualifiedCallStaysCall(t *testing.T) {
 	// docker.install() as a condition is a qualified call, not a ref
-	plan, err := ParsePlan(`on s { if docker.install() { apt.install("x") } }`)
+	plan, err := parsePlan(`on s { if docker.install() { apt.install("x") } }`, map[string]string{}, nil, defaultSig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,13 +144,13 @@ func TestParseIfQualifiedCallStaysCall(t *testing.T) {
 }
 
 func TestParseUnknownResultField(t *testing.T) {
-	if _, err := ParsePlan(`on s { x = dir.ensure("/o") if x.bogus { apt.install("y") } }`); err == nil {
+	if _, err := parsePlan(`on s { x = dir.ensure("/o") if x.bogus { apt.install("y") } }`, map[string]string{}, nil, defaultSig, nil, nil); err == nil {
 		t.Fatal("expected an error for an unknown result field")
 	}
 }
 
 func TestParseCaptureRejectsIf(t *testing.T) {
-	if _, err := ParsePlan(`on s { x = if dir.ensure("/o") { apt.install("y") } }`); err == nil {
+	if _, err := parsePlan(`on s { x = if dir.ensure("/o") { apt.install("y") } }`, map[string]string{}, nil, defaultSig, nil, nil); err == nil {
 		t.Fatal("expected an error capturing an if into a variable")
 	}
 }

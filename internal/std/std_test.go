@@ -37,7 +37,7 @@ func eval(t *testing.T, name string, args map[string]string, f *fakeExec, mode e
 	if !ok {
 		t.Fatalf("stdlib def %q not found", name)
 	}
-	res, err := lang.EvalDef(def, args, nil, f, mode)
+	res, err := lang.EvalDefFull(def, args, nil, nil, f, mode, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

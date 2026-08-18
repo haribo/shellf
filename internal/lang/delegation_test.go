@@ -79,8 +79,7 @@ def wrap(p: str) {
 	}
 	resolve := func(n string) (Def, bool) { d, ok := byName[n]; return d, ok }
 
-	res, err := EvalDefWith(byName["wrap"], map[string]string{"p": ""}, nil,
-		&delegFake{}, engine.Apply, resolve, []string{"wrap"}, nil)
+	res, err := EvalDefFull(byName["wrap"], map[string]string{"p": ""}, nil, nil, &delegFake{}, engine.Apply, resolve, []string{"wrap"}, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,8 +119,7 @@ def wrap(p: str) { leaf(p) }`
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := &delegFake{observe: tc.observe}
-			res, err := EvalDefWith(byName["wrap"], map[string]string{"p": "/tmp/x"}, nil,
-				f, tc.mode, resolve, []string{"wrap"}, nil)
+			res, err := EvalDefFull(byName["wrap"], map[string]string{"p": "/tmp/x"}, nil, nil, f, tc.mode, resolve, []string{"wrap"}, nil, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

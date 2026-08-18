@@ -17,7 +17,7 @@ func writeFile(t *testing.T, path, content string) engine.Result {
 	if !ok {
 		t.Fatal("file-write not found")
 	}
-	res, err := lang.EvalDef(def, map[string]string{"path": path, "content": content}, nil, engine.ShellExecutor{}, engine.Apply)
+	res, err := lang.EvalDefFull(def, map[string]string{"path": path, "content": content}, nil, nil, engine.ShellExecutor{}, engine.Apply, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

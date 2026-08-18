@@ -16,8 +16,7 @@ func evalWith(t *testing.T, name string, args map[string]string, ex engine.Execu
 	if !ok {
 		t.Fatalf("stdlib def %q not found", name)
 	}
-	res, err := lang.EvalDefWith(def, args, nil, ex, mode,
-		func(n string) (lang.Def, bool) { return Lookup(n) }, []string{name}, nil)
+	res, err := lang.EvalDefFull(def, args, nil, nil, ex, mode, func(n string) (lang.Def, bool) { return Lookup(n) }, []string{name}, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

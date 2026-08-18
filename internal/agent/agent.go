@@ -21,11 +21,6 @@ import (
 	"shellf/internal/std"
 )
 
-// Serve reads one Request, runs its steps on this host, writes one Response.
-func Serve(in io.Reader, out io.Writer, ex engine.Executor) error {
-	return ServeOn(in, out, ex, "")
-}
-
 // ServeOn is Serve with a control channel: `sockDir` is a workdir to listen in, empty
 // when the run needs none. The one-shot agent gets the same channel as the resident one,
 // so a plan behaves identically whether its target is remote or the control host itself

@@ -39,7 +39,7 @@ on web {
   }
 }
 `
-	plan, err := ParsePlan(src)
+	plan, err := parsePlan(src, map[string]string{}, nil, defaultSig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ on server {
 }
 `
 	base := map[string]string{}
-	plan, err := ParsePlanWithVars(src, base, nil, defaultSig)
+	plan, err := parsePlan(src, base, nil, defaultSig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,8 +91,8 @@ on server {
 
 func TestParseErrors(t *testing.T) {
 	cases := map[string]func(string) error{
-		`on web { unknown-instr("x") }`:   func(s string) error { _, e := ParsePlan(s); return e },
-		`on web { apt.install("a","b") }`: func(s string) error { _, e := ParsePlan(s); return e },
+		`on web { unknown-instr("x") }`:   func(s string) error { _, e := parsePlan(s, map[string]string{}, nil, defaultSig, nil, nil); return e },
+		`on web { apt.install("a","b") }`: func(s string) error { _, e := parsePlan(s, map[string]string{}, nil, defaultSig, nil, nil); return e },
 		`host x = { address: "unterm`:     func(s string) error { _, e := ParseInventory(s); return e },
 	}
 	for src, run := range cases {
@@ -108,7 +108,7 @@ func TestParseWithBlock(t *testing.T) {
 		apt.install("nginx") with { version = "1.24", owner = "${who}" }
 		shell { echo "$msg" } with { msg = "hi" }
 	}`
-	plan, err := ParsePlanWithVars(src, base, nil, defaultSig)
+	plan, err := parsePlan(src, base, nil, defaultSig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestParseWithBlock_Errors(t *testing.T) {
 		`on s { dir.ensure("/o") with { x } }`,     // missing `=`
 		`on s { dir.ensure("/o") with { x = "a" }`, // unterminated block
 	} {
-		if _, err := ParsePlanWithVars(src, nil, nil, defaultSig); err == nil {
+		if _, err := parsePlan(src, nil, nil, defaultSig, nil, nil); err == nil {
 			t.Fatalf("expected error for: %s", src)
 		}
 	}

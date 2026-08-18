@@ -106,14 +106,13 @@ func (c *Channel) accept() {
 
 func (c *Channel) Close() error { return c.ln.Close() }
 
-// Ask requests a resource from the control host and blocks until it answers.
+// AskWith requests a resource from the control host and blocks until it answers.
 //
-// It returns an error when nobody is there: no bridge attached, or the session died
-// while waiting. That error names the resource, because "the connection dropped" sends
-// the operator looking at the target when the missing piece is on their own machine.
-func (c *Channel) Ask(resource string) ([]byte, error) { return c.AskWith(resource, nil, nil) }
-
-// AskWith is Ask with the variables in scope at the call site, which `file.render` needs
+// It returns an error when nobody is there: no bridge attached, or the session died while
+// waiting. That error names the resource, because "the connection dropped" sends the
+// operator looking at the target when the missing piece is on their own machine.
+//
+// It carries the variables in scope at the call site, which `file.render` needs
 // so a `with { }` override reaches the renderer; `file.read` sends none. Both name a
 // declared resource and send no content — the text a render substitutes is read on the
 // control host, never submitted from here (#392, ADR-0042).

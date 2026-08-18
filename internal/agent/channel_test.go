@@ -61,7 +61,7 @@ func TestChannel_AskGetsAnAnswer(t *testing.T) {
 	c := control(t, filepath.Join(wd, SockName), "rendered")
 	defer func() { _ = c.Close() }()
 
-	got, err := ch.Ask("conf.j2")
+	got, err := ch.AskWith("conf.j2", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,13 +87,13 @@ func TestChannel_SurvivesADroppedSession(t *testing.T) {
 	sock := filepath.Join(wd, SockName)
 
 	c1 := control(t, sock, "first")
-	if _, err := ch.Ask("a"); err != nil {
+	if _, err := ch.AskWith("a", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	_ = c1.Close() // the session drops
 
 	// The next ask fails — it has nobody to answer it — and says which resource.
-	_, err = ch.Ask("b")
+	_, err = ch.AskWith("b", nil, nil)
 	if err == nil {
 		t.Fatal("an ask with no control host must fail, not hang")
 	}
@@ -104,7 +104,7 @@ func TestChannel_SurvivesADroppedSession(t *testing.T) {
 	// A new bridge attaches and the agent is usable again: it never died.
 	c2 := control(t, sock, "second")
 	defer func() { _ = c2.Close() }()
-	got, err := ch.Ask("c")
+	got, err := ch.AskWith("c", nil, nil)
 	if err != nil {
 		t.Fatalf("the agent must be usable after a reconnect: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestChannel_RefusalSurfaces(t *testing.T) {
 		_ = k.Send(proto.Msg{Kind: proto.KindAnswer, ID: m.ID, Error: `refused: "secret" was not declared by the plan`})
 	}()
 
-	_, err = ch.Ask("secret")
+	_, err = ch.AskWith("secret", nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "refused") {
 		t.Fatalf("a refusal must surface: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestChannel_AskFailsOnVersionSkew(t *testing.T) {
 		_ = k.Send(proto.Msg{Kind: proto.KindHello, Version: proto.ChannelVersion + 99})
 	}()
 
-	_, err = ch.Ask("conf.j2")
+	_, err = ch.AskWith("conf.j2", nil, nil)
 	if err == nil {
 		t.Fatal("a version skew must fail the ask")
 	}
@@ -237,7 +237,7 @@ func TestChannel_AskRetriesAfterAStaleBridge(t *testing.T) {
 		_ = control(t, sock, "rendered")
 	}()
 
-	got, err := ch.Ask("conf.j2")
+	got, err := ch.AskWith("conf.j2", nil, nil)
 	if err != nil {
 		t.Fatalf("an ask must survive a bridge left over from a previous session: %v", err)
 	}

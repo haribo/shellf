@@ -27,7 +27,7 @@ func TestGoldenDiagnostics_Plan(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := ParsePlan(c.src)
+			_, err := parsePlan(c.src, map[string]string{}, nil, defaultSig, nil, nil)
 			assertDiag(t, err, c.want)
 		})
 	}

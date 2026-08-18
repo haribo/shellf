@@ -6,7 +6,7 @@ import (
 )
 
 func TestFor_Unrolls(t *testing.T) {
-	plan, err := ParsePlan(`on host { for port in ["80", "443"] { ufw.open("${port}", "tcp") } }`)
+	plan, err := parsePlan(`on host { for port in ["80", "443"] { ufw.open("${port}", "tcp") } }`, map[string]string{}, nil, defaultSig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,7 +23,7 @@ func TestFor_Unrolls(t *testing.T) {
 }
 
 func TestFor_VarInsideString(t *testing.T) {
-	plan, err := ParsePlan(`on host { for svc in ["traefik", "app"] { dir.ensure("/opt/${svc}/run") } }`)
+	plan, err := parsePlan(`on host { for svc in ["traefik", "app"] { dir.ensure("/opt/${svc}/run") } }`, map[string]string{}, nil, defaultSig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestFor_VarInsideString(t *testing.T) {
 }
 
 func TestFor_EmptyList(t *testing.T) {
-	plan, err := ParsePlan(`on host { for x in [] { dir.ensure("/x") } dir.ensure("/after") }`)
+	plan, err := parsePlan(`on host { for x in [] { dir.ensure("/x") } dir.ensure("/after") }`, map[string]string{}, nil, defaultSig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestFor_EmptyList(t *testing.T) {
 }
 
 func TestFor_Nested(t *testing.T) {
-	plan, err := ParsePlan(`on host { for a in ["1", "2"] { for b in ["x", "y"] { dir.ensure("/${a}/${b}") } } }`)
+	plan, err := parsePlan(`on host { for a in ["1", "2"] { for b in ["x", "y"] { dir.ensure("/${a}/${b}") } } }`, map[string]string{}, nil, defaultSig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestFor_Nested(t *testing.T) {
 
 func TestFor_WithIf(t *testing.T) {
 	// The body may hold control flow; it is re-parsed per item.
-	plan, err := ParsePlan(`on host { for p in ["a"] { if !dir.exists("/${p}") { dir.ensure("/${p}") } } }`)
+	plan, err := parsePlan(`on host { for p in ["a"] { if !dir.exists("/${p}") { dir.ensure("/${p}") } } }`, map[string]string{}, nil, defaultSig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestFor_WithIf(t *testing.T) {
 }
 
 func TestFor_MissingBrace(t *testing.T) {
-	_, err := ParsePlan(`on host { for x in ["a"] dir.ensure("/x") }`)
+	_, err := parsePlan(`on host { for x in ["a"] dir.ensure("/x") }`, map[string]string{}, nil, defaultSig, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "expected '{'") {
 		t.Fatalf("a for without a body block must error: %v", err)
 	}
