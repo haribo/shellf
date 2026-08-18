@@ -16,6 +16,10 @@ jobs:
       - run: go vet ./...
       - run: go test ./... # fast feedback run
       - run: go build ./...
+      # The `bundled` build path is only exercised by release.yaml, which runs once a tag
+      # exists — too late to learn it does not compile. The embed slot is committed empty
+      # so this works from a clean checkout (ADR-0048).
+      - run: go build -tags bundled ./... && go test -tags bundled ./internal/agentbin/
 
   race:
     # Data-race detector for the concurrent paths (agent `parallel`, fleet

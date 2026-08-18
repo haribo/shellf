@@ -401,3 +401,84 @@ func TestSSH_BridgeDialFailureIsNotFatal(t *testing.T) {
 		t.Fatal("a failed bridge dial must return, not hang the job")
 	}
 }
+
+// A target of another architecture must be refused on the control host, before a single
+// byte is pushed. Until #453 the wrong binary landed, was chmod'ed +x, and the target
+// answered `exec format error` from a process shellf did not write.
+func TestRun_ForeignArchIsRefusedBeforePushing(t *testing.T) {
+	fc := &fakeConn{responder: func(cmd string) ([]byte, error) {
+		if strings.Contains(cmd, "uname -m") {
+			return []byte("aarch64\n"), nil
+		}
+		return nil, nil
+	}}
+	s := SSH{Host: "pi", dialFn: func() (conn, error) { return fc, nil }}
+
+	_, err := s.Run(writeTempAgent(t), []byte(`{}`))
+	if err == nil {
+		t.Fatal("an amd64 build must refuse an aarch64 target")
+	}
+	if !strings.Contains(err.Error(), "arm64") {
+		t.Fatalf("the refusal must name the architecture: %v", err)
+	}
+	for _, cmd := range fc.runs {
+		if strings.Contains(unwrapPosix(cmd), "chmod 700") {
+			t.Fatalf("nothing may be pushed to a target we cannot serve: %v", fc.runs)
+		}
+	}
+}
+
+// An architecture shellf ships no agent for is named, never guessed at.
+func TestRun_UnknownArchIsNamed(t *testing.T) {
+	fc := &fakeConn{responder: func(cmd string) ([]byte, error) {
+		if strings.Contains(cmd, "uname -m") {
+			return []byte("riscv64\n"), nil
+		}
+		return nil, nil
+	}}
+	s := SSH{Host: "odd", dialFn: func() (conn, error) { return fc, nil }}
+
+	_, err := s.Run(writeTempAgent(t), []byte(`{}`))
+	if err == nil || !strings.Contains(err.Error(), "riscv64") {
+		t.Fatalf("an unsupported architecture must be named: %v", err)
+	}
+}
+
+// A target that cannot answer `uname -m` keeps the behaviour it has always had: shellf
+// pushes its own bytes. Refusing there would break targets that work today, for a
+// question they simply cannot answer (ADR-0048 §4).
+func TestRun_SilentArchFallsBackToSelf(t *testing.T) {
+	fc := &fakeConn{responder: func(cmd string) ([]byte, error) {
+		if strings.Contains(cmd, "uname -m") {
+			return nil, errFake("no uname here")
+		}
+		if strings.Contains(cmd, "sha256sum") {
+			return []byte("absent"), nil // no cached agent → the push must happen
+		}
+		return nil, nil
+	}}
+	s := SSH{Host: "exotic", dialFn: func() (conn, error) { return fc, nil }}
+
+	// It gets far enough to push — which is all this asserts; the poll then finds no
+	// result and times out, which is the fake's business, not this test's.
+	_, _ = s.Run(writeTempAgent(t), []byte(`{}`))
+	pushed := false
+	for _, cmd := range fc.runs {
+		if strings.Contains(unwrapPosix(cmd), "chmod 700") {
+			pushed = true
+		}
+	}
+	if !pushed {
+		t.Fatalf("a silent target must still receive the agent: %v", fc.runs)
+	}
+}
+
+// writeTempAgent writes a stand-in agent binary and returns its path.
+func writeTempAgent(t *testing.T) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "agent")
+	if err := os.WriteFile(p, []byte("agent-bytes"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}

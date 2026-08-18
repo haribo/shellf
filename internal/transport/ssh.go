@@ -19,6 +19,8 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
+
+	"shellf/internal/agentbin"
 )
 
 // SSH pushes (or reuses a hash-cached binary) and runs the agent over a single
@@ -241,6 +243,25 @@ func newJobID() string {
 	return fmt.Sprintf("%d-%d-%d", os.Getpid(), time.Now().UnixNano(), jobCounter.Add(1))
 }
 
+// agentFor picks the bytes to push: this binary's own when the target shares its
+// architecture, the embedded peer otherwise (ADR-0048).
+//
+// A target that cannot say what it runs keeps the behaviour it has always had — its own
+// bytes. Refusing there would break hosts that work today over a question they cannot
+// answer, and every Linux target that shellf supports has `uname`. A target that *does*
+// answer, with something this build cannot serve, is refused by name.
+func (s SSH) agentFor(cn conn, self []byte) ([]byte, error) {
+	out, err := cn.run(posix("uname -m"), nil)
+	if err != nil || len(bytes.TrimSpace(out)) == 0 {
+		return self, nil // silent target: unchanged behaviour
+	}
+	arch, err := agentbin.ArchFromUname(string(out))
+	if err != nil {
+		return nil, err
+	}
+	return agentbin.For(arch, self)
+}
+
 // --- pure command/path builders (no network; unit-tested in ssh_test.go) ---
 
 const notDone = "__NOTDONE__" // poll sentinel: the job's result is not ready yet
@@ -305,11 +326,11 @@ func parseDone(stdout []byte) (out []byte, ready bool) {
 }
 
 func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
-	bin, err := os.ReadFile(agentBin)
+	self, err := os.ReadFile(agentBin)
 	if err != nil {
 		return nil, fmt.Errorf("read agent: %w", err)
 	}
-	path, jobid := s.remotePath(bin), newJobID()
+	jobid := newJobID()
 	deadline := time.Now().Add(s.execTimeout())
 
 	// One connection: push (if not cached), ensure a resident agent, deposit the job.
@@ -317,6 +338,16 @@ func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Which bytes to push is a question about the *target*, so it cannot be answered
+	// before this connection exists (ADR-0048). Pushing our own bytes at a host of
+	// another architecture put an unrunnable binary on it and surfaced as
+	// `exec format error` from a process shellf did not write (#453).
+	bin, err := s.agentFor(cn, self)
+	if err != nil {
+		_ = cn.close()
+		return nil, fmt.Errorf("target %s: %w", s.Host, err)
+	}
+	path := s.remotePath(bin)
 	// The workdir goes on tmpfs so secret plaintext stays off disk (ADR-0025);
 	// probed on this connection since it depends on the target.
 	wd := s.workDir(workBase(cn), bin)

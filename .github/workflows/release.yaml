@@ -15,8 +15,30 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - name: Build static binary
-        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=${GITHUB_REF_NAME}" -o shellf-linux-amd64 ./cmd/shellf
+      - name: Build static binaries, each carrying the other architecture's agent
+        # Two passes (ADR-0048). Pass 1 builds a bare binary per architecture — no peer
+        # embedded, which is what stops the embedding from recursing. Pass 2 rebuilds each
+        # release binary with `-tags bundled` after dropping the *other* pass-1 binary into
+        # the embed slot, so an amd64 control host can serve an arm64 target and back.
+        run: |
+          set -euo pipefail
+          ldflags="-s -w -X main.version=${GITHUB_REF_NAME}"
+
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch \
+              go build -ldflags="$ldflags" -o "bare-$arch" ./cmd/shellf
+          done
+
+          build_bundled() {   # $1 = target arch, $2 = the peer it carries
+            cp "bare-$2" internal/agentbin/peer/agent
+            CGO_ENABLED=0 GOOS=linux GOARCH=$1 \
+              go build -tags bundled -ldflags="$ldflags" -o "shellf-linux-$1" ./cmd/shellf
+          }
+          build_bundled amd64 arm64
+          build_bundled arm64 amd64
+
+          # On the record rather than a surprise: embedding roughly doubles the binary.
+          ls -l bare-amd64 bare-arm64 shellf-linux-amd64 shellf-linux-arm64
       - name: Extract release notes from CHANGELOG.md
         # The [X.Y.Z] section is part of the tagged commit (rolled before the tag),
         # so the notes are the changelog, not a commit dump. Fail loud if missing.
@@ -34,4 +56,4 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" shellf-linux-amd64 --notes-file RELEASE_NOTES.md --title "$GITHUB_REF_NAME"
+        run: gh release create "$GITHUB_REF_NAME" shellf-linux-amd64 shellf-linux-arm64 --notes-file RELEASE_NOTES.md --title "$GITHUB_REF_NAME"
