@@ -10,32 +10,33 @@ import (
 	"shellf/internal/engine"
 )
 
-// EvalDef runs a parsed def as an instruction, reproducing the engine semantics:
-// check/check/guard first (any outcome returns), then `would` in Check mode,
-// then apply/post, then the default return. Shell variables are the def's
-// params (and string/bool lets), injected via the environment.
+// EvalDefFull runs a parsed def as an instruction, reproducing the engine semantics:
+// check/guard first (any outcome returns), then `would` in Check mode, then apply, then
+// the default return. Shell variables are the def's params (and string/bool lets),
+// injected via the environment.
 //
-// The returned error is an evaluation failure (unbound var, unsupported
-// construct) — distinct from an `err.*` Result, which is a normal outcome.
-func EvalDef(def Def, args, with map[string]string, ex engine.Executor, mode engine.Mode) (engine.Result, error) {
-	return EvalDefWith(def, args, with, ex, mode, nil, nil, nil)
-}
-
-// EvalDefWith is EvalDef with instruction calls enabled (ADR-0030): `resolve` looks a
-// callee up, `stack` is the chain that led here so a cycle names its path. A nil
-// resolver rejects any call, which is what a def evaluated in isolation (a unit test)
-// wants.
-func EvalDefWith(def Def, args, with map[string]string, ex engine.Executor, mode engine.Mode, resolve DefResolver, stack []string, fetch ControlFetcher) (res engine.Result, err error) {
-	return EvalDefFull(def, args, with, nil, ex, mode, resolve, stack, fetch, nil, nil)
-}
-
-// EvalDefFull is EvalDefWith plus `control`: the names of arguments the caller wrote
-// `%"…"`. Without it the marker dies at the call boundary — a def receives strings, so
-// `deliver(%"conf.j2", dst)` would read on the target, which is the opposite of what
-// the plan asked (#332).
+// The returned error is an evaluation failure (unbound var, unsupported construct) —
+// distinct from an `err.*` Result, which is a normal outcome.
+//
+// `resolve` looks a callee up and `stack` is the chain that led here, so a cycle names its
+// path (ADR-0030); a nil resolver rejects any call, which is what a def evaluated in
+// isolation wants. `control` carries the names of arguments the caller wrote `%"…"`:
+// without it the marker dies at the call boundary — a def receives strings, so
+// `deliver(%"conf.j2", dst)` would read on the target, the opposite of what the plan asked
+// (#332).
+//
+// Two convenience wrappers stood here, `EvalDef` and `EvalDefWith`, each calling this one
+// with nils. Neither had a caller outside the tests, and one still documented an `apply/post`
+// sequence ADR-0035 removed — a wrapper nobody runs is a comment nothing contradicts (#447).
 func EvalDefFull(def Def, args, with map[string]string, control []string, ex engine.Executor, mode engine.Mode, resolve DefResolver, stack []string, fetch ControlFetcher, sync TreeSyncer, preview TreePreviewer) (res engine.Result, err error) {
 	defer func() {
 		if r := recover(); r != nil {
+			if ce, ok := r.(calleeErr); ok {
+				// A verdict, not a failure of this evaluation: it travels up as the
+				// caller's own result, keeping its category and tag (#441).
+				res, err = ce.res, nil
+				return
+			}
 			if ee, ok := r.(evalErr); ok {
 				err = ee.err
 				return
@@ -201,6 +202,17 @@ type Bytes []byte
 type value interface{} // string | int | bool | Bytes | engine.ShellResult | engine.Result
 
 type evalErr struct{ err error }
+
+// calleeErr stops the caller the way an `err` from a callee must — the caller does not
+// continue past a failed call — while carrying the callee's **verdict** rather than a
+// message about it.
+//
+// It used to be an evaluation failure (`ev.fail`), which surfaces as `err.agent`: the
+// category that means the agent could not be reached or could not run. So a def one call
+// deep over `sshd.config` reported `err.agent` for an invalid directive, an operator could
+// not tell a bad config from a dropped connection, and `if x == err.validation` — which
+// language.md documents — could never match (#441).
+type calleeErr struct{ res engine.Result }
 
 type evaluator struct {
 	ex   engine.Executor
@@ -589,7 +601,10 @@ func (ev *evaluator) evalCall(c Call) value {
 		ev.acted = true
 	}
 	if res.Category == engine.ERR {
-		ev.fail("%s returned %s", c.Name, res.String())
+		// The callee's verdict, unchanged: `err.validation` stays `err.validation` at
+		// every level (#441). The caller still stops here — a call that failed is not a
+		// step to continue past.
+		panic(calleeErr{res})
 	}
 	ev.last = res
 	return res

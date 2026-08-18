@@ -944,4 +944,46 @@ EOF
 "$work/shellf" run --inventory "$work/types/inventories/inv.shellf" --insecure \
   "$work/types/plans/plan.shellf" >/dev/null 2>&1 || fail "a boolean written as text must be accepted"
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out, booleans are booleans"
+say "21. --dry-run shows what changes in a file, not just that it changes (#440)"
+# `would.written` answers "this file will change", not "here is what changes" — and for an
+# sshd drop-in the difference is whether you are about to lock yourself out. The diff runs
+# on the target, where the content and the file already are.
+mkdir -p "$work/diff/plans" "$work/diff/assets" "$work/diff/inventories"
+cp "$work/inventory.shellf" "$work/diff/inventories/inv.shellf"
+printf 'MODE=production\nKEEP=same\nSECRET=@{apisecret}\n' > "$work/diff/assets/conf.tmpl"
+cat > "$work/diff/plans/plan.shellf" <<'EOF'
+on target {
+    file.template(%"conf.tmpl", "/tmp/shellf-diff.conf")
+}
+EOF
+d() { "$work/shellf" run --inventory "$work/diff/inventories/inv.shellf" --insecure \
+  --secret-file apisecret="$work/secret" "$@" "$work/diff/plans/plan.shellf" 2>&1; }
+
+# A destination that exists and differs: the changed lines, and the unchanged one as context.
+docker exec "$cname" sh -c 'printf "MODE=staging\nKEEP=same\nSECRET=old\n" > /tmp/shellf-diff.conf'
+out="$(d --dry-run)"; printf '%s\n' "$out"
+printf '%s' "$out" | grep -q -- '-MODE=staging' || fail "the diff must show the line being removed"
+printf '%s' "$out" | grep -q -- '+MODE=production' || fail "the diff must show the line being added"
+printf '%s' "$out" | grep -qE 'preview .* KEEP=same' || fail "the diff must keep unchanged lines as context"
+# ADR-0018: a secret is masked by value wherever it appears, preview included. Suppressing
+# the diff outright was considered and dropped — it hides only what this already hides.
+printf '%s' "$out" | grep -q "$(cat "$work/secret")" && fail "a secret leaked into the diff (#440)"
+# And the preview touched nothing: `--dry-run` is inert (ADR-0035).
+docker exec "$cname" grep -q 'MODE=staging' /tmp/shellf-diff.conf \
+  || fail "the dry-run modified the destination"
+
+# A destination that does not exist: a line count, never the content — a new file would
+# otherwise dump itself into the report.
+docker exec "$cname" rm -f /tmp/shellf-diff.conf
+out="$(d --dry-run)"
+printf '%s' "$out" | grep -q 'new file, 3 line(s)' || fail "a new destination must report its size, not its content"
+printf '%s' "$out" | grep -q 'MODE=production' && fail "a new file's content must not be dumped"
+
+# A converged destination says nothing: the preview phase is only reached on the `would`
+# path (ADR-0029), so there is no diff to read when there is no change.
+d >/dev/null || fail "the apply failed"
+out="$(d --dry-run)"
+printf '%s' "$out" | grep -q 'ok.already' || fail "a converged file must still report already"
+printf '%s' "$out" | grep -q 'preview' && fail "a converged file must print no diff"
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out, booleans are booleans, dry-run diffs a change"

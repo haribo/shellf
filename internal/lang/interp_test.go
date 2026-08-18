@@ -13,7 +13,7 @@ on server {
   file.write("/f", """OWNER=${owner} DB=${DATABASE_URL}""")
 }
 `
-	plan, err := ParsePlan(src)
+	plan, err := parsePlan(src, map[string]string{}, nil, defaultSig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ on server {
 }
 
 func TestInterpolationUndefined(t *testing.T) {
-	if _, err := ParsePlan(`on s { dir.owner("/opt", "${missing}") }`); err == nil {
+	if _, err := parsePlan(`on s { dir.owner("/opt", "${missing}") }`, map[string]string{}, nil, defaultSig, nil, nil); err == nil {
 		t.Fatal("expected error for undefined interpolation variable")
 	}
 }
@@ -36,7 +36,7 @@ func TestInterpolationUndefined(t *testing.T) {
 func TestInterpolationInBinding(t *testing.T) {
 	// a binding's value may itself interpolate an earlier binding (at parse)
 	base := map[string]string{}
-	plan, err := ParsePlanWithVars("owner = \"haribo\"\npair = \"${owner}:${owner}\"\non s { dir.owner(\"/opt\", pair) }", base, nil, defaultSig)
+	plan, err := parsePlan("owner = \"haribo\"\npair = \"${owner}:${owner}\"\non s { dir.owner(\"/opt\", pair) }", base, nil, defaultSig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -15,7 +15,7 @@ on web {
   }
 }
 `
-	plan, err := ParsePlan(src)
+	plan, err := parsePlan(src, map[string]string{}, nil, defaultSig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ on web {
 }
 
 func TestUnlessRemovedFromPlan(t *testing.T) {
-	_, err := ParsePlan("on web { shell { echo hi } unless { true } }")
+	_, err := parsePlan("on web { shell { echo hi } unless { true } }", map[string]string{}, nil, defaultSig, nil, nil)
 	if err == nil {
 		t.Fatal("expected an error: unless is removed from plans")
 	}
@@ -44,7 +44,7 @@ func TestUnlessRemovedFromPlan(t *testing.T) {
 }
 
 func TestParseShell_UnterminatedBlock(t *testing.T) {
-	if _, err := ParsePlan("on web {\n shell {\n echo hi\n"); err == nil {
+	if _, err := parsePlan("on web {\n shell {\n echo hi\n", map[string]string{}, nil, defaultSig, nil, nil); err == nil {
 		t.Fatal("expected error for unterminated shell block")
 	}
 }

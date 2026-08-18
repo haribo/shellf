@@ -283,24 +283,6 @@ func TestLoadPlanPackage_KeepsTemplateStepsForPerHostRender(t *testing.T) {
 	}
 }
 
-func TestRenderTemplate(t *testing.T) {
-	dir := t.TempDir()
-	// @{var} is shellf's; a downstream ${SHELL} and {{ go }} pass through verbatim.
-	writeFile(t, dir, "conf.tmpl", "email=@{acme}\ndomain=@{site}\nkeep=${SHELL} {{ .X }}\n")
-	got, err := renderTemplate(filepath.Join(dir, "conf.tmpl"),
-		map[string]string{"acme": "a@b.co", "site": "ex.com"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != "email=a@b.co\ndomain=ex.com\nkeep=${SHELL} {{ .X }}\n" {
-		t.Fatalf("render (or passthrough) broken: %q", got)
-	}
-	if _, err := renderTemplate(filepath.Join(dir, "nope.tmpl"), nil); err == nil ||
-		!strings.Contains(err.Error(), "file.template") {
-		t.Fatalf("a missing template file must error: %v", err)
-	}
-}
-
 func TestReadImports_RemoteModule(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")

@@ -79,7 +79,7 @@ func TestArchiveExtractMember(t *testing.T) {
 	}
 	args := map[string]string{"src": src, "dst": dst, "member": "bin/tool"}
 	run := func() engine.Result {
-		res, err := lang.EvalDef(def, args, nil, engine.ShellExecutor{}, engine.Apply)
+		res, err := lang.EvalDefFull(def, args, nil, nil, engine.ShellExecutor{}, engine.Apply, nil, nil, nil, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -126,7 +126,7 @@ func TestArchiveExtract_ReExtractsOnArchiveChange(t *testing.T) {
 	}
 	args := map[string]string{"src": src, "dst": dst}
 	run := func() engine.Result {
-		res, err := lang.EvalDef(def, args, nil, engine.ShellExecutor{}, engine.Apply)
+		res, err := lang.EvalDefFull(def, args, nil, nil, engine.ShellExecutor{}, engine.Apply, nil, nil, nil, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

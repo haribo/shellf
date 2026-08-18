@@ -10,7 +10,7 @@ on server {
   apt.install("nginx")
 }
 `
-	plan, err := ParsePlan(src)
+	plan, err := parsePlan(src, map[string]string{}, nil, defaultSig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

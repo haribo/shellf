@@ -6,6 +6,25 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-18
+
+### Added
+
+- `--dry-run` shows a unified diff of what changes in a file, under the instruction line, instead of only `would.written`. A new destination reports its line count, a long diff is cut at 40 lines, and secrets stay masked by value (#440).
+
+### Changed
+
+- `main` is the repository's default branch, so a visitor lands on what ships rather than on integration (ADR-0047). CI now refuses a PR into `main` from anything but `develop`, since `gh pr create` without `--base` targets the default (#436).
+
+### Removed
+
+- Seven functions nothing called: five convenience wrappers over a fuller form, and two residues whose last caller had been deleted. `test/dead-code.sh` now fails CI on an unreachable function, with no exemption list (#447).
+
+### Fixed
+
+- A def calling another keeps the error it propagates: `err.validation` stays `err.validation` instead of becoming `err.agent`, which means the agent could not run. Branching on a specific error, which `language.md` documents, now works one call deep (#441).
+- A host whose login shell is not POSIX is reachable again. v0.5.0 escaped the transport's commands with a POSIX-sh quoting idiom, read by the login shell before `sh` exists, so nushell hosts died at the first probe (#439).
+
 ## [0.5.0] - 2026-08-17
 
 ### Added
@@ -176,7 +195,8 @@ agent that evaluates on the host — "raw shell, but idempotent, previewable, fa
   per-user agent/workdir scoping.
 - Commands: `run`, `status`, `clean`, and `version`.
 
-[Unreleased]: https://github.com/haribo/shellf/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/haribo/shellf/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/haribo/shellf/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/haribo/shellf/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/haribo/shellf/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/haribo/shellf/compare/v0.3.0...v0.3.1

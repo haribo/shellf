@@ -9,7 +9,7 @@ import (
 // both the replacement and the way out — an error with no way out leaves the author
 // nowhere to go.
 func TestShellRules_RefusesAndNamesTheWayOut(t *testing.T) {
-	_, err := ParsePlan("on web {\n  shell { mkdir -p /opt/app }\n}\n")
+	_, err := parsePlan("on web {\n  shell { mkdir -p /opt/app }\n}\n", map[string]string{}, nil, defaultSig, nil, nil)
 	if err == nil {
 		t.Fatal("mkdir in a shell block must not parse")
 	}
@@ -21,7 +21,7 @@ func TestShellRules_RefusesAndNamesTheWayOut(t *testing.T) {
 }
 
 func TestShellRules_CpNamesBothDefsAndWhatTheyDoNotCarry(t *testing.T) {
-	_, err := ParsePlan("on web {\n  shell { cp /a /b }\n}\n")
+	_, err := parsePlan("on web {\n  shell { cp /a /b }\n}\n", map[string]string{}, nil, defaultSig, nil, nil)
 	if err == nil {
 		t.Fatal("cp in a shell block must not parse")
 	}
@@ -42,7 +42,7 @@ func TestShellRules_UnsafeShellIsAccepted(t *testing.T) {
 		"condition": "on web {\n  if !unsafe shell { mkdir /var/lock/deploy } { shell { logger held }\n }\n}\n",
 		"interp":    "on web {\n  unsafe shell(bash) { mkdir /var/lock/deploy }\n}\n",
 	} {
-		if _, err := ParsePlan(src); err != nil {
+		if _, err := parsePlan(src, map[string]string{}, nil, defaultSig, nil, nil); err != nil {
 			t.Errorf("%s: unsafe shell must parse: %v", name, err)
 		}
 	}
@@ -60,7 +60,7 @@ func TestShellRules_UnsafeInADef(t *testing.T) {
 }
 
 func TestShellRules_UnsafeAloneIsARefusalThatSaysWhat(t *testing.T) {
-	_, err := ParsePlan("on web {\n  unsafe file.copy(%\"a\", \"/b\")\n}\n")
+	_, err := parsePlan("on web {\n  unsafe file.copy(%\"a\", \"/b\")\n}\n", map[string]string{}, nil, defaultSig, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "unsafe shell") {
 		t.Fatalf("`unsafe` on a non-shell must name the form, got: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestShellRules_DoesNotFireOnLegitimateShell(t *testing.T) {
 		"substring of a path":  "ls /opt/mkdir-helper",
 		"assignment then safe": "TMP=/tmp test -d /opt",
 	} {
-		if _, err := ParsePlan("on web {\n  shell { " + body + " }\n}\n"); err != nil {
+		if _, err := parsePlan("on web {\n  shell { "+body+" }\n}\n", map[string]string{}, nil, defaultSig, nil, nil); err != nil {
 			t.Errorf("%s: must parse, got: %v", name, err)
 		}
 	}
@@ -99,7 +99,7 @@ func TestShellRules_FiresInEveryCommandPosition(t *testing.T) {
 		"in a subshell":  "(mkdir /opt/app)",
 		"in a substitut": "echo $(mkdir /opt/app)",
 	} {
-		if _, err := ParsePlan("on web {\n  shell { " + body + " }\n}\n"); err == nil {
+		if _, err := parsePlan("on web {\n  shell { "+body+" }\n}\n", map[string]string{}, nil, defaultSig, nil, nil); err == nil {
 			t.Errorf("%s: must be refused", name)
 		}
 	}
@@ -118,7 +118,7 @@ func TestShellRules_KnownMisses(t *testing.T) {
 		"through eval":       "eval \"mkdir /opt/app\"",
 		"a different tool":   "install -d /opt/app",
 	} {
-		if _, err := ParsePlan("on web {\n  shell { " + body + " }\n}\n"); err != nil {
+		if _, err := parsePlan("on web {\n  shell { "+body+" }\n}\n", map[string]string{}, nil, defaultSig, nil, nil); err != nil {
 			t.Errorf("%s: this is a documented miss — if it now fires, move it to the fires-test: %v", name, err)
 		}
 	}

@@ -15,6 +15,21 @@ jobs:
         with:
           fetch-depth: 0
 
+      # `main` is what ships, and only `develop` may propose to it — the release flow
+      # (docs/git-workflow.md) has no other path in. This became load-bearing when `main`
+      # became the default branch: `gh pr create` without `--base` targets the default, so
+      # an omission that used to open a harmless PR against `develop` now aims at `main`
+      # (#436). Branch protection cannot express "only from develop"; this can.
+      - name: Validate what may target main
+        env:
+          BASE: ${{ github.event.pull_request.base.ref }}
+          HEAD: ${{ github.event.pull_request.head.ref }}
+        run: |
+          if [ "$BASE" = "main" ] && [ "$HEAD" != "develop" ]; then
+            echo "a PR into main may only come from develop, got '$HEAD' — retarget it at develop (docs/git-workflow.md)"
+            exit 1
+          fi
+
       - name: Validate PR title
         env:
           TITLE: ${{ github.event.pull_request.title }}

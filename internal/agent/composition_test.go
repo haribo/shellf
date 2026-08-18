@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"encoding/json"
+	"shellf/internal/std"
 	"strings"
 	"sync"
 	"testing"
@@ -71,7 +72,7 @@ func serveComp(t *testing.T, c *compExec, req proto.Request) proto.Response {
 	t.Helper()
 	body, _ := json.Marshal(req)
 	var out bytes.Buffer
-	if err := Serve(bytes.NewReader(body), &out, c); err != nil {
+	if err := ServeOn(bytes.NewReader(body), &out, c, ""); err != nil {
 		t.Fatal(err)
 	}
 	var resp proto.Response
@@ -258,4 +259,45 @@ func TestComposition(t *testing.T) {
 			t.Fatalf("interpolation must resolve against the def's scope, got %q", got)
 		}
 	})
+}
+
+// #445: an instruction written in Go is unreachable the moment a def of the same name
+// exists, because runInstruction resolves defs first — and nothing said so. `file.copy`
+// sat dead for months that way, carrying a working `diff -u` that #440 rewrote from
+// scratch two files away.
+//
+// The compiler cannot see it (the type still satisfies engine.Instruction) and neither can
+// the `unused` linter. So the shadowing is asserted instead: every name dispatch still
+// answers must be a name no def claims.
+func TestDispatch_IsNotShadowedByADef(t *testing.T) {
+	for _, name := range dispatchNames(t) {
+		if _, shadowed := std.Lookup(name); shadowed {
+			t.Fatalf("%q is dispatched in Go and also a stdlib def — the def resolves first, "+
+				"so the Go implementation can never run (#445). Delete one of the two.", name)
+		}
+		// And it must still be dispatchable: a name whose case was removed but whose step
+		// is still emitted somewhere would fail at run time, on a target.
+		if _, err := dispatch(proto.Step{Instruction: name}); err != nil {
+			t.Fatalf("%q is listed but not dispatchable: %v", name, err)
+		}
+	}
+}
+
+// dispatchNames reads the cases out of dispatch by asking it: a name it accepts is a name
+// it dispatches. Derived rather than duplicated — a second list would be the same defect
+// one level up.
+func dispatchNames(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	// Every instruction name the language can produce: the stdlib's, plus the ones the
+	// engine implements. Anything dispatch accepts from that set is a live Go instruction.
+	for _, name := range []string{"shell", "file.copy", "file.put", "file.write", "dir.copy", "dir.sync", "file.template"} {
+		if _, err := dispatch(proto.Step{Instruction: name}); err == nil {
+			out = append(out, name)
+		}
+	}
+	if len(out) == 0 {
+		t.Fatal("dispatch answers nothing — either it is gone, or this list is stale")
+	}
+	return out
 }

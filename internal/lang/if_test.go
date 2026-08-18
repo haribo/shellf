@@ -10,7 +10,7 @@ func TestParseIf(t *testing.T) {
     apt.install("apache")
   }
 }`
-	plan, err := ParsePlan(src)
+	plan, err := parsePlan(src, map[string]string{}, nil, defaultSig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestParseIf(t *testing.T) {
 }
 
 func TestParseIfNoElse(t *testing.T) {
-	plan, err := ParsePlan(`on s { if dir.ensure("/opt") { apt.install("nginx") } }`)
+	plan, err := parsePlan(`on s { if dir.ensure("/opt") { apt.install("nginx") } }`, map[string]string{}, nil, defaultSig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestParseIfNoElse(t *testing.T) {
 }
 
 func TestParseIfNegation(t *testing.T) {
-	plan, err := ParsePlan(`on s { if !dir.exists("/opt") { dir.ensure("/opt") } }`)
+	plan, err := parsePlan(`on s { if !dir.exists("/opt") { dir.ensure("/opt") } }`, map[string]string{}, nil, defaultSig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestParseIfNegation(t *testing.T) {
 
 func TestParseIfShellCond(t *testing.T) {
 	// the condition may be a shell block
-	plan, err := ParsePlan(`on s { if shell { test -d /opt } { apt.install("nginx") } }`)
+	plan, err := parsePlan(`on s { if shell { test -d /opt } { apt.install("nginx") } }`, map[string]string{}, nil, defaultSig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

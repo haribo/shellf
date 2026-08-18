@@ -222,8 +222,8 @@ func TestControl_NoFetcherFails(t *testing.T) {
 // host. Written in a plan, which is the only place a `%"…"` may now sit (ADR-0043).
 func TestControl_PathLiteralIsInterpolated(t *testing.T) {
 	sig := func(string) ([]Param, int, bool) { return strParams("src", "dst"), 2, true }
-	plan, err := ParsePlanWithVars(`on web { deliver(%"conf/${name}.j2", "/etc/app.conf") }`,
-		map[string]string{"name": "web"}, nil, sig)
+	plan, err := parsePlan(`on web { deliver(%"conf/${name}.j2", "/etc/app.conf") }`,
+		map[string]string{"name": "web"}, nil, sig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -318,8 +318,8 @@ func TestControl_PlanArgumentIsDeclared(t *testing.T) {
 		}
 		return nil, 0, false
 	}
-	plan, err := ParsePlanWithVars(`on web { deliver(%"conf.j2", "/etc/app.conf") }`,
-		map[string]string{}, nil, sig)
+	plan, err := parsePlan(`on web { deliver(%"conf.j2", "/etc/app.conf") }`,
+		map[string]string{}, nil, sig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,8 +349,8 @@ func TestControl_PlanArgumentIsDeclared(t *testing.T) {
 // An unmarked argument is an ordinary string: a plan must say which paths are its own.
 func TestControl_UnmarkedPlanArgumentIsNotDeclared(t *testing.T) {
 	sig := func(string) ([]Param, int, bool) { return strParams("src", "dst"), 2, true }
-	plan, err := ParsePlanWithVars(`on web { deliver("conf.j2", "/etc/app.conf") }`,
-		map[string]string{}, nil, sig)
+	plan, err := parsePlan(`on web { deliver("conf.j2", "/etc/app.conf") }`,
+		map[string]string{}, nil, sig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +363,7 @@ func TestControl_UnmarkedPlanArgumentIsNotDeclared(t *testing.T) {
 // inside a block or a branch is refused at runtime for a resource it did declare.
 func TestControl_ScanReachesNestedSteps(t *testing.T) {
 	sig := func(string) ([]Param, int, bool) { return strParams("src", "dst"), 2, true }
-	plan, err := ParsePlanWithVars(`
+	plan, err := parsePlan(`
 on web {
   as root { deliver(%"in-block.j2", "/a") }
   parallel { deliver(%"in-parallel.j2", "/b") }
@@ -373,7 +373,7 @@ on web {
 			return strParams("path"), 1, true
 		}
 		return sig(n)
-	})
+	}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -431,8 +431,7 @@ func TestControl_UnknownPrimitiveAtEval(t *testing.T) {
 	ph.Stmts[0] = let
 	d.Phases[0] = ph
 
-	_, err = EvalDefWith(d, map[string]string{"p": "x"}, nil, noopExec{}, engine.Apply, nil, nil,
-		func(string, []byte, map[string]string) ([]byte, error) { return nil, nil })
+	_, err = EvalDefFull(d, map[string]string{"p": "x"}, nil, nil, noopExec{}, engine.Apply, nil, nil, func(string, []byte, map[string]string) ([]byte, error) { return nil, nil }, nil, nil)
 	if err == nil {
 		t.Fatal("the evaluator must refuse a primitive it does not know")
 	}
@@ -480,8 +479,7 @@ def b() { apply { a() return ok.done } }
 	}
 	resolve := func(n string) (Def, bool) { d, ok := byName[n]; return d, ok }
 
-	res, err := EvalDefWith(byName["caller"], map[string]string{"x": "/tmp/x"}, nil,
-		noopExec{}, engine.Apply, resolve, []string{"caller"}, nil)
+	res, err := EvalDefFull(byName["caller"], map[string]string{"x": "/tmp/x"}, nil, nil, noopExec{}, engine.Apply, resolve, []string{"caller"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("a def must be able to call another: %v", err)
 	}
@@ -490,14 +488,13 @@ def b() { apply { a() return ok.done } }
 	}
 
 	// A cycle names its chain rather than blowing the stack.
-	_, err = EvalDefWith(byName["a"], nil, nil, noopExec{}, engine.Apply, resolve, []string{"a"}, nil)
+	_, err = EvalDefFull(byName["a"], nil, nil, nil, noopExec{}, engine.Apply, resolve, []string{"a"}, nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "cycle") {
 		t.Fatalf("a cycle must be refused with its chain: %v", err)
 	}
 
 	// With no resolver, a call is refused rather than silently skipped.
-	_, err = EvalDefWith(byName["caller"], map[string]string{"x": "/tmp/x"}, nil,
-		noopExec{}, engine.Apply, nil, nil, nil)
+	_, err = EvalDefFull(byName["caller"], map[string]string{"x": "/tmp/x"}, nil, nil, noopExec{}, engine.Apply, nil, nil, nil, nil, nil)
 	if err == nil {
 		t.Fatal("no resolver must refuse the call")
 	}
@@ -563,35 +560,6 @@ func TestControl_WriteRefusesTheControlHost(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "control host") {
 		t.Fatalf("the refusal must say why: %v", err)
-	}
-}
-
-// UsesPrimitive answers "does any def call this primitive", wherever the call sits — in
-// a nested argument, inside an `if`, in an `observe`. It walks the parsed defs and not
-// their source text, since ParseDefs leaves Def.Source empty and a text search silently
-// answered "no".
-func TestControl_UsesPrimitiveWalksTheTree(t *testing.T) {
-	cases := map[string]struct {
-		src  string
-		want bool
-	}{
-		"direct":        {`def t(p: str) { apply { x = ~file.render(p) return ok.done } }`, true},
-		"nested in arg": {`def t(p: str) { apply { x = ~file.write("/tmp/x", ~file.render(p)) return ok.done } }`, true},
-		"inside an if":  {`def t(p: str) { apply { if p { x = ~file.render(p) } return ok.done } }`, true},
-		"in observe":    {`def t(p: str) { observe { return state(v: ~file.render(p)) } }`, true},
-		"another one":   {`def t(p: str) { apply { x = ~file.read(p) return ok.done } }`, false},
-		"none":          {`def t(p: str) { apply { shell { echo "$p" } return ok.done } }`, false},
-	}
-	for name, c := range cases {
-		t.Run(name, func(t *testing.T) {
-			defs, err := ParseDefs(c.src)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := UsesPrimitive(map[string]Def{"t": defs[0]}, "file.render"); got != c.want {
-				t.Fatalf("got %v, want %v", got, c.want)
-			}
-		})
 	}
 }
 

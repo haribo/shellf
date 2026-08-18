@@ -369,16 +369,6 @@ func readSubPackage(parent, name string, libs map[string]string) error {
 	return nil
 }
 
-// templateRenderer builds the per-host renderer the orchestrator injects
-// (ADR-0024): it reads a template `src` relative to the plan dir and interpolates
-func renderTemplate(path string, vars map[string]string) (string, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("file.template: %v", err)
-	}
-	return lang.Template(string(b), func(n string) (string, bool) { v, ok := vars[n]; return v, ok })
-}
-
 // readImports resolves each `import <alias> "<spec>"` in the plan to the def
 // sources of that package. A spec with `@version` is a remote git module
 // (ADR-0016), resolved through shellf.lock + the module cache; otherwise it is a

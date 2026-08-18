@@ -3,6 +3,7 @@ package transport
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -168,12 +169,52 @@ func workBase(cn conn) string {
 
 func (s SSH) pathID(bin []byte) string { return hashID(bin) + "-" + sanitizeUser(s.User) }
 
-// posix wraps a transport command so the target runs it under /bin/sh, whatever
-// its login shell is: a non-POSIX login shell (nushell, fish) cannot parse the
-// `&&`/`$()`/`for … do`/`&` the transport uses (issue #241). Single-quote-escaped,
-// so any script body is safe.
+// posix wraps a transport command so the target runs it under /bin/sh, whatever its login
+// shell is: a non-POSIX login shell cannot parse the `&&`/`$()`/`for … do` the transport
+// uses (#241). Measured while fixing #439, since the comment used to name fish beside
+// nushell: fish parses POSIX quoting happily, and plan9's `rc` mangles only some forms —
+// nushell is the one that breaks on the transport's own scripts. There is no CI target for
+// it: nushell is not packaged in Debian, and downloading it at image-build time would put
+// the harness at the mercy of a network the rest of it deliberately avoids.
+//
+// The script travels base64-encoded, and that is the whole point. It used to be embedded
+// single-quoted, with the body's own quotes escaped as `'\”` — a POSIX-sh idiom, handed to
+// the **login shell**, which reads the command line before `sh` exists. Asking the shell
+// being worked around to understand POSIX quoting is asking it to be POSIX: nushell reads
+// that sequence as string-backslash-string and the command falls apart. It never bit while
+// the transport's scripts held no quote; the agent-verification probe introduced four of
+// them, and every such host became unreachable at the first contact (#439).
+//
+// base64's alphabet is `A-Za-z0-9+/=` — nothing any shell treats as syntax — so what the
+// login shell sees has nothing to reinterpret, and `sh` receives the script byte for byte.
+// `base64 -d` is coreutils and busybox alike, alongside the `find`, `stat -c` and
+// `sha256sum` the transport already requires of a target.
+//
+// The pipe costs stdin: `sh` inherits the decoder's, so a script reading stdin gets the
+// spent pipe instead of what the caller sent. The two commands that do read it — pushing
+// the binary, depositing a request — go through posixKeepingStdin below.
 func posix(script string) string {
-	return "sh -c '" + strings.ReplaceAll(script, "'", `'\''`) + "'"
+	return "echo " + base64.StdEncoding.EncodeToString([]byte(script)) + " | base64 -d | sh"
+}
+
+// posixKeepingStdin wraps a script that reads its input from stdin, where the pipe above
+// cannot be used: the decoder would own stdin and the script would read an empty one —
+// measured, a `cat > file` received nothing.
+//
+// The bridge takes this path too: it *is* a stdin/stdout conversation with the agent
+// (ADR-0031), so a decoder owning stdin leaves the control host unreachable — measured,
+// every `~file.read` answered `no control host attached`.
+//
+// It embeds the script single-quoted, with **no escaping**, and that is only safe because
+// the script holds no single quote of its own: `'…'` with nothing to escape is a literal
+// string in every shell tried, POSIX or not (verified under nushell and plan9 rc). Escaping
+// is what broke #439, not quoting.
+//
+// The invariant is the caller's, and it is asserted by a test over every command that
+// takes this path rather than left to a comment: a quote added to one of them turns the
+// build red instead of making a host unreachable.
+func posixKeepingStdin(script string) string {
+	return "sh -c '" + script + "'"
 }
 
 // sanitizeUser keeps the SSH user usable and injection-safe as a path segment.
@@ -371,7 +412,7 @@ func (s SSH) bridge(binPath, wd string) (stop func()) {
 			if err != nil {
 				continue
 			}
-			out, in, sess, err := cn.duplex(posix(bridgeCmd(binPath, wd)))
+			out, in, sess, err := cn.duplex(posixKeepingStdin(bridgeCmd(binPath, wd)))
 			if err != nil {
 				_ = cn.close()
 				continue
@@ -602,7 +643,7 @@ var (
 // an interrupted push never leaves a partial binary, and a concurrent run sees
 // either the old file or none.
 func push(cn conn, bin []byte, path string) error {
-	if _, err := cn.run(posix(pushCmd(path)), bin); err != nil {
+	if _, err := cn.run(posixKeepingStdin(pushCmd(path)), bin); err != nil {
 		return fmt.Errorf("push agent: %w", err)
 	}
 	return nil
@@ -610,7 +651,7 @@ func push(cn conn, bin []byte, path string) error {
 
 // deposit writes the request atomically (tmp + mv).
 func deposit(cn conn, wd, jobid string, req []byte) error {
-	if _, err := cn.run(posix(depositCmd(wd, jobid)), req); err != nil {
+	if _, err := cn.run(posixKeepingStdin(depositCmd(wd, jobid)), req); err != nil {
 		return fmt.Errorf("deposit: %w", err)
 	}
 	return nil
