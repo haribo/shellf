@@ -65,3 +65,5 @@ to answer is worse than no badge.
 - `gh pr create` without `--base` now targets `main` and fails the guard, naming the fix.
   The project's skills pass `--base develop` explicitly and are unaffected.
 - The three workflows already trigger on `[develop, main]` by name, so nothing else moves.
+
+<!-- probe: proving the guard refuses a feature branch targeting main (#436) -->
