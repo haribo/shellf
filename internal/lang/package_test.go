@@ -209,7 +209,7 @@ func TestRenamedInstructions_ErrorNamesReplacement(t *testing.T) {
 	}
 	for old, want := range Renamed {
 		t.Run(old, func(t *testing.T) {
-			_, err := ParsePlanWithVars("on web { "+old+"(\"a\", \"b\") }", nil, nil, testStdSig)
+			_, err := parsePlan("on web { "+old+"(\"a\", \"b\") }", nil, nil, testStdSig, nil, nil)
 			if err == nil {
 				t.Fatalf("%q must not resolve any more", old)
 			}

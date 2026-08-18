@@ -3,11 +3,11 @@ package lang
 import "testing"
 
 func TestParseShellInterp(t *testing.T) {
-	plan, err := ParsePlan(`on s {
+	plan, err := parsePlan(`on s {
   shell(bash) { echo hi | grep h }
   shell(nu) as root { ls }
   shell { plain }
-}`)
+}`, map[string]string{}, nil, defaultSig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +24,7 @@ func TestParseShellInterp(t *testing.T) {
 }
 
 func TestParseShellInterp_Unknown(t *testing.T) {
-	if _, err := ParsePlan(`on s { shell(fish) { x } }`); err == nil {
+	if _, err := parsePlan(`on s { shell(fish) { x } }`, map[string]string{}, nil, defaultSig, nil, nil); err == nil {
 		t.Fatal("an unknown interpreter must error at parse")
 	}
 }

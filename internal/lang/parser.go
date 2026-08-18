@@ -33,22 +33,22 @@ func ParseInventory(src string) (inv inventory.Inventory, err error) {
 	return
 }
 
-// ParsePlan parses a plan file into an orchestration Plan.
-func ParsePlan(src string) (orchestrator.Plan, error) {
-	return ParsePlanWithVars(src, map[string]string{}, nil, defaultSig)
-}
-
-// ParsePlanWithVars parses a plan with pre-loaded global variables. `baseVars`
-// (from a --vars file) is the lower-precedence table; `setVars` (from --set) is
-// the highest. `sig` supplies instruction parameter names. Plan-level bindings
-// are appended to `baseVars` (mutated in place), so the caller can pass the
-// enriched table to the orchestrator for per-host resolution of the Steps'
-// Refs. Interpolation and binding values are resolved here; bare-identifier
-// arguments are left as Refs.
-func ParsePlanWithVars(src string, baseVars, setVars map[string]string, sig InstructionSig) (plan orchestrator.Plan, err error) {
+// parsePlan parses a plan with pre-loaded global variables. `baseVars` (from a --vars
+// file) is the lower-precedence table; `setVars` (from --set) is the highest. `sig`
+// supplies instruction parameter names, `userDefs` and `imports` the package context (nil
+// for a plan parsed on its own). Plan-level bindings are appended to `baseVars` (mutated
+// in place), so the caller can pass the enriched table to the orchestrator for per-host
+// resolution of the Steps' Refs. Interpolation and binding values are resolved here;
+// bare-identifier arguments are left as Refs.
+//
+// Unexported since #447: every caller is in this package, and ParsePackage rebuilt the
+// same five lines rather than calling it — so the exported form was unreachable from the
+// binary while its body ran twice.
+func parsePlan(src string, baseVars, setVars map[string]string, sig InstructionSig,
+	userDefs map[string]Def, imports map[string][]string) (plan orchestrator.Plan, err error) {
 	defer catch(&err)
 	p := newParser(src)
-	p.sig = sig
+	p.sig, p.userDefs, p.imports = sig, userDefs, imports
 	if baseVars != nil {
 		p.baseVars = baseVars
 	}
@@ -87,14 +87,10 @@ func ParsePackage(planSrc string, libs map[string]string, imports map[string][]s
 	}
 
 	// 2. The invoked plan file: imports (first), bindings, `on` blocks, inline defs.
-	p := newParser(planSrc)
-	p.sig, p.userDefs, p.imports = stdSig, defsByName, imports
-	if baseVars != nil {
-		p.baseVars = baseVars
+	plan, err = parsePlan(planSrc, baseVars, setVars, stdSig, defsByName, imports)
+	if err != nil {
+		return nil, nil, err
 	}
-	p.setVars = setVars
-	plan = p.plan()
-
 	return plan, defsByName, nil
 }
 

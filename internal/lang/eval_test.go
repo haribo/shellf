@@ -80,7 +80,7 @@ func runApt(t *testing.T, f *evalFake, pkg string, mode engine.Mode) engine.Resu
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := EvalDef(defs[0], map[string]string{"pkg": pkg}, nil, f, mode)
+	res, err := EvalDefFull(defs[0], map[string]string{"pkg": pkg}, nil, nil, f, mode, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestEvalDef_Interp(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := &evalFake{resp: map[string]engine.ShellResult{"echo hi": {Exit: 0}}}
-	if _, err := EvalDef(defs[0], map[string]string{"p": "x"}, nil, f, engine.Apply); err != nil {
+	if _, err := EvalDefFull(defs[0], map[string]string{"p": "x"}, nil, nil, f, engine.Apply, nil, nil, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if f.lastInterp != "bash" {
@@ -159,7 +159,7 @@ func TestEvalDef_Interp(t *testing.T) {
 
 	over, _ := ParseDefs(`def q(p: str) using bash { apply { r = shell(sh) { echo hi }  if !r { return err.x(r) }  return ok.done } }`)
 	f2 := &evalFake{resp: map[string]engine.ShellResult{"echo hi": {Exit: 0}}}
-	_, _ = EvalDef(over[0], map[string]string{"p": "x"}, nil, f2, engine.Apply)
+	_, _ = EvalDefFull(over[0], map[string]string{"p": "x"}, nil, nil, f2, engine.Apply, nil, nil, nil, nil, nil)
 	if f2.lastInterp != "sh" {
 		t.Fatalf("shell(sh) must override the def interpreter, got %q", f2.lastInterp)
 	}
@@ -174,7 +174,7 @@ func TestEvalDef_WithOverridesEnv(t *testing.T) {
 	}
 	f := &evalFake{resp: map[string]engine.ShellResult{"echo hi": {Exit: 0}}}
 	with := map[string]string{"p": "override", "extra": "v"}
-	if _, err := EvalDef(defs[0], map[string]string{"p": "orig"}, with, f, engine.Apply); err != nil {
+	if _, err := EvalDefFull(defs[0], map[string]string{"p": "orig"}, with, nil, f, engine.Apply, nil, nil, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if f.lastEnv["p"] != "override" { // `with` wins over the passed arg
@@ -193,7 +193,7 @@ func TestEvalDef_ShellDotOkRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := &evalFake{resp: map[string]engine.ShellResult{`test -d "$p"`: {Exit: 0}}}
-	if _, err := EvalDef(defs[0], map[string]string{"p": "/x"}, nil, f, engine.Apply); err == nil {
+	if _, err := EvalDefFull(defs[0], map[string]string{"p": "/x"}, nil, nil, f, engine.Apply, nil, nil, nil, nil, nil); err == nil {
 		t.Fatal("`.ok` on a shell result must be an eval error (ADR-0010)")
 	}
 }
@@ -244,7 +244,7 @@ def touch(path: str) {
 	f := &evalFake{resp: map[string]engine.ShellResult{`touch "$path"`: {Exit: 0}}}
 	args := map[string]string{"path": "/tmp/x"}
 
-	res, err := EvalDef(defs[0], args, nil, f, engine.Apply)
+	res, err := EvalDefFull(defs[0], args, nil, nil, f, engine.Apply, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +252,7 @@ def touch(path: str) {
 		t.Fatalf("apply: want ok.touched, got %s", res)
 	}
 
-	res, err = EvalDef(defs[0], args, nil, f, engine.Check)
+	res, err = EvalDefFull(defs[0], args, nil, nil, f, engine.Check, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +274,7 @@ func TestEvalDef_Preview(t *testing.T) {
 	}
 	// check mode: preview shell runs, its stdout rides on the result
 	f := &evalFake{resp: map[string]engine.ShellResult{"echo hi": {Exit: 0, Stdout: "Recreate web\nRecreate worker\n"}}}
-	res, err := EvalDef(defs[0], map[string]string{"x": "y"}, nil, f, engine.Check)
+	res, err := EvalDefFull(defs[0], map[string]string{"x": "y"}, nil, nil, f, engine.Check, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +287,7 @@ func TestEvalDef_Preview(t *testing.T) {
 
 	// apply mode: the preview phase is not run
 	f2 := &evalFake{resp: map[string]engine.ShellResult{"echo done": {Exit: 0}, "echo hi": {Exit: 0, Stdout: "x"}}}
-	if _, err := EvalDef(defs[0], map[string]string{"x": "y"}, nil, f2, engine.Apply); err != nil {
+	if _, err := EvalDefFull(defs[0], map[string]string{"x": "y"}, nil, nil, f2, engine.Apply, nil, nil, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if f2.calls["echo hi"] {
@@ -297,7 +297,7 @@ func TestEvalDef_Preview(t *testing.T) {
 	// best-effort: a preview shell that produces no stdout yields no preview,
 	// but the step still previews would.up
 	f3 := &evalFake{resp: map[string]engine.ShellResult{"echo hi": {Exit: 127}}}
-	res3, _ := EvalDef(defs[0], map[string]string{"x": "y"}, nil, f3, engine.Check)
+	res3, _ := EvalDefFull(defs[0], map[string]string{"x": "y"}, nil, nil, f3, engine.Check, nil, nil, nil, nil, nil)
 	if res3.Category != engine.WOULD || res3.Preview != "" {
 		t.Fatalf("failing preview must degrade to plain would: %s preview=%q", res3, res3.Preview)
 	}

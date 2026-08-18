@@ -14,6 +14,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `main` is the repository's default branch, so a visitor lands on what ships rather than on integration (ADR-0047). CI now refuses a PR into `main` from anything but `develop`, since `gh pr create` without `--base` targets the default (#436).
 
+### Removed
+
+- Seven functions nothing called: five convenience wrappers over a fuller form, and two residues whose last caller had been deleted. `test/dead-code.sh` now fails CI on an unreachable function, with no exemption list (#447).
+
 ### Fixed
 
 - A def calling another keeps the error it propagates: `err.validation` stays `err.validation` instead of becoming `err.agent`, which means the agent could not run. Branching on a specific error, which `language.md` documents, now works one call deep (#441).

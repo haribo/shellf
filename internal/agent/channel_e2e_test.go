@@ -51,7 +51,7 @@ func TestChannelEndToEnd(t *testing.T) {
 	}()
 
 	// A declared resource comes back.
-	got, err := ch.Ask("file.read:conf.j2")
+	got, err := ch.AskWith("file.read:conf.j2", nil, nil)
 	if err != nil {
 		t.Fatalf("a declared resource must reach the job: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestChannelEndToEnd(t *testing.T) {
 	}
 
 	// An undeclared one does not — this is the whole point of the allow-list.
-	if _, err := ch.Ask("file.read:id_ed25519"); err == nil {
+	if _, err := ch.AskWith("file.read:id_ed25519", nil, nil); err == nil {
 		t.Fatal("an undeclared resource must be refused end to end")
 	}
 }

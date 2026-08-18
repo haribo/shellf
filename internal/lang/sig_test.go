@@ -62,7 +62,7 @@ func TestCall_BoolParameterTakesABooleanValue(t *testing.T) {
 	}
 	for what, src := range accepted {
 		t.Run(what, func(t *testing.T) {
-			if _, err := ParsePlanWithVars(src, map[string]string{}, nil, sig); err != nil {
+			if _, err := parsePlan(src, map[string]string{}, nil, sig, nil, nil); err != nil {
 				t.Fatalf("a boolean value must be accepted however it is written: %v", err)
 			}
 		})
@@ -76,7 +76,7 @@ func TestCall_BoolParameterTakesABooleanValue(t *testing.T) {
 	}
 	for what, src := range refused {
 		t.Run(what, func(t *testing.T) {
-			_, err := ParsePlanWithVars(src, map[string]string{}, nil, sig)
+			_, err := parsePlan(src, map[string]string{}, nil, sig, nil, nil)
 			if err == nil {
 				t.Fatal("a value that is not a boolean must be refused before a host is contacted")
 			}

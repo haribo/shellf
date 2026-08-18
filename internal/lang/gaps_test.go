@@ -9,7 +9,7 @@ import (
 
 func TestUnescape_InStringArg(t *testing.T) {
 	// A double-quoted arg processes \n \t \" \\ ; anything else stays literal.
-	plan, err := ParsePlan("on s { file.write(\"/p\", \"a\\nb\\tc\\\"d\\\\e\\q\") }")
+	plan, err := parsePlan("on s { file.write(\"/p\", \"a\\nb\\tc\\\"d\\\\e\\q\") }", map[string]string{}, nil, defaultSig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ base = "b"
 ref = base
 on s { file.write("/p", "${raw}|${ref}") }
 `
-	plan, err := ParsePlan(src)
+	plan, err := parsePlan(src, map[string]string{}, nil, defaultSig, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ on s { file.write("/p", "${raw}|${ref}") }
 }
 
 func TestArg_UndefinedBinding(t *testing.T) {
-	_, err := ParsePlan("x = nope\non s { file.write(\"/p\", x) }")
+	_, err := parsePlan("x = nope\non s { file.write(\"/p\", x) }", map[string]string{}, nil, defaultSig, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "undefined variable") {
 		t.Fatalf("a binding to an unknown name must error: %v", err)
 	}
@@ -119,12 +119,12 @@ def probe() {
 	}
 	// Shell succeeds → `ok` is true → ok.up.
 	up := &evalFake{resp: map[string]engine.ShellResult{"run-it": {Exit: 0}}}
-	if got, _ := EvalDef(defs[0], nil, nil, up, engine.Apply); got.String() != "ok.up" {
+	if got, _ := EvalDefFull(defs[0], nil, nil, nil, up, engine.Apply, nil, nil, nil, nil, nil); got.String() != "ok.up" {
 		t.Fatalf("ok shorthand on success: %s", got.String())
 	}
 	// Shell fails → `ok` is false → falls through to err.down.
 	down := &evalFake{resp: map[string]engine.ShellResult{"run-it": {Exit: 1}}}
-	if got, _ := EvalDef(defs[0], nil, nil, down, engine.Apply); got.String() != "err.down" {
+	if got, _ := EvalDefFull(defs[0], nil, nil, nil, down, engine.Apply, nil, nil, nil, nil, nil); got.String() != "err.down" {
 		t.Fatalf("ok shorthand on failure: %s", got.String())
 	}
 }
