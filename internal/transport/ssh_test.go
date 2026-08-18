@@ -6,6 +6,7 @@ import (
 	"encoding/pem"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -236,13 +237,84 @@ func TestAuthMethods_DeadAgentSocket(t *testing.T) {
 	}
 }
 
+// #439: the wrapper's job is to survive the **login shell**, which reads the command line
+// before `sh` exists. Quoting the body with a POSIX-sh idiom asked the very shell being
+// worked around to understand POSIX quoting: nushell reads it as string-backslash-string,
+// and every run against such a host died at the first probe.
+//
+// So the property asserted is what the login shell has to reinterpret: nothing.
 func TestPosix(t *testing.T) {
-	// wraps under sh -c and keeps the POSIX body intact (issue #241)
-	if got := posix("a && b"); got != "sh -c 'a && b'" {
-		t.Fatalf("posix wrap: %q", got)
+	scripts := []string{
+		"a && b",
+		"echo 'hi'",
+		`stat -c '%U:%a' /tmp/x`,
+		`s=$(sha256sum /p | cut -d' ' -f1); if [ "$s" = "ab" ]; then echo ok; fi`,
 	}
-	// single quotes in the body are escaped so the wrap stays valid
-	if got := posix("echo 'hi'"); got != `sh -c 'echo '\''hi'\'''` {
-		t.Fatalf("posix quote-escape: %q", got)
+	for _, sc := range scripts {
+		got := posix(sc)
+		// The payload — everything but the fixed pipeline — must hold nothing any shell
+		// treats as syntax.
+		for _, bad := range []string{"'", `"`, `\`, "$", "(", ")", "&", ";", "<", ">"} {
+			if strings.Contains(got, bad) {
+				t.Fatalf("the wrapped command must carry no %q for the login shell to reinterpret:\n  script:  %s\n  wrapped: %s", bad, sc, got)
+			}
+		}
+	}
+}
+
+// The other half of #439: a script that reads stdin cannot go through the pipe — the
+// decoder would own stdin and the script would read an empty one. Those go out
+// single-quoted with no escaping, which is safe only while they hold no quote of their own.
+//
+// Asserted over the actual commands, not over the idea: a quote added to one of them turns
+// this red instead of making every non-POSIX host unreachable, which is how #439 shipped.
+func TestPosixKeepingStdin_ItsScriptsCarryNoQuote(t *testing.T) {
+	for name, script := range map[string]string{
+		"push":    pushCmd("/tmp/shellf-agent-x"),
+		"deposit": depositCmd("/dev/shm/shellf-x", "7"),
+		"bridge":  bridgeCmd("/tmp/shellf-agent-x", "/dev/shm/shellf-x"),
+	} {
+		if strings.ContainsAny(script, `'`+"`") {
+			t.Fatalf("%s carries a quote, so it cannot be wrapped without escaping — "+
+				"escaping is what broke #439:\n  %s", name, script)
+		}
+		got := posixKeepingStdin(script)
+		if got != "sh -c '"+script+"'" {
+			t.Fatalf("%s: %q", name, got)
+		}
+		// No backslash either: the sequence the login shell has to understand is exactly
+		// what must not be there.
+		if strings.Contains(got, `\`) {
+			t.Fatalf("%s: the wrapped command must carry no backslash: %q", name, got)
+		}
+	}
+}
+
+// And it stays usable: the script runs, and its stdin is the caller's data, not the
+// wrapper's leftovers. Run rather than read — the pipe form passed every string assertion
+// and still delivered an empty file.
+func TestPosixKeepingStdin_PreservesStdin(t *testing.T) {
+	dst := filepath.Join(t.TempDir(), "out")
+	cmd := exec.Command("sh", "-c", posixKeepingStdin("cat > "+dst))
+	cmd.Stdin = strings.NewReader("the caller's bytes")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("wrapped script failed: %v (%s)", err, out)
+	}
+	b, err := os.ReadFile(dst)
+	if err != nil || string(b) != "the caller's bytes" {
+		t.Fatalf("stdin must reach the script: %q (%v)", b, err)
+	}
+}
+
+// And it must still deliver the script byte for byte to `sh`. Asserted by running it, not
+// by reading it: what matters is what a shell does with it.
+func TestPosix_DeliversTheScriptVerbatim(t *testing.T) {
+	script := `printf '%s|%s' "$(echo one)" 'two'`
+	out, err := exec.Command("sh", "-c", posix(script)).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wrapped script failed: %v (%s)", err, out)
+	}
+	if string(out) != "one|two" {
+		t.Fatalf("the script must reach sh unchanged, got %q", out)
 	}
 }

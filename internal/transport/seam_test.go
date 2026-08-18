@@ -3,6 +3,7 @@ package transport
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"io"
@@ -38,12 +39,24 @@ func (f *fakeConn) run(cmd string, stdin []byte) ([]byte, error) {
 	return nil, nil
 }
 
-// unwrapPosix strips the `sh -c '<script>'` wrapper (issue #241) so a responder
-// classifies on the script; returns cmd unchanged when not wrapped.
+// unwrapPosix recovers the script from the wrapper (#241, #439) so a responder classifies
+// on what the target will actually run; returns cmd unchanged when not wrapped.
+//
+// Decoding rather than string-stripping is deliberate: it fails loudly if the wrapper ever
+// stops producing something a target can decode, which is the property #439 is about.
 func unwrapPosix(cmd string) string {
+	// The stdin-carrying form, which cannot use the pipe (#439).
 	if strings.HasPrefix(cmd, "sh -c '") && strings.HasSuffix(cmd, "'") {
-		inner := cmd[len("sh -c '") : len(cmd)-1]
-		return strings.ReplaceAll(inner, `'\''`, "'")
+		return cmd[len("sh -c '") : len(cmd)-1]
+	}
+	const prefix, suffix = "echo ", " | base64 -d | sh"
+	if strings.HasPrefix(cmd, prefix) && strings.HasSuffix(cmd, suffix) {
+		payload := cmd[len(prefix) : len(cmd)-len(suffix)]
+		b, err := base64.StdEncoding.DecodeString(payload)
+		if err != nil {
+			return cmd
+		}
+		return string(b)
 	}
 	return cmd
 }
@@ -68,9 +81,11 @@ type closerFunc func() error
 func (c closerFunc) Close() error { return c() }
 func (f *fakeConn) close() error  { f.closed++; return nil }
 
+// ran matches on the **script**, not on the wire form: the command travels base64-encoded
+// since #439, so a substring of the script appears nowhere in what was sent.
 func (f *fakeConn) ran(sub string) bool {
 	for _, c := range f.runs {
-		if strings.Contains(c, sub) {
+		if strings.Contains(unwrapPosix(c), sub) {
 			return true
 		}
 	}
@@ -127,7 +142,7 @@ func TestRun_HappyPath_PushDepositLaunchPoll(t *testing.T) {
 		!fc.ran("agent.pid") || !fc.ran("if test -f ") || !fc.ran("rm -f ") {
 		t.Fatalf("missing a step in the sequence: %v", fc.runs)
 	}
-	if len(fc.starts) != 1 || !strings.Contains(fc.starts[0], "__agent-resident") {
+	if len(fc.starts) != 1 || !strings.Contains(unwrapPosix(fc.starts[0]), "__agent-resident") {
 		t.Fatalf("a dead agent must be launched once: %v", fc.starts)
 	}
 }
@@ -311,8 +326,18 @@ func TestRun_AllCommandsPosixWrapped(t *testing.T) {
 		t.Fatal("no commands were sent")
 	}
 	for _, cmd := range sent {
-		if !strings.HasPrefix(cmd, "sh -c '") {
+		piped := strings.HasPrefix(cmd, "echo ") && strings.HasSuffix(cmd, " | base64 -d | sh")
+		quoted := strings.HasPrefix(cmd, "sh -c '") && strings.HasSuffix(cmd, "'")
+		if !piped && !quoted {
 			t.Fatalf("transport command not POSIX-wrapped (#241): %q", cmd)
+		}
+		// Whichever form, the login shell reads this before `sh` exists, so it must have
+		// nothing to reinterpret — no escape sequence above all, which is what #439 was.
+		if strings.Contains(cmd, `\`) {
+			t.Fatalf("wrapped command carries a backslash for the login shell to read: %q", cmd)
+		}
+		if quoted && strings.Count(cmd, "'") != 2 {
+			t.Fatalf("the quoted form is only safe with no quote of its own (#439): %q", cmd)
 		}
 	}
 }
@@ -339,7 +364,7 @@ func TestSSH_BridgeCommandAndServing(t *testing.T) {
 	if len(fc.duplexes) != 1 {
 		t.Fatalf("exactly one bridge session expected: %v", fc.duplexes)
 	}
-	cmd := fc.duplexes[0]
+	cmd := unwrapPosix(fc.duplexes[0])
 	if !strings.Contains(cmd, "/tmp/shellf-agent-abc __bridge") {
 		t.Fatalf("the bridge must run the pushed binary, not a path in the workdir: %q", cmd)
 	}
