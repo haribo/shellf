@@ -70,6 +70,34 @@ def write(path: str, content: str) {
     observe {
         return state(synced: shell { test -f "$path" && printf '%s' "$content" | cmp -s - "$path" }.exit == 0)
     }
+    # What `--dry-run` was not saying: `would.written` answers "this file will change", not
+    # "here is what changes" — and for an sshd drop-in the difference is whether you are
+    # about to lock yourself out (#440). Runs only when the destination has drifted: the
+    # `preview` phase is reached on the `would` path alone (ADR-0029).
+    #
+    # Computed on the target, where both sides already are: the content is this def's own
+    # parameter and the file is under its nose, so nothing extra crosses the channel.
+    # `diff` is `Essential: yes` on Debian — verified, not assumed.
+    #
+    # Secrets are handled the way the rest of the output already handles them: by value,
+    # masked as `***` wherever they appear (ADR-0018), preview text included. Suppressing
+    # the diff instead was considered and dropped — it would only have hidden what the
+    # masking already hides, while a secret written into a template by hand is invisible to
+    # either mechanism, and is the author's to keep out.
+    preview {
+        shell {
+            if [ ! -f "$path" ]; then
+                printf 'new file, %s line(s)\n' "$(printf '%s' "$content" | grep -c '')"
+            else
+                # `tail -n +3` drops diff's own `---`/`+++` header: it names the target and
+                # `-` for stdin, which says nothing the instruction line has not said.
+                d=$(printf '%s' "$content" | diff -u "$path" - | tail -n +3)
+                total=$(printf '%s' "$d" | grep -c '')
+                printf '%s\n' "$d" | head -40
+                if [ "$total" -gt 40 ]; then printf '… %s more line(s)\n' "$((total - 40))"; fi
+            fi
+        }
+    }
     apply {
         r = shell {
             staged="$path.shellf.$$"
