@@ -372,12 +372,19 @@ func agentErr(label string, err error) proto.StepResult {
 		Shell: &engine.ShellResult{Exit: 1, Stderr: err.Error()}}
 }
 
+// dispatch is the last resort, after a user def and a stdlib def (see runInstruction):
+// the instructions still written in Go rather than in shellf.
+//
+// One is left. `file.copy` and `file.put` sat here unreachable — `file.copy` became a
+// stdlib def, which resolves first, and `file.put` stopped being callable at all when
+// #335 removed the control-side expansion of `dir.copy` that emitted it. Neither had run
+// in months, and `file.copy`'s dead Go implementation carried a working `diff -u` while
+// #440 wrote one from scratch two files away (#445).
+//
+// A `shell` in a *def* does not come through here: the evaluator calls the executor
+// directly (internal/lang/eval.go). This is the path for a `shell { … }` written in a plan.
 func dispatch(step proto.Step) (engine.Instruction, error) {
 	switch step.Instruction {
-	case "file.copy":
-		return engine.FileCopy{Src: step.Args["src"], Dst: step.Args["dst"]}, nil
-	case "file.put":
-		return engine.FilePut{Path: step.Args["path"], Content: step.Args["content"]}, nil
 	case "shell":
 		return engine.Shell{Cmd: step.Args["cmd"], Unless: step.Args["unless"], Env: engine.Env(step.Env)}, nil
 	default:
