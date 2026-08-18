@@ -36,6 +36,12 @@ func EvalDefWith(def Def, args, with map[string]string, ex engine.Executor, mode
 func EvalDefFull(def Def, args, with map[string]string, control []string, ex engine.Executor, mode engine.Mode, resolve DefResolver, stack []string, fetch ControlFetcher, sync TreeSyncer, preview TreePreviewer) (res engine.Result, err error) {
 	defer func() {
 		if r := recover(); r != nil {
+			if ce, ok := r.(calleeErr); ok {
+				// A verdict, not a failure of this evaluation: it travels up as the
+				// caller's own result, keeping its category and tag (#441).
+				res, err = ce.res, nil
+				return
+			}
 			if ee, ok := r.(evalErr); ok {
 				err = ee.err
 				return
@@ -201,6 +207,17 @@ type Bytes []byte
 type value interface{} // string | int | bool | Bytes | engine.ShellResult | engine.Result
 
 type evalErr struct{ err error }
+
+// calleeErr stops the caller the way an `err` from a callee must — the caller does not
+// continue past a failed call — while carrying the callee's **verdict** rather than a
+// message about it.
+//
+// It used to be an evaluation failure (`ev.fail`), which surfaces as `err.agent`: the
+// category that means the agent could not be reached or could not run. So a def one call
+// deep over `sshd.config` reported `err.agent` for an invalid directive, an operator could
+// not tell a bad config from a dropped connection, and `if x == err.validation` — which
+// language.md documents — could never match (#441).
+type calleeErr struct{ res engine.Result }
 
 type evaluator struct {
 	ex   engine.Executor
@@ -589,7 +606,10 @@ func (ev *evaluator) evalCall(c Call) value {
 		ev.acted = true
 	}
 	if res.Category == engine.ERR {
-		ev.fail("%s returned %s", c.Name, res.String())
+		// The callee's verdict, unchanged: `err.validation` stays `err.validation` at
+		// every level (#441). The caller still stops here — a call that failed is not a
+		// step to continue past.
+		panic(calleeErr{res})
 	}
 	ev.last = res
 	return res

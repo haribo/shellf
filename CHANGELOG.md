@@ -12,6 +12,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A def calling another keeps the error it propagates: `err.validation` stays `err.validation` instead of becoming `err.agent`, which means the agent could not run. Branching on a specific error, which `language.md` documents, now works one call deep (#441).
 - A host whose login shell is not POSIX is reachable again. v0.5.0 escaped the transport's commands with a POSIX-sh quoting idiom, read by the login shell before `sh` exists, so nushell hosts died at the first probe (#439).
 
 ## [0.5.0] - 2026-08-17
