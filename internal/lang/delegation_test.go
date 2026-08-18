@@ -146,3 +146,69 @@ func (f *delegFake) Shell(script string, _ engine.Env) engine.ShellResult {
 	}
 	return engine.ShellResult{Exit: 0}
 }
+
+// #441: a def that calls another loses the category of the error it propagates. Observed
+// on v0.5.0, a one-line bridge def over `sshd.config` with an invalid directive:
+//
+//	hosting.sshd-drop-in(…) err.agent
+//	    ! sshd.config returned err.validation
+//
+// The note is right and the top line is not. `err.agent` means the agent could not be
+// reached or could not run — the operator cannot tell a broken config from a broken
+// connection — and `if x == err.validation`, which language.md documents, can never match
+// one call deep.
+func TestDelegation_KeepsTheCalleeErrorCategory(t *testing.T) {
+	src := `
+def inner(p: str) { apply { return err.validation } }
+def outer(p: str) { apply { inner(p) return ok.done } }
+`
+	defs, err := ParseDefs(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]Def{}
+	for _, d := range defs {
+		byName[d.Name] = d
+	}
+	resolve := func(n string) (Def, bool) { d, ok := byName[n]; return d, ok }
+
+	res, err := EvalDefFull(byName["outer"], map[string]string{"p": "x"}, nil, nil,
+		noopExec{}, engine.Apply, resolve, []string{"outer"}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("a callee's err is a verdict, not an evaluation failure: %v", err)
+	}
+	if got := res.String(); got != "err.validation" {
+		t.Fatalf("the caller must report what the callee returned, got %s", got)
+	}
+}
+
+// The other half of #441, and the reason the fix is narrow: `err.agent` must keep meaning
+// "the agent could not run this". An evaluation failure inside a callee — an unbound
+// variable, a missing channel — is still that, and must not borrow the callee's category
+// machinery just because it happened one call deep.
+func TestDelegation_EvaluationFailureIsStillAnAgentError(t *testing.T) {
+	src := `
+def inner(p: str) { apply { x = ~file.read(p) return ok.done } }
+def outer(p: str) { apply { inner(p) return ok.done } }
+`
+	defs, err := ParseDefs(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]Def{}
+	for _, d := range defs {
+		byName[d.Name] = d
+	}
+	resolve := func(n string) (Def, bool) { d, ok := byName[n]; return d, ok }
+
+	// No fetcher: the primitive cannot reach the control host, which is a failure of the
+	// run rather than a verdict the def chose.
+	_, err = EvalDefFull(byName["outer"], map[string]string{"p": "c.j2"}, nil, []string{"p"},
+		noopExec{}, engine.Apply, resolve, []string{"outer"}, nil, nil, nil)
+	if err == nil {
+		t.Fatal("an evaluation failure must stay an error, not become a verdict")
+	}
+	if !strings.Contains(err.Error(), "control host") {
+		t.Fatalf("the failure must keep saying what broke: %v", err)
+	}
+}
