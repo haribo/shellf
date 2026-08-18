@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `--dry-run` shows a unified diff of what changes in a file, under the instruction line, instead of only `would.written`. A new destination reports its line count, a long diff is cut at 40 lines, and secrets stay masked by value (#440).
+
 ### Changed
 
 - `main` is the repository's default branch, so a visitor lands on what ships rather than on integration (ADR-0047). CI now refuses a PR into `main` from anything but `develop`, since `gh pr create` without `--base` targets the default (#436).

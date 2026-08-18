@@ -42,6 +42,25 @@ A `def` declares phases; a run picks a mode. Which phases a mode runs (ADR-0035)
 state; equal to the desired one means the apply is skipped. `preview` describes what the
 apply would do and runs only in `--dry-run`. `apply` acts.
 
+**What a preview shows for a file.** `file.write` — and so `file.template`, which
+delegates to it — prints a unified diff of the lines that change, under the instruction:
+
+```
+file.template(dst=/etc/ssh/sshd_config.d/99-hardening.conf, src=hardening.conf) would.written
+    preview ▸ @@ -1,3 +1,3 @@
+    preview ▸ -MaxAuthTries 6
+    preview ▸ +MaxAuthTries 4
+    preview ▸  PermitRootLogin no
+```
+
+A destination that does not exist yet reports `new file, N line(s)` rather than dumping
+its content, and a diff longer than 40 lines is cut with `… N more line(s)`. A converged
+file prints nothing: the phase is only reached when something would change.
+
+Secrets are masked by value, in the diff as everywhere else (ADR-0018) — a value passed
+with `--secret-file` appears as `***`. A secret typed into a template by hand is not known
+to shellf and is not masked; that has always been true of anything the run prints.
+
 **The exception (ADR-0041).** A def with no `observe` whose `apply` contains only
 primitives, control flow and `return` *is* evaluated in `--dry-run` — every primitive is
 inert there, so nothing can happen. The verdict then comes from what the primitives found:
