@@ -27,8 +27,9 @@ workdir and its own binary and exits, leaving nothing behind.
 > `service.ensure`, `dir.ensure`, `file.*`, `ufw.*`, `docker.*`, …) written as shellf
 > `def`s, plus a raw **`shell`** form; you write the plan and inventory. Instruction
 > libraries can be shared: a local package by path, or a remote module pinned by tag in
-> `shellf.lock`. Cross-distro and cross-arch agents are not there yet. Debian/systemd
-> targets, `linux/amd64` control host.
+> `shellf.lock`. Targets `linux/amd64` and `linux/arm64` — a release binary carries both
+> agents and pushes the one the target runs (ADR-0048). Cross-distro agents are not there
+> yet: Debian/systemd targets.
 
 ## Install
 
