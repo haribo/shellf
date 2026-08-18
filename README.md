@@ -8,7 +8,7 @@
 <p align="center"><em>Raw shell, but idempotent, previewable, and fast.</em></p>
 
 <p align="center">
-  <a href="https://github.com/haribo/shellf/actions/workflows/ci.yaml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/haribo/shellf/ci.yaml?branch=develop&label=CI"></a>
+  <a href="https://github.com/haribo/shellf/actions/workflows/ci.yaml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/haribo/shellf/ci.yaml?branch=main&label=CI"></a>
   <img alt="Go" src="https://img.shields.io/github/go-mod/go-version/haribo/shellf">
   <img alt="status" src="https://img.shields.io/badge/status-experimental-e0a000">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-blue"></a>

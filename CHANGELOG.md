@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- `main` is the repository's default branch, so a visitor lands on what ships rather than on integration (ADR-0047). CI now refuses a PR into `main` from anything but `develop`, since `gh pr create` without `--base` targets the default (#436).
+
 ## [0.5.0] - 2026-08-17
 
 ### Added
