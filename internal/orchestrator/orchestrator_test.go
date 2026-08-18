@@ -127,3 +127,84 @@ func TestRun_ResolvesVarsPerHost(t *testing.T) {
 
 // ADR-0024: a template renders per host, over that host's env — each host's
 // request carries its own file-write, and no `file.template` reaches the wire.
+
+// A block naming a target the inventory does not define is an error, not an empty
+// report. It used to expand to no host, produce a block with no outcome, and let the
+// run exit 0 — a typo in a group name was a deployment that never happened, reported
+// as a success (#451).
+func TestRun_UnknownTargetIsAnError(t *testing.T) {
+	inv := inventory.Inventory{
+		Hosts:  map[string]inventory.Host{"h1": {Address: "1"}},
+		Groups: map[string][]string{"web": {"h1"}},
+	}
+	dial := func(string) transport.Transport {
+		t.Fatal("an unknown target must be refused before any dial")
+		return nil
+	}
+	plan := Plan{{Target: "wbe", Steps: []proto.Step{{Instruction: "apt.install"}}}}
+
+	reports := Run(plan, inv, "/bin/agent", "apply", dial, nil, nil, nil)
+
+	if len(reports) != 1 {
+		t.Fatalf("want 1 block report, got %d", len(reports))
+	}
+	if reports[0].Err == nil {
+		t.Fatal("an unknown target must carry a block error")
+	}
+	if !strings.Contains(reports[0].Err.Error(), "wbe") {
+		t.Fatalf("the error must name the target: %v", reports[0].Err)
+	}
+	var ue *UnknownTargetError
+	if !errors.As(reports[0].Err, &ue) {
+		t.Fatalf("the error must be typed, so the CLI can tell it from a transport failure: %T", reports[0].Err)
+	}
+}
+
+// A group declared with no members is not a typo — it is a legitimate no-op, and it
+// stays a success. What it must not do is look identical to work having happened
+// (#451).
+func TestRun_DeclaredEmptyGroupIsNotAnError(t *testing.T) {
+	inv := inventory.Inventory{
+		Hosts:  map[string]inventory.Host{"h1": {Address: "1"}},
+		Groups: map[string][]string{"spare": {}},
+	}
+	dial := func(string) transport.Transport {
+		t.Fatal("an empty group must dial nothing")
+		return nil
+	}
+	plan := Plan{{Target: "spare", Steps: []proto.Step{{Instruction: "apt.install"}}}}
+
+	reports := Run(plan, inv, "/bin/agent", "apply", dial, nil, nil, nil)
+
+	if len(reports) != 1 || reports[0].Err != nil {
+		t.Fatalf("a declared empty group must not error: %+v", reports)
+	}
+	if len(reports[0].Hosts) != 0 {
+		t.Fatalf("and it touches no host: %+v", reports[0].Hosts)
+	}
+}
+
+// A host that died in an earlier block leaves its group empty. That is not an unknown
+// target, and must not be reported as one — the target existed, its hosts are gone.
+func TestRun_GroupEmptiedByDeadHostsIsNotUnknown(t *testing.T) {
+	inv := inventory.Inventory{
+		Hosts:  map[string]inventory.Host{"h1": {Address: "1"}},
+		Groups: map[string][]string{"all": {"h1"}},
+	}
+	dial := func(string) transport.Transport {
+		return fakeTr{resp: proto.Response{Results: []proto.StepResult{{Category: "err", Tag: "runtime"}}}}
+	}
+	plan := Plan{
+		{Target: "all", Steps: []proto.Step{{Instruction: "apt.install"}}},
+		{Target: "all", Steps: []proto.Step{{Instruction: "apt.install"}}},
+	}
+
+	reports := Run(plan, inv, "/bin/agent", "apply", dial, nil, nil, nil)
+
+	if len(reports) != 2 {
+		t.Fatalf("want 2 block reports, got %d", len(reports))
+	}
+	if reports[1].Err != nil {
+		t.Fatalf("a group emptied by dead hosts is not an unknown target: %v", reports[1].Err)
+	}
+}

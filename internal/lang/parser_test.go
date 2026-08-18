@@ -23,7 +23,7 @@ group all = [web1, db1]
 	if !ok || h.Address != "10.0.0.9" || h.User != "root" || h.Port != "22" {
 		t.Fatalf("resolve db1: %+v (ok=%v)", h, ok)
 	}
-	if got := inv.Members("all"); len(got) != 2 || got[0] != "web1" || got[1] != "db1" {
+	if got, _ := inv.Members("all"); len(got) != 2 || got[0] != "web1" || got[1] != "db1" {
 		t.Fatalf("group all: %v", got)
 	}
 }
