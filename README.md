@@ -11,6 +11,7 @@
   <a href="https://github.com/haribo/shellf/actions/workflows/ci.yaml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/haribo/shellf/ci.yaml?branch=main&label=CI"></a>
   <img alt="Go" src="https://img.shields.io/github/go-mod/go-version/haribo/shellf">
   <img alt="status" src="https://img.shields.io/badge/status-experimental-e0a000">
+  <a href="https://github.com/haribo/shellf/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/haribo/shellf?label=release"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-blue"></a>
 </p>
 
@@ -22,7 +23,7 @@ evaluates the plan **on the target**. The pushed agent stays **resident** betwee
 a second run costs no round trip; after an inactivity TTL (default 2h) it removes its
 workdir and its own binary and exits, leaving nothing behind.
 
-> Status: experimental (0.4.0). Ships a **stdlib of instructions** (`apt.install`,
+> Status: experimental. Ships a **stdlib of instructions** (`apt.install`,
 > `service.ensure`, `dir.ensure`, `file.*`, `ufw.*`, `docker.*`, …) written as shellf
 > `def`s, plus a raw **`shell`** form; you write the plan and inventory. Instruction
 > libraries can be shared: a local package by path, or a remote module pinned by tag in

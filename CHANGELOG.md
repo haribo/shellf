@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- The README no longer names a version in its prose — it announced 0.4.0 while 0.6.0 shipped. A release badge carries it instead, so it cannot go stale (#452).
+
 ## [0.6.0] - 2026-08-18
 
 ### Added
