@@ -208,3 +208,114 @@ func TestRun_GroupEmptiedByDeadHostsIsNotUnknown(t *testing.T) {
 		t.Fatalf("a group emptied by dead hosts is not an unknown target: %v", reports[1].Err)
 	}
 }
+
+// `--limit` narrows a run to a subset of what the plan targets, which is the ordinary
+// first move before a real deployment: try it on one host, look, then let it loose (#460).
+func TestRun_LimitNarrowsToASubset(t *testing.T) {
+	inv := inventory.Inventory{
+		Hosts:  map[string]inventory.Host{"h1": {Address: "1"}, "h2": {Address: "2"}, "h3": {Address: "3"}},
+		Groups: map[string][]string{"web": {"h1", "h2", "h3"}},
+	}
+	var mu sync.Mutex
+	var dialled []string
+	dial := func(alias string) transport.Transport {
+		mu.Lock()
+		dialled = append(dialled, alias)
+		mu.Unlock()
+		return fakeTr{resp: proto.Response{Results: []proto.StepResult{{Category: "ok", Tag: "done"}}}}
+	}
+	plan := Plan{{Target: "web", Steps: []proto.Step{{Instruction: "apt.install"}}}}
+
+	Run(plan, inv, "/bin/agent", "apply", dial, nil, nil, nil, Options{Limit: []string{"h2"}})
+
+	// Asserted on the dial, not on the report: what matters is which hosts were touched.
+	if len(dialled) != 1 || dialled[0] != "h2" {
+		t.Fatalf("only the limited host may be dialled, got %v", dialled)
+	}
+}
+
+// A limit can only narrow. A plan is the authority on what it touches; a flag that could
+// add a host would make the plan a suggestion.
+func TestRun_LimitCannotExtendBeyondThePlan(t *testing.T) {
+	inv := inventory.Inventory{
+		Hosts:  map[string]inventory.Host{"h1": {Address: "1"}, "other": {Address: "9"}},
+		Groups: map[string][]string{"web": {"h1"}},
+	}
+	dial := func(alias string) transport.Transport {
+		if alias == "other" {
+			t.Fatal("a host outside the plan's target must never be dialled")
+		}
+		return fakeTr{resp: proto.Response{Results: []proto.StepResult{{Category: "ok"}}}}
+	}
+	plan := Plan{{Target: "web", Steps: []proto.Step{{Instruction: "apt.install"}}}}
+
+	reports := Run(plan, inv, "/bin/agent", "apply", dial, nil, nil, nil, Options{Limit: []string{"other"}})
+
+	// Intersecting to nothing is #451 arriving through another door: the operator asked
+	// for work on a subset and must not get a green run that touched nobody.
+	if len(reports) != 1 || reports[0].Err == nil {
+		t.Fatalf("a limit that selects nothing must error: %+v", reports)
+	}
+	var el *EmptyLimitError
+	if !errors.As(reports[0].Err, &el) {
+		t.Fatalf("the error must be typed so the CLI can tell it apart: %T", reports[0].Err)
+	}
+}
+
+// A name the inventory does not declare is refused before any connection, exactly as a
+// plan's own target is (#451).
+func TestRun_LimitOnAnUndeclaredNameIsRefused(t *testing.T) {
+	inv := inventory.Inventory{
+		Hosts:  map[string]inventory.Host{"h1": {Address: "1"}},
+		Groups: map[string][]string{"web": {"h1"}},
+	}
+	dial := func(string) transport.Transport {
+		t.Fatal("an undeclared limit must be refused before any dial")
+		return nil
+	}
+	plan := Plan{{Target: "web", Steps: []proto.Step{{Instruction: "apt.install"}}}}
+
+	reports := Run(plan, inv, "/bin/agent", "apply", dial, nil, nil, nil, Options{Limit: []string{"wbe"}})
+
+	if len(reports) != 1 || reports[0].Err == nil {
+		t.Fatalf("an undeclared limit must be refused: %+v", reports)
+	}
+	if !strings.Contains(reports[0].Err.Error(), "wbe") {
+		t.Fatalf("the error must name it: %v", reports[0].Err)
+	}
+	// And it must say the name came from the flag: "unknown target" alone sends the
+	// operator hunting through the plan for a typo that is in their command line.
+	if !strings.Contains(reports[0].Err.Error(), "--limit") {
+		t.Fatalf("the error must name the flag: %v", reports[0].Err)
+	}
+	var ut *UnknownTargetError
+	if !errors.As(reports[0].Err, &ut) {
+		t.Fatalf("and stay typed through the wrap: %T", reports[0].Err)
+	}
+}
+
+// A limit may name a group, in the same vocabulary a plan's `on` uses.
+func TestRun_LimitAcceptsAGroup(t *testing.T) {
+	inv := inventory.Inventory{
+		Hosts: map[string]inventory.Host{"h1": {Address: "1"}, "h2": {Address: "2"}, "h3": {Address: "3"}},
+		Groups: map[string][]string{
+			"all":    {"h1", "h2", "h3"},
+			"canary": {"h2"},
+		},
+	}
+	var mu sync.Mutex
+	var dialled []string
+	dial := func(alias string) transport.Transport {
+		mu.Lock()
+		dialled = append(dialled, alias)
+		mu.Unlock()
+		return fakeTr{resp: proto.Response{Results: []proto.StepResult{{Category: "ok"}}}}
+	}
+	plan := Plan{{Target: "all", Steps: []proto.Step{{Instruction: "apt.install"}}}}
+
+	Run(plan, inv, "/bin/agent", "apply", dial, nil, nil, nil, Options{Limit: []string{"canary"}})
+
+	if len(dialled) != 1 || dialled[0] != "h2" {
+		t.Fatalf("a group limit must expand like any target, got %v", dialled)
+	}
+}

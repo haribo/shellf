@@ -29,6 +29,11 @@ type Plan []Block
 type Options struct {
 	// Parallel caps how many hosts a block dials at once. 0 takes fleet's default.
 	Parallel int
+
+	// Limit narrows the run to these host aliases or group names. Empty means "the whole
+	// plan". It can only ever *narrow*: a plan is the authority on what it touches, and a
+	// flag able to add a host would make the plan a suggestion (#460).
+	Limit []string
 }
 
 // HostOutcome is one host's result for one block.
@@ -44,6 +49,19 @@ type BlockReport struct {
 	Target string
 	Hosts  []HostOutcome
 	Err    error
+}
+
+// EmptyLimitError says a --limit selected nothing within a block's target. It is an error
+// rather than an empty run for the reason #451 exists: the operator asked for work on a
+// subset, and a green run that touched nobody reads exactly like one that converged.
+type EmptyLimitError struct {
+	Target string
+	Limit  []string
+}
+
+func (e *EmptyLimitError) Error() string {
+	return fmt.Sprintf("--limit %s selects no host within target %q",
+		strings.Join(e.Limit, ","), e.Target)
 }
 
 // UnknownTargetError names a target no host and no group in the inventory declares.
@@ -69,6 +87,13 @@ func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.D
 		return bad
 	}
 
+	// The limit is resolved once, before any connection: a name nobody declared is a typo
+	// in a flag, knowable without dialling, and it must not silently mean "no host" (#451).
+	allowed, err := resolveLimit(opt.Limit, inv)
+	if err != nil {
+		return []BlockReport{{Target: plan[0].Target, Err: err}}
+	}
+
 	dead := map[string]bool{}
 	var reports []BlockReport
 
@@ -76,9 +101,22 @@ func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.D
 		members, _ := inv.Members(block.Target) // known: checked above
 		var live []string
 		for _, alias := range members {
+			if allowed != nil && !allowed[alias] {
+				continue // outside --limit: intersect, never extend
+			}
 			if !dead[alias] {
 				live = append(live, alias)
 			}
+		}
+		// A limit that meets none of this block's hosts is refused, and refused per block:
+		// `--limit web1` against a plan whose second block targets the database tier is a
+		// mistake worth naming, not a block to skip in silence.
+		if allowed != nil && len(members) > 0 && !intersects(members, allowed) {
+			reports = append(reports, BlockReport{
+				Target: block.Target,
+				Err:    &EmptyLimitError{Target: block.Target, Limit: opt.Limit},
+			})
+			continue
 		}
 
 		// One `on` = one interpreter (ADR-0012): unannotated shells need every
@@ -119,6 +157,39 @@ func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.D
 		reports = append(reports, report)
 	}
 	return reports
+}
+
+// resolveLimit expands every --limit entry to the aliases it names. A nil result means no
+// limit was given, which is different from an empty one — the second cannot happen, since
+// an entry naming nothing is refused here.
+func resolveLimit(limit []string, inv inventory.Inventory) (map[string]bool, error) {
+	if len(limit) == 0 {
+		return nil, nil
+	}
+	allowed := map[string]bool{}
+	for _, name := range limit {
+		members, known := inv.Members(name)
+		if !known {
+			// Wrapped so the message says where the name came from. Unwrapped, it read
+			// "unknown target", which sends the operator hunting through the plan for a
+			// typo that is in their flag.
+			return nil, fmt.Errorf("--limit: %w", &UnknownTargetError{Target: name})
+		}
+		for _, alias := range members {
+			allowed[alias] = true
+		}
+	}
+	return allowed, nil
+}
+
+// intersects reports whether any of members is allowed.
+func intersects(members []string, allowed map[string]bool) bool {
+	for _, alias := range members {
+		if allowed[alias] {
+			return true
+		}
+	}
+	return false
 }
 
 // unknownTargets returns a report per target the inventory does not declare, in plan
