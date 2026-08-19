@@ -11,9 +11,20 @@ import (
 	"shellf/internal/transport"
 )
 
-// maxConcurrent caps in-flight SSH sessions so a large fleet does not spawn
-// thousands of processes at once.
-const maxConcurrent = 16
+// defaultConcurrent caps in-flight SSH sessions so a large fleet does not spawn thousands
+// of processes at once. It is a default, not a law: the right number depends on the
+// control host and the link, neither of which shellf can see (#462).
+const defaultConcurrent = 16
+
+// width resolves the requested fan-out. Anything at or below zero means "unset" and takes
+// the default — never "unlimited": an empty flag value must not turn into a fork bomb
+// against somebody's fleet.
+func width(requested int) int {
+	if requested <= 0 {
+		return defaultConcurrent
+	}
+	return requested
+}
 
 // Dial builds a transport for one target (host varies; port/key are shared).
 type Dial func(target string) transport.Transport
@@ -25,14 +36,13 @@ type HostResult struct {
 	Err      error // transport/decode failure (host unreachable, etc.)
 }
 
-// Run pushes the agent to every target concurrently and returns results in the
-// same order as targets.
-// Run fans out over targets. reqFor builds the per-host Request (it may differ
-// per host once variables are resolved per host); a reqFor error marks that
-// host failed without dialing it.
-func Run(targets []string, agentBin string, reqFor func(target string) ([]byte, error), dial Dial) []HostResult {
+// Run fans out over targets and returns results in the same order. reqFor builds the
+// per-host Request (it may differ per host once variables are resolved per host); a reqFor
+// error marks that host failed without dialing it. parallel caps how many run at once; 0
+// takes the default.
+func Run(targets []string, agentBin string, reqFor func(target string) ([]byte, error), dial Dial, parallel int) []HostResult {
 	results := make([]HostResult, len(targets))
-	sem := make(chan struct{}, maxConcurrent)
+	sem := make(chan struct{}, width(parallel))
 	var wg sync.WaitGroup
 
 	for i, t := range targets {

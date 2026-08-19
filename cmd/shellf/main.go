@@ -124,6 +124,25 @@ var version = "dev"
 
 func versionLine() string { return "shellf " + version }
 
+// checkParallel refuses a fan-out width the operator typed and that cannot mean anything.
+//
+// `flag.Int` cannot tell "absent" from "explicitly 0" — both arrive as 0 — so the flag set
+// is asked which flags were actually provided. The distinction matters: an unset knob
+// takes the default, while a typed `--parallel 0` is a mistake worth naming rather than
+// absorbing. It is never read as "unlimited" (#462).
+func checkParallel(fs *flag.FlagSet, n int) {
+	provided := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "parallel" {
+			provided = true
+		}
+	})
+	if provided && n < 1 {
+		fmt.Fprintf(os.Stderr, "--parallel must be at least 1, got %d\n", n)
+		os.Exit(2)
+	}
+}
+
 // runCmd: shellf run <plan.shellf> --inventory <hosts.shellf> [--dry-run] [flags].
 func runCmd(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
@@ -140,10 +159,13 @@ func runCmd(args []string) {
 	insecure := fs.Bool("insecure", false, "skip host-key verification (dev only)")
 	knownHosts := fs.String("known-hosts", "", "known_hosts path (default ~/.ssh/known_hosts)")
 	agentTTL := fs.Duration("agent-ttl", 0, "resident agent inactivity TTL before it self-erases (0 = 2h)")
+	parallel := fs.Int("parallel", 0, "hosts dialled at once (0 = 16); 1 serialises the fan-out")
 	_ = fs.Parse(args) // flag.ExitOnError already exits on a parse error
 
 	// Before anything is read: a wrong flag must be the error the operator sees, not a
 	// missing file that happens to be reported first.
+	checkParallel(fs, *parallel)
+
 	if msg := removedFlag(*oldCheck); msg != "" {
 		fmt.Fprintln(os.Stderr, msg)
 		os.Exit(2)
@@ -203,7 +225,8 @@ func runCmd(args []string) {
 		}
 	}
 
-	printReports(orchestrator.Run(plan, inv, self, mode, dial, baseVars, setVars, defsSrc), secretValues)
+	opt := orchestrator.Options{Parallel: *parallel}
+	printReports(orchestrator.Run(plan, inv, self, mode, dial, baseVars, setVars, defsSrc, opt), secretValues)
 }
 
 // controlChannel builds the per-host control-host server (ADR-0031), or returns a
@@ -738,10 +761,13 @@ func statusCmd(args []string) {
 	invPath := fs.String("inventory", "", "inventory file (required)")
 	insecure := fs.Bool("insecure", false, "skip host-key verification (dev only)")
 	knownHosts := fs.String("known-hosts", "", "known_hosts path (default ~/.ssh/known_hosts)")
+	// `status` sweeps the fleet exactly like `run` does, so it takes the same knob.
+	parallel := fs.Int("parallel", 0, "hosts dialled at once (0 = 16); 1 serialises the fan-out")
 	var secretFiles, secretEnvs kvFlags
 	fs.Var(&secretFiles, "secret-file", "secret from a file, name=path (repeatable); redacted in output")
 	fs.Var(&secretEnvs, "secret-env", "secret from an env var, name=VAR (repeatable); redacted in output")
 	_ = fs.Parse(args)
+	checkParallel(fs, *parallel)
 
 	if fs.NArg() < 1 || *invPath == "" {
 		fmt.Fprintln(os.Stderr, "usage: shellf status --inventory <hosts.shellf> [--insecure] <plan.shellf>")
@@ -787,7 +813,7 @@ func statusCmd(args []string) {
 	}
 	// `status` refuses an unknown target like `run` does. The render stays pure — the
 	// exit code is the caller's call, so a report string keeps one job (#451).
-	reports := orchestrator.Run(plan, inv, self, "status", dial, base, secrets, defsSrc)
+	reports := orchestrator.Run(plan, inv, self, "status", dial, base, secrets, defsSrc, orchestrator.Options{Parallel: *parallel})
 	fmt.Print(redact(statusReport(reports), secretValues))
 	exitFor(anyBlockError(reports))
 }
