@@ -1,6 +1,10 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
+	"flag"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -739,5 +743,314 @@ func TestStdSignatures_ComeFromTheDefs(t *testing.T) {
 	// The neighbour that was in the same table, for the same stale reason.
 	if params, required, ok := sig("file.copy"); !ok || len(params) != 2 || required != 2 {
 		t.Fatalf("file.copy: %v %d %v", params, required, ok)
+	}
+}
+
+// The whole point of #451 is the exit code, so it is asserted here rather than on the
+// report string: the text was already empty-and-harmless, and every string assertion
+// passed while `shellf run … && echo deployed` printed `deployed`.
+func TestReportText_UnknownTargetErrorsTheRun(t *testing.T) {
+	reports := []orchestrator.BlockReport{{
+		Target: "wbe",
+		Err:    &orchestrator.UnknownTargetError{Target: "wbe"},
+	}}
+	text, anyErr := reportText(reports)
+	if !anyErr {
+		t.Fatal("an unknown target must make the run exit non-zero")
+	}
+	if !strings.Contains(text, "wbe") {
+		t.Fatalf("the report must name the target: %q", text)
+	}
+}
+
+// A group with no members is a success, and it must say so: an empty block line reads
+// exactly like a block that converged (#451).
+func TestReportText_EmptyBlockSaysSo(t *testing.T) {
+	reports := []orchestrator.BlockReport{{Target: "spare"}}
+	text, anyErr := reportText(reports)
+	if anyErr {
+		t.Fatal("an empty group is not an error")
+	}
+	if !strings.Contains(text, "no hosts") {
+		t.Fatalf("an empty block must report why it did nothing: %q", text)
+	}
+}
+
+// `--parallel 0` is the operator typing something that cannot mean anything — it is
+// refused, never read as "unlimited" (#462). An *absent* flag is a different thing and
+// takes the default, which is why the check asks the flag set what was provided rather
+// than comparing to zero.
+func TestCheckParallel(t *testing.T) {
+	parsed := func(args ...string) (*flag.FlagSet, int) {
+		fs := flag.NewFlagSet("run", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		n := fs.Int("parallel", 0, "")
+		if err := fs.Parse(args); err != nil {
+			t.Fatal(err)
+		}
+		return fs, *n
+	}
+	// Absent: takes the default, so nothing is refused here.
+	fs, n := parsed()
+	checkParallel(fs, n) // must not exit
+	fs, n = parsed("--parallel", "4")
+	checkParallel(fs, n) // must not exit
+
+	// Provided and impossible: the process must exit 2. Asserted in a subprocess, since
+	// checkParallel exits rather than returning an error.
+	if os.Getenv("SHELLF_TEST_BAD_PARALLEL") != "" {
+		fs, n := parsed("--parallel", os.Getenv("SHELLF_TEST_BAD_PARALLEL"))
+		checkParallel(fs, n)
+		return
+	}
+	for _, bad := range []string{"0", "-1"} {
+		cmd := exec.Command(os.Args[0], "-test.run=TestCheckParallel")
+		cmd.Env = append(os.Environ(), "SHELLF_TEST_BAD_PARALLEL="+bad)
+		err := cmd.Run()
+		var ee *exec.ExitError
+		if !errors.As(err, &ee) || ee.ExitCode() != 2 {
+			t.Fatalf("--parallel %s must exit 2, got %v", bad, err)
+		}
+	}
+}
+
+// A run has to be consumable by something other than a human: a CI step gating on what
+// changed, a dashboard, a script. Parsing the prose breaks the day a line is reworded
+// (#459).
+func TestReportJSON_CarriesTheSameVerdictsAsTheText(t *testing.T) {
+	reports := []orchestrator.BlockReport{{
+		Target: "web",
+		Hosts: []orchestrator.HostOutcome{
+			{Host: "app1", Response: proto.Response{
+				Results: []proto.StepResult{
+					{Label: "apt.install(nginx)", Category: "ok", Tag: "installed", Changed: true},
+					{Label: "shell(bad)", Category: "err", Tag: "runtime"},
+				},
+				Halted: true,
+			}},
+			{Host: "app2", Err: errFake("dial refused")},
+		},
+	}}
+
+	out, anyErr := reportJSON(reports)
+	_, textErr := reportText(reports)
+	if anyErr != textErr {
+		t.Fatalf("the two renderers must agree on failure: json=%v text=%v", anyErr, textErr)
+	}
+
+	var got jsonReport
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("the output must parse: %v\n%s", err, out)
+	}
+	if got.Version == 0 {
+		t.Fatal("the shape is a contract once published; it carries a version")
+	}
+	if len(got.Blocks) != 1 || got.Blocks[0].Target != "web" {
+		t.Fatalf("blocks: %+v", got.Blocks)
+	}
+	if len(got.Blocks[0].Hosts) != 2 {
+		t.Fatalf("both hosts must appear, including the unreachable one: %+v", got.Blocks[0].Hosts)
+	}
+	h := got.Blocks[0].Hosts[0]
+	if len(h.Results) != 2 || h.Results[0].Tag != "installed" || !h.Halted {
+		t.Fatalf("host detail lost: %+v", h)
+	}
+	if got.Blocks[0].Hosts[1].Error == "" {
+		t.Fatal("a host that could not be reached must carry its error")
+	}
+}
+
+// A block-level failure (#451) has no host to hang on, and must survive into the JSON —
+// otherwise a consumer sees an empty block and reads it as "nothing to do".
+func TestReportJSON_CarriesBlockErrors(t *testing.T) {
+	reports := []orchestrator.BlockReport{{
+		Target: "wbe",
+		Err:    &orchestrator.UnknownTargetError{Target: "wbe"},
+	}}
+	out, anyErr := reportJSON(reports)
+	if !anyErr {
+		t.Fatal("an unknown target must fail the run in JSON mode too")
+	}
+	var got jsonReport
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Blocks[0].Error == "" || !strings.Contains(got.Blocks[0].Error, "wbe") {
+		t.Fatalf("the block error must be named: %+v", got.Blocks[0])
+	}
+}
+
+// `--json` must not become a secret-exfiltration flag. The trap is JSON escaping: a secret
+// holding a quote or a backslash is not present verbatim in the encoded bytes, so masking
+// the rendered string is not enough on its own.
+func TestReportJSON_RedactsSecretsIncludingEscapedForms(t *testing.T) {
+	for _, secret := range []string{"pl41ntext", `qu"ote`, `back\slash`, "new\nline"} {
+		reports := []orchestrator.BlockReport{{
+			Target: "web",
+			Hosts: []orchestrator.HostOutcome{{Host: "app1", Response: proto.Response{
+				Results: []proto.StepResult{{
+					Label:    "file.write(content=" + secret + ")",
+					Category: "ok",
+					Tag:      "written",
+					Preview:  "wrote " + secret,
+				}},
+			}}},
+		}}
+		out, _ := reportJSON(reports)
+		masked := redactJSON(out, []string{secret})
+		if strings.Contains(masked, secret) {
+			t.Fatalf("the raw secret survived: %q in %s", secret, masked)
+		}
+		// And the escaped form, which is what actually sits in the encoded bytes.
+		esc, _ := json.Marshal(secret)
+		inner := string(esc[1 : len(esc)-1])
+		if strings.Contains(masked, inner) {
+			t.Fatalf("the escaped secret survived: %q in %s", inner, masked)
+		}
+		if !json.Valid([]byte(masked)) {
+			t.Fatalf("masking must keep the output parseable: %s", masked)
+		}
+	}
+}
+
+// anyBlockError is what makes `status` exit non-zero on an unknown target (#451). It had
+// no test of its own — the behaviour was only covered end to end, where a change to it
+// would surface as a puzzling exit code rather than a failing assertion.
+func TestAnyBlockError(t *testing.T) {
+	none := []orchestrator.BlockReport{
+		{Target: "web", Hosts: []orchestrator.HostOutcome{{Host: "h1"}}},
+		{Target: "db"},
+	}
+	if anyBlockError(none) {
+		t.Fatal("no block failed as a whole")
+	}
+	// A per-host failure is not a block failure: the block ran, the host did not.
+	perHost := []orchestrator.BlockReport{{
+		Target: "web",
+		Hosts:  []orchestrator.HostOutcome{{Host: "h1", Err: errFake("unreachable")}},
+	}}
+	if anyBlockError(perHost) {
+		t.Fatal("a host error is not a block error")
+	}
+	blocked := []orchestrator.BlockReport{
+		{Target: "web", Hosts: []orchestrator.HostOutcome{{Host: "h1"}}},
+		{Target: "wbe", Err: &orchestrator.UnknownTargetError{Target: "wbe"}},
+	}
+	if !anyBlockError(blocked) {
+		t.Fatal("a block that could not run must be reported")
+	}
+}
+
+// The JSON renderer must agree with the text one on the cases that decide the exit code,
+// not only on the happy path: a caught error is not a failure (ADR-0009, #356), and an
+// uncaught one is.
+func TestReportJSON_CaughtErrorIsNotAFailure(t *testing.T) {
+	caught := []orchestrator.BlockReport{{
+		Target: "web",
+		Hosts: []orchestrator.HostOutcome{{Host: "h1", Response: proto.Response{
+			Results: []proto.StepResult{{Label: "s", Category: "err", Tag: "runtime", Caught: true}},
+		}}},
+	}}
+	if _, anyErr := reportJSON(caught); anyErr {
+		t.Fatal("an error the plan handled is not a failed run")
+	}
+	uncaught := []orchestrator.BlockReport{{
+		Target: "web",
+		Hosts: []orchestrator.HostOutcome{{Host: "h1", Response: proto.Response{
+			Results: []proto.StepResult{{Label: "s", Category: "err", Tag: "runtime"}},
+		}}},
+	}}
+	if _, anyErr := reportJSON(uncaught); !anyErr {
+		t.Fatal("an uncaught error must fail the run")
+	}
+}
+
+// An empty run still produces a valid document — a consumer parses it unconditionally, so
+// "no blocks" must not mean "no JSON".
+func TestReportJSON_EmptyRunStaysValid(t *testing.T) {
+	out, anyErr := reportJSON(nil)
+	if anyErr {
+		t.Fatal("an empty run did not fail")
+	}
+	var got jsonReport
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("must still parse: %v (%s)", err, out)
+	}
+	if got.Blocks == nil {
+		t.Fatal("blocks must be an empty array, not null: a consumer iterates it")
+	}
+}
+
+// An empty secret masks nothing: it would otherwise match everywhere and turn the whole
+// document into asterisks.
+func TestRedactJSON_IgnoresEmptySecrets(t *testing.T) {
+	const doc = `{"host":"h1"}`
+	if got := redactJSON(doc, []string{""}); got != doc {
+		t.Fatalf("an empty secret must be ignored, got %q", got)
+	}
+	if got := redactJSON(doc, nil); got != doc {
+		t.Fatalf("no secrets must leave the document untouched, got %q", got)
+	}
+}
+
+// `status` renders block errors and empty blocks like `run` does (#451) — the paths that
+// only a status sweep reaches.
+func TestStatusReport_BlockErrorAndEmptyBlock(t *testing.T) {
+	text := statusReport([]orchestrator.BlockReport{
+		{Target: "wbe", Err: &orchestrator.UnknownTargetError{Target: "wbe"}},
+		{Target: "spare"},
+	})
+	if !strings.Contains(text, "wbe") {
+		t.Fatalf("the block error must be named: %q", text)
+	}
+	if !strings.Contains(text, "no hosts") {
+		t.Fatalf("an empty block must say so: %q", text)
+	}
+}
+
+// `-v` must not undo what the report masks: the tracer is where redaction happens,
+// because the CLI is what knows the run's secrets (#461).
+func TestTracer_RedactsAndStaysOffStdout(t *testing.T) {
+	if tracer(false, nil) != nil {
+		t.Fatal("without -v there must be no tracer at all")
+	}
+	tr := tracer(true, []string{"sup3rs3cret"})
+	if tr == nil {
+		t.Fatal("with -v there must be one")
+	}
+
+	// Captured from stderr, which is also the assertion that it does not use stdout.
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stderr, stdout := os.Stderr, os.Stdout
+	outR, outW, _ := os.Pipe()
+	os.Stderr, os.Stdout = w, outW
+	tr("pushing %s to %s", "sup3rs3cret", "/tmp/agent")
+	os.Stderr, os.Stdout = stderr, stdout
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := outW.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf, outBuf strings.Builder
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(&outBuf, outR); err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(buf.String(), "sup3rs3cret") {
+		t.Fatalf("the secret leaked into the trace: %q", buf.String())
+	}
+	if !strings.Contains(buf.String(), "***") {
+		t.Fatalf("it must be masked, not dropped: %q", buf.String())
+	}
+	if outBuf.String() != "" {
+		t.Fatalf("nothing may reach stdout: %q", outBuf.String())
 	}
 }

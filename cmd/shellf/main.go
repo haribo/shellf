@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -124,6 +125,34 @@ var version = "dev"
 
 func versionLine() string { return "shellf " + version }
 
+// checkParallel refuses a fan-out width the operator typed and that cannot mean anything.
+//
+// `flag.Int` cannot tell "absent" from "explicitly 0" — both arrive as 0 — so the flag set
+// is asked which flags were actually provided. The distinction matters: an unset knob
+// takes the default, while a typed `--parallel 0` is a mistake worth naming rather than
+// absorbing. It is never read as "unlimited" (#462).
+func checkParallel(fs *flag.FlagSet, n int) {
+	provided := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "parallel" {
+			provided = true
+		}
+	})
+	if provided && n < 1 {
+		fmt.Fprintf(os.Stderr, "--parallel must be at least 1, got %d\n", n)
+		os.Exit(2)
+	}
+}
+
+// multiFlag collects a repeatable string flag, in the order given.
+type multiFlag []string
+
+func (m *multiFlag) String() string { return strings.Join(*m, ",") }
+func (m *multiFlag) Set(v string) error {
+	*m = append(*m, v)
+	return nil
+}
+
 // runCmd: shellf run <plan.shellf> --inventory <hosts.shellf> [--dry-run] [flags].
 func runCmd(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
@@ -134,16 +163,23 @@ func runCmd(args []string) {
 	fs.Var(&secretFiles, "secret-file", "secret from a file, name=path (repeatable); redacted in output")
 	fs.Var(&secretEnvs, "secret-env", "secret from an env var, name=VAR (repeatable); redacted in output")
 	dryRun := fs.Bool("dry-run", false, "decide and preview without mutating")
+	asJSON := fs.Bool("json", false, "report as JSON on stdout (diagnostics stay on stderr)")
+	verbose := fs.Bool("v", false, "trace the control host's decisions on stderr (connection, agent, workdir, timing)")
 	// `--check` was the old name (ADR-0035). Accepting it silently would keep two
 	// spellings alive; this only exists to say what to type instead.
 	oldCheck := fs.Bool("check", false, "")
 	insecure := fs.Bool("insecure", false, "skip host-key verification (dev only)")
 	knownHosts := fs.String("known-hosts", "", "known_hosts path (default ~/.ssh/known_hosts)")
 	agentTTL := fs.Duration("agent-ttl", 0, "resident agent inactivity TTL before it self-erases (0 = 2h)")
+	parallel := fs.Int("parallel", 0, "hosts dialled at once (0 = 16); 1 serialises the fan-out")
+	var limits multiFlag
+	fs.Var(&limits, "limit", "restrict the run to a host or group (repeatable); narrows the plan, never extends it")
 	_ = fs.Parse(args) // flag.ExitOnError already exits on a parse error
 
 	// Before anything is read: a wrong flag must be the error the operator sees, not a
 	// missing file that happens to be reported first.
+	checkParallel(fs, *parallel)
+
 	if msg := removedFlag(*oldCheck); msg != "" {
 		fmt.Fprintln(os.Stderr, msg)
 		os.Exit(2)
@@ -199,11 +235,13 @@ func runCmd(args []string) {
 		return transport.SSH{
 			User: h.User, Host: h.Address, Port: h.Port, Key: h.Key,
 			KnownHosts: *knownHosts, Insecure: *insecure, AgentTTL: *agentTTL,
+			Trace:   tracer(*verbose, secretValues),
 			Channel: channelFor(alias), // nil when the plan asks nothing: no bridge
 		}
 	}
 
-	printReports(orchestrator.Run(plan, inv, self, mode, dial, baseVars, setVars, defsSrc), secretValues)
+	opt := orchestrator.Options{Parallel: *parallel, Limit: limits}
+	printReports(orchestrator.Run(plan, inv, self, mode, dial, baseVars, setVars, defsSrc, opt), secretValues, *asJSON)
 }
 
 // controlChannel builds the per-host control-host server (ADR-0031), or returns a
@@ -454,12 +492,6 @@ func shellfSources(dir string) ([]string, error) {
 	return srcs, nil
 }
 
-// packageLibs reads every sibling `*.shellf` file in the plan's directory (the
-// package), excluding the plan file itself and the inventory file. It also reads one
-// level of subdirectories: each is a sub-package, and its files are keyed `<dir>/<file>`
-// so the parser qualifies their defs as `<dir>.<def>` (ADR-0033). Two levels down is an
-// error, not a silent skip — a skipped directory is how an override fails to apply
-// while the plan reports success.
 // packageLibs reads every def package under `<root>/defs/` (ADR-0038 §2). Each
 // `defs/<name>/` is one package, and its files are keyed `<name>/<file>` — the same key
 // shape ADR-0033 already uses for sub-packages, so the parser qualifies the defs
@@ -551,6 +583,12 @@ func loadInventory(invPath string) (inventory.Inventory, error) {
 	}
 	inv, err := lang.ParseInventory(string(src))
 	if err != nil {
+		return inventory.Inventory{}, fmt.Errorf("%s: %v", invPath, err)
+	}
+	// Structural faults are caught here, once, before any plan is parsed or any host
+	// dialled — a group member no host declares used to surface as an SSH handshake
+	// failure against an empty address (#451).
+	if err := inv.Validate(); err != nil {
 		return inventory.Inventory{}, fmt.Errorf("%s: %v", invPath, err)
 	}
 	return inv, nil
@@ -657,6 +695,21 @@ func redact(s string, secrets []string) string {
 	return s
 }
 
+// tracer builds the transport's diagnostic callback, or nil when `-v` was not given.
+//
+// Masking happens here rather than in the transport: the CLI is what knows the run's
+// secrets. A diagnostic channel that prints what the report masks would be worse than no
+// diagnostic channel at all (#461). stderr, so a report on stdout stays parseable —
+// including under `--json`.
+func tracer(on bool, secrets []string) func(string, ...any) {
+	if !on {
+		return nil
+	}
+	return func(format string, a ...any) {
+		fmt.Fprintln(os.Stderr, "· "+redact(fmt.Sprintf(format, a...), secrets))
+	}
+}
+
 // cleanCmd: shellf clean --inventory <hosts.shellf> [target...]. Kills resident
 // agents and removes shellf's /tmp files on each target (all hosts if no target).
 func cleanCmd(args []string) {
@@ -669,14 +722,12 @@ func cleanCmd(args []string) {
 		fmt.Fprintln(os.Stderr, "usage: shellf clean --inventory <hosts.shellf> [--insecure] [target...]")
 		os.Exit(2)
 	}
-	invSrc, err := os.ReadFile(*invPath)
+	// Through loadInventory like every other command, rather than re-reading and
+	// re-parsing here: the duplicate path was one Validate call short, so `clean` was
+	// the one command that still accepted a malformed inventory (#451).
+	inv, err := loadInventory(*invPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	inv, err := lang.ParseInventory(string(invSrc))
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", *invPath, err)
 		os.Exit(1)
 	}
 
@@ -687,10 +738,18 @@ func cleanCmd(args []string) {
 			targets = append(targets, name)
 		}
 	}
+	// A target nobody declared is refused here too: `shellf clean nope` used to expand
+	// to no alias, clean nothing and exit 0, which reads exactly like a target that was
+	// already clean (#451).
 	var aliases []string
 	seen := map[string]bool{}
 	for _, t := range targets {
-		for _, a := range inv.Members(t) {
+		members, known := inv.Members(t)
+		if !known {
+			fmt.Fprintf(os.Stderr, "unknown target: the inventory declares no host or group named %q\n", t)
+			os.Exit(1)
+		}
+		for _, a := range members {
 			if !seen[a] {
 				seen[a] = true
 				aliases = append(aliases, a)
@@ -726,10 +785,16 @@ func statusCmd(args []string) {
 	invPath := fs.String("inventory", "", "inventory file (required)")
 	insecure := fs.Bool("insecure", false, "skip host-key verification (dev only)")
 	knownHosts := fs.String("known-hosts", "", "known_hosts path (default ~/.ssh/known_hosts)")
+	// `status` sweeps the fleet exactly like `run` does, so it takes the same knobs.
+	parallel := fs.Int("parallel", 0, "hosts dialled at once (0 = 16); 1 serialises the fan-out")
+	var limits multiFlag
+	fs.Var(&limits, "limit", "restrict the sweep to a host or group (repeatable)")
+	asJSON := fs.Bool("json", false, "report as JSON on stdout (diagnostics stay on stderr)")
 	var secretFiles, secretEnvs kvFlags
 	fs.Var(&secretFiles, "secret-file", "secret from a file, name=path (repeatable); redacted in output")
 	fs.Var(&secretEnvs, "secret-env", "secret from an env var, name=VAR (repeatable); redacted in output")
 	_ = fs.Parse(args)
+	checkParallel(fs, *parallel)
 
 	if fs.NArg() < 1 || *invPath == "" {
 		fmt.Fprintln(os.Stderr, "usage: shellf status --inventory <hosts.shellf> [--insecure] <plan.shellf>")
@@ -773,7 +838,28 @@ func statusCmd(args []string) {
 			Channel: channelFor(alias),
 		}
 	}
-	fmt.Print(redact(statusReport(orchestrator.Run(plan, inv, self, "status", dial, base, secrets, defsSrc)), secretValues))
+	// `status` refuses an unknown target like `run` does. The render stays pure — the
+	// exit code is the caller's call, so a report string keeps one job (#451).
+	reports := orchestrator.Run(plan, inv, self, "status", dial, base, secrets, defsSrc, orchestrator.Options{Parallel: *parallel, Limit: limits})
+	if *asJSON {
+		out, _ := reportJSON(reports)
+		fmt.Print(redactJSON(out, secretValues))
+		exitFor(anyBlockError(reports))
+		return
+	}
+	fmt.Print(redact(statusReport(reports), secretValues))
+	exitFor(anyBlockError(reports))
+}
+
+// anyBlockError reports whether any block failed as a whole (an unknown target), as
+// opposed to a per-host outcome.
+func anyBlockError(reports []orchestrator.BlockReport) bool {
+	for _, blk := range reports {
+		if blk.Err != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // statusReport renders the per-host state report: one line per resource, with a
@@ -783,6 +869,15 @@ func statusReport(reports []orchestrator.BlockReport) string {
 	var b strings.Builder
 	for _, blk := range reports {
 		fmt.Fprintf(&b, "on %s:\n", blk.Target)
+		// Block error and empty block, rendered as in reportText (#451).
+		if blk.Err != nil {
+			fmt.Fprintf(&b, "  ! %v\n", blk.Err)
+			continue
+		}
+		if len(blk.Hosts) == 0 {
+			fmt.Fprintf(&b, "  (no hosts)\n")
+			continue
+		}
 		for _, h := range blk.Hosts {
 			if h.Err != nil {
 				fmt.Fprintf(&b, "  %s: unreachable (%v)\n", h.Host, h.Err)
@@ -835,10 +930,105 @@ func orDash(s string) string {
 	return s
 }
 
-func printReports(reports []orchestrator.BlockReport, secrets []string) {
+func printReports(reports []orchestrator.BlockReport, secrets []string, asJSON bool) {
+	if asJSON {
+		// stdout carries the report and nothing else, or it is not parseable. Anything
+		// diagnostic belongs on stderr.
+		out, anyErr := reportJSON(reports)
+		fmt.Print(redactJSON(out, secrets))
+		exitFor(anyErr)
+		return
+	}
 	text, anyErr := reportText(reports)
 	fmt.Print(redact(text, secrets))
 	exitFor(anyErr)
+}
+
+// jsonReport is the machine-readable shape of a run. It is a contract the moment it
+// ships, so it carries a version: a consumer can detect a change instead of discovering
+// it as a parse error in production (#459).
+type jsonReport struct {
+	Version int         `json:"version"`
+	Blocks  []jsonBlock `json:"blocks"`
+}
+
+type jsonBlock struct {
+	Target string     `json:"target"`
+	Error  string     `json:"error,omitempty"` // the block could not run at all (#451)
+	Hosts  []jsonHost `json:"hosts"`
+}
+
+type jsonHost struct {
+	Host    string             `json:"host"`
+	Error   string             `json:"error,omitempty"` // unreachable, or a resolution failure
+	Halted  bool               `json:"halted,omitempty"`
+	Results []proto.StepResult `json:"results,omitempty"`
+}
+
+// jsonVersion is bumped when the shape changes in a way a consumer would notice.
+const jsonVersion = 1
+
+// reportJSON renders the same run reportText does, as JSON, and reports whether any host
+// errored. The two must agree on that boolean: a consumer branching on the exit code and
+// a human reading the prose have to see the same run.
+func reportJSON(reports []orchestrator.BlockReport) (string, bool) {
+	out := jsonReport{Version: jsonVersion, Blocks: make([]jsonBlock, 0, len(reports))}
+	anyErr := false
+
+	for _, blk := range reports {
+		jb := jsonBlock{Target: blk.Target, Hosts: []jsonHost{}}
+		if blk.Err != nil {
+			jb.Error = blk.Err.Error()
+			anyErr = true
+			out.Blocks = append(out.Blocks, jb)
+			continue
+		}
+		for _, h := range blk.Hosts {
+			jh := jsonHost{Host: h.Host}
+			if h.Err != nil {
+				jh.Error = h.Err.Error()
+				anyErr = true
+				jb.Hosts = append(jb.Hosts, jh)
+				continue
+			}
+			jh.Results, jh.Halted = h.Response.Results, h.Response.Halted
+			for _, st := range h.Response.Results {
+				// Same rule as the text renderer: a caught error is not a failed run
+				// (ADR-0009, #356).
+				anyErr = anyErr || (st.Category == "err" && !st.Caught)
+			}
+			jb.Hosts = append(jb.Hosts, jh)
+		}
+		out.Blocks = append(out.Blocks, jb)
+	}
+
+	b, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		// Nothing here can fail to marshal — every field is a plain Go value — but a
+		// silent empty report would be worse than a loud one.
+		fmt.Fprintf(os.Stderr, "rendering the JSON report: %v\n", err)
+		os.Exit(1)
+	}
+	return string(b) + "\n", anyErr
+}
+
+// redactJSON masks secrets in encoded JSON.
+//
+// `redact` alone is not enough here, and the gap is not theoretical: JSON escapes quotes,
+// backslashes and newlines, so a secret containing any of them is simply *not present*
+// verbatim in the encoded bytes — the plain ReplaceAll walks straight past it. Each secret
+// is therefore masked in both forms, raw and as JSON would write it.
+func redactJSON(s string, secrets []string) string {
+	for _, sec := range secrets {
+		if sec == "" {
+			continue
+		}
+		s = strings.ReplaceAll(s, sec, "***")
+		if enc, err := json.Marshal(sec); err == nil && len(enc) >= 2 {
+			s = strings.ReplaceAll(s, string(enc[1:len(enc)-1]), "***")
+		}
+	}
+	return s
 }
 
 // reportText renders the run/check report and reports whether any host errored.
@@ -848,6 +1038,20 @@ func reportText(reports []orchestrator.BlockReport) (string, bool) {
 	anyErr := false
 	for _, blk := range reports {
 		fmt.Fprintf(&b, "on %s:\n", blk.Target)
+		// A block that could not run at all: no host to attach an outcome to, so the
+		// reason goes on the block. Without this the block printed its header and
+		// nothing else, and the run exited 0 (#451).
+		if blk.Err != nil {
+			fmt.Fprintf(&b, "  ! %v\n", blk.Err)
+			anyErr = true
+			continue
+		}
+		// A target that resolves to nobody is a legitimate no-op, and it says so: an
+		// empty block reads exactly like a block where everything converged.
+		if len(blk.Hosts) == 0 {
+			fmt.Fprintf(&b, "  (no hosts)\n")
+			continue
+		}
 		for _, h := range blk.Hosts {
 			if h.Err != nil {
 				var re *orchestrator.ResolveError
@@ -872,7 +1076,24 @@ func reportText(reports []orchestrator.BlockReport) (string, bool) {
 			}
 		}
 	}
+	// Every target was refused, so no block was executed. Say it: the report above is a
+	// list of names, and nothing distinguishes it from a run that did work.
+	if len(reports) > 0 && allUnknownTargets(reports) {
+		fmt.Fprintf(&b, "nothing ran: fix the target name(s) above, or the inventory\n")
+	}
 	return b.String(), anyErr
+}
+
+// allUnknownTargets reports whether every block failed on an unknown target — the shape
+// `orchestrator.Run` returns when it refuses a plan before executing it.
+func allUnknownTargets(reports []orchestrator.BlockReport) bool {
+	for _, blk := range reports {
+		var ue *orchestrator.UnknownTargetError
+		if !errors.As(blk.Err, &ue) {
+			return false
+		}
+	}
+	return true
 }
 
 func stepText(b *strings.Builder, s proto.StepResult, indent string) {

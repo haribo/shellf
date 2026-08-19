@@ -22,6 +22,20 @@ type Block struct {
 
 type Plan []Block
 
+// Options carries the run-wide knobs a caller may set. Its zero value is the behaviour
+// shellf had before any of them existed, so a caller that does not care passes
+// `Options{}` — and a new knob arrives as a field rather than as a tenth positional
+// parameter next to three consecutive maps (#462).
+type Options struct {
+	// Parallel caps how many hosts a block dials at once. 0 takes fleet's default.
+	Parallel int
+
+	// Limit narrows the run to these host aliases or group names. Empty means "the whole
+	// plan". It can only ever *narrow*: a plan is the authority on what it touches, and a
+	// flag able to add a host would make the plan a suggestion (#460).
+	Limit []string
+}
+
 // HostOutcome is one host's result for one block.
 type HostOutcome struct {
 	Host     string
@@ -29,28 +43,79 @@ type HostOutcome struct {
 	Err      error
 }
 
-// BlockReport is a block's per-host outcomes.
+// BlockReport is a block's per-host outcomes. Err is set when the block itself could
+// not run — an unknown target has no host to hang an outcome on.
 type BlockReport struct {
 	Target string
 	Hosts  []HostOutcome
+	Err    error
 }
 
-// Run executes the plan. Blocks run sequentially; each block fans out over its
-// live hosts. A host that fails (transport error or an err step) is dropped
-// from subsequent blocks.
-// Run executes the plan. baseVars (--vars + plan bindings) and setVars (--set)
-// resolve each Step's bare-identifier Refs per host, with precedence
+// EmptyLimitError says a --limit selected nothing within a block's target. It is an error
+// rather than an empty run for the reason #451 exists: the operator asked for work on a
+// subset, and a green run that touched nobody reads exactly like one that converged.
+type EmptyLimitError struct {
+	Target string
+	Limit  []string
+}
+
+func (e *EmptyLimitError) Error() string {
+	return fmt.Sprintf("--limit %s selects no host within target %q",
+		strings.Join(e.Limit, ","), e.Target)
+}
+
+// UnknownTargetError names a target no host and no group in the inventory declares.
+type UnknownTargetError struct{ Target string }
+
+func (e *UnknownTargetError) Error() string {
+	return fmt.Sprintf("unknown target: the inventory declares no host or group named %q", e.Target)
+}
+
+// Run executes the plan. Blocks run sequentially; each block fans out over its live
+// hosts, and a host that fails (transport error or an err step) is dropped from
+// subsequent blocks. baseVars (--vars + plan bindings) and setVars (--set) resolve each
+// Step's bare-identifier Refs per host, with precedence
 // base < per-host inventory var < --set.
-func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.Dial, baseVars, setVars map[string]string, defs map[string]string) []BlockReport {
+func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.Dial, baseVars, setVars map[string]string, defs map[string]string, opt Options) []BlockReport {
+	// Every target is resolved before anything runs. A name the inventory does not
+	// declare is a typo in the plan, knowable without a single connection — and a run
+	// that discovers it at block 3 has already changed the hosts of blocks 1 and 2.
+	// So the whole plan is refused, and the report names every offending target rather
+	// than the first (#451).
+	if bad := unknownTargets(plan, inv); len(bad) > 0 {
+		return bad
+	}
+
+	// The limit is resolved once, before any connection: a name nobody declared is a typo
+	// in a flag, knowable without dialling, and it must not silently mean "no host" (#451).
+	allowed, err := resolveLimit(opt.Limit, inv)
+	if err != nil {
+		return []BlockReport{{Target: plan[0].Target, Err: err}}
+	}
+
 	dead := map[string]bool{}
 	var reports []BlockReport
 
 	for _, block := range plan {
+		members, _ := inv.Members(block.Target) // known: checked above
 		var live []string
-		for _, alias := range inv.Members(block.Target) {
+		for _, alias := range members {
+			if allowed != nil && !allowed[alias] {
+				continue // outside --limit: intersect, never extend
+			}
 			if !dead[alias] {
 				live = append(live, alias)
 			}
+		}
+		// A limit that meets none of this block's hosts is refused, and refused per block:
+		// `--limit web1` against a plan whose second block targets the database tier is a
+		// mistake worth naming, not a block to skip in silence.
+		if allowed != nil && len(members) > 0 && !intersects(members, allowed) {
+			reports = append(reports, BlockReport{
+				Target: block.Target,
+				Err:    &EmptyLimitError{Target: block.Target, Limit: opt.Limit},
+			})
+			continue
 		}
 
 		// One `on` = one interpreter (ADR-0012): unannotated shells need every
@@ -79,7 +144,7 @@ func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.D
 			}
 			return json.Marshal(proto.Request{Mode: mode, Steps: steps, Defs: defs})
 		}
-		results := fleet.Run(live, agentBin, reqFor, dial)
+		results := fleet.Run(live, agentBin, reqFor, dial, opt.Parallel)
 
 		report := BlockReport{Target: block.Target}
 		for _, hr := range results {
@@ -91,6 +156,54 @@ func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.D
 		reports = append(reports, report)
 	}
 	return reports
+}
+
+// resolveLimit expands every --limit entry to the aliases it names. A nil result means no
+// limit was given, which is different from an empty one — the second cannot happen, since
+// an entry naming nothing is refused here.
+func resolveLimit(limit []string, inv inventory.Inventory) (map[string]bool, error) {
+	if len(limit) == 0 {
+		return nil, nil
+	}
+	allowed := map[string]bool{}
+	for _, name := range limit {
+		members, known := inv.Members(name)
+		if !known {
+			// Wrapped so the message says where the name came from. Unwrapped, it read
+			// "unknown target", which sends the operator hunting through the plan for a
+			// typo that is in their flag.
+			return nil, fmt.Errorf("--limit: %w", &UnknownTargetError{Target: name})
+		}
+		for _, alias := range members {
+			allowed[alias] = true
+		}
+	}
+	return allowed, nil
+}
+
+// intersects reports whether any of members is allowed.
+func intersects(members []string, allowed map[string]bool) bool {
+	for _, alias := range members {
+		if allowed[alias] {
+			return true
+		}
+	}
+	return false
+}
+
+// unknownTargets returns a report per target the inventory does not declare, in plan
+// order and once per distinct name: a plan repeating the same typo says it once.
+func unknownTargets(plan Plan, inv inventory.Inventory) []BlockReport {
+	var bad []BlockReport
+	seen := map[string]bool{}
+	for _, block := range plan {
+		if _, known := inv.Members(block.Target); known || seen[block.Target] {
+			continue
+		}
+		seen[block.Target] = true
+		bad = append(bad, BlockReport{Target: block.Target, Err: &UnknownTargetError{Target: block.Target}})
+	}
+	return bad
 }
 
 // ResolveError is a per-host variable-resolution failure (e.g. an undefined

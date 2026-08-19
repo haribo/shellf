@@ -19,6 +19,8 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
+
+	"shellf/internal/agentbin"
 )
 
 // SSH pushes (or reuses a hash-cached binary) and runs the agent over a single
@@ -36,6 +38,15 @@ type SSH struct {
 	AgentTTL    time.Duration // resident agent inactivity TTL; 0 = 2h
 	KnownHosts  string        // known_hosts path; empty = ~/.ssh/known_hosts
 	Insecure    bool          // bypass host-key verification (dev only)
+
+	// Trace, when set, receives one line per control-host decision: where it connected,
+	// which agent it pushed or reused, which workdir it chose, how long the job took.
+	// Nil — the default — costs nothing.
+	//
+	// It is a callback rather than an io.Writer because masking is the caller's job: the
+	// CLI knows the run's secrets, the transport does not, and a diagnostic channel that
+	// prints what the report masks is worse than no diagnostic channel (#461).
+	Trace func(format string, a ...any)
 
 	// Channel serves the running job's requests for control-host resources
 	// (ADR-0031). Nil — the common case — means the plan asks for nothing, and no
@@ -171,24 +182,16 @@ func (s SSH) pathID(bin []byte) string { return hashID(bin) + "-" + sanitizeUser
 
 // posix wraps a transport command so the target runs it under /bin/sh, whatever its login
 // shell is: a non-POSIX login shell cannot parse the `&&`/`$()`/`for … do` the transport
-// uses (#241). Measured while fixing #439, since the comment used to name fish beside
-// nushell: fish parses POSIX quoting happily, and plan9's `rc` mangles only some forms —
-// nushell is the one that breaks on the transport's own scripts. There is no CI target for
-// it: nushell is not packaged in Debian, and downloading it at image-build time would put
-// the harness at the mercy of a network the rest of it deliberately avoids.
+// uses (#241). nushell is the one measured to break on these scripts; no CI target covers
+// it, since it is not packaged in Debian.
 //
-// The script travels base64-encoded, and that is the whole point. It used to be embedded
-// single-quoted, with the body's own quotes escaped as `'\”` — a POSIX-sh idiom, handed to
-// the **login shell**, which reads the command line before `sh` exists. Asking the shell
-// being worked around to understand POSIX quoting is asking it to be POSIX: nushell reads
-// that sequence as string-backslash-string and the command falls apart. It never bit while
-// the transport's scripts held no quote; the agent-verification probe introduced four of
-// them, and every such host became unreachable at the first contact (#439).
-//
-// base64's alphabet is `A-Za-z0-9+/=` — nothing any shell treats as syntax — so what the
-// login shell sees has nothing to reinterpret, and `sh` receives the script byte for byte.
-// `base64 -d` is coreutils and busybox alike, alongside the `find`, `stat -c` and
-// `sha256sum` the transport already requires of a target.
+// The script travels base64-encoded, and that is the whole point. Escaping it for POSIX sh
+// does not work, because the **login shell** reads the command line before `sh` exists —
+// asking the shell being worked around to understand POSIX quoting is asking it to be
+// POSIX (#439). base64's alphabet is `A-Za-z0-9+/=`, nothing any shell treats as syntax,
+// so what the login shell sees has nothing to reinterpret and `sh` receives the script
+// byte for byte. `base64 -d` is coreutils and busybox alike, alongside the `find`,
+// `stat -c` and `sha256sum` the transport already requires of a target.
 //
 // The pipe costs stdin: `sh` inherits the decoder's, so a script reading stdin gets the
 // spent pipe instead of what the caller sent. The two commands that do read it — pushing
@@ -239,6 +242,26 @@ var jobCounter atomic.Uint64
 // newJobID is unique per job across a control run.
 func newJobID() string {
 	return fmt.Sprintf("%d-%d-%d", os.Getpid(), time.Now().UnixNano(), jobCounter.Add(1))
+}
+
+// agentFor picks the bytes to push: this binary's own when the target shares its
+// architecture, the embedded peer otherwise (ADR-0048).
+//
+// A target that cannot say what it runs keeps the behaviour it has always had — its own
+// bytes. Refusing there would break hosts that work today over a question they cannot
+// answer, and every Linux target that shellf supports has `uname`. A target that *does*
+// answer, with something this build cannot serve, is refused by name.
+func (s SSH) agentFor(cn conn, self []byte) ([]byte, error) {
+	out, err := cn.run(posix("uname -m"), nil)
+	if err != nil || len(bytes.TrimSpace(out)) == 0 {
+		return self, nil // silent target: unchanged behaviour
+	}
+	arch, err := agentbin.ArchFromUname(string(out))
+	if err != nil {
+		return nil, err
+	}
+	s.trace("%s architecture %s", s.Host, arch)
+	return agentbin.For(arch, self)
 }
 
 // --- pure command/path builders (no network; unit-tested in ssh_test.go) ---
@@ -304,19 +327,38 @@ func parseDone(stdout []byte) (out []byte, ready bool) {
 	return stdout, true
 }
 
+// trace emits one diagnostic line when the caller asked for them.
+func (s SSH) trace(format string, a ...any) {
+	if s.Trace != nil {
+		s.Trace(format, a...)
+	}
+}
+
 func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
-	bin, err := os.ReadFile(agentBin)
+	self, err := os.ReadFile(agentBin)
 	if err != nil {
 		return nil, fmt.Errorf("read agent: %w", err)
 	}
-	path, jobid := s.remotePath(bin), newJobID()
+	jobid := newJobID()
 	deadline := time.Now().Add(s.execTimeout())
 
 	// One connection: push (if not cached), ensure a resident agent, deposit the job.
+	started := time.Now()
+	s.trace("%s@%s:%s connecting", s.User, s.Host, s.port())
 	cn, err := s.dialConn()
 	if err != nil {
 		return nil, err
 	}
+	// Which bytes to push is a question about the *target*, so it cannot be answered
+	// before this connection exists (ADR-0048). Pushing our own bytes at a host of
+	// another architecture put an unrunnable binary on it and surfaced as
+	// `exec format error` from a process shellf did not write (#453).
+	bin, err := s.agentFor(cn, self)
+	if err != nil {
+		_ = cn.close()
+		return nil, fmt.Errorf("target %s: %w", s.Host, err)
+	}
+	path := s.remotePath(bin)
 	// The workdir goes on tmpfs so secret plaintext stays off disk (ADR-0025);
 	// probed on this connection since it depends on the target.
 	wd := s.workDir(workBase(cn), bin)
@@ -329,13 +371,16 @@ func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
 		_ = cn.close()
 		return nil, err
 	}
+	s.trace("%s workdir %s", s.Host, wd)
 	switch {
 	case st == "ok": // ours, unchanged → skip the transfer
+		s.trace("%s agent cached at %s", s.Host, path)
 	case strings.HasPrefix(st, "foreign"):
 		_ = cn.close()
 		return nil, fmt.Errorf("refusing to run %s: it is not ours (%s) — remove it on the target",
 			path, strings.TrimSpace(strings.TrimPrefix(st, "foreign")))
 	default: // absent, or ours with different bytes → (re)transfer
+		s.trace("%s push %d bytes to %s (%s)", s.Host, len(bin), path, st)
 		if err := push(cn, bin, path); err != nil {
 			_ = cn.close()
 			return nil, err
@@ -373,7 +418,9 @@ func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
 
 	// Poll for the result, re-dialing on a dropped session, until the deadline.
 	// The detached agent keeps running across drops, so a long job survives.
-	return s.poll(wd, jobid, deadline)
+	out, err := s.poll(wd, jobid, deadline)
+	s.trace("%s job %s finished in %s", s.Host, jobid, time.Since(started).Round(time.Millisecond))
+	return out, err
 }
 
 // bridge opens a session running `shellf __bridge` and serves the job's requests on it
@@ -489,26 +536,25 @@ s=$(sha256sum %[1]s 2>/dev/null | cut -d' ' -f1)
 if [ "$s" = "%[2]s" ]; then echo ok; else echo "stale $s"; fi`, path, wantSum)
 }
 
-// workdirStateCmd checks the rendezvous directory before a request is deposited in it.
+// workdirEnsureCmd creates the rendezvous directory and answers what it found: `ok`, or
+// `unsafe …`.
+//
 // The agent runs **any** `req-*.json` it finds there without asking who wrote it
 // (internal/agent/resident.go), so a directory another user can write to is a way to have
-// a request of their choosing executed, `become: root` included. `umask 077` does not
-// cover this: it sets the mode of a directory it *creates*, and both `/tmp` and `/dev/shm`
-// are world-writable, so the path can be pre-created (#391).
-// workdirEnsureCmd creates the workdir and answers what it found: `ok`, or `unsafe …`.
+// a request of their choosing executed, `as root` steps included. The path is derived from
+// the binary's digest and the SSH user, so it is calculable by anyone (#391).
 //
-// Creating and checking are one command on purpose (#413). They used to be two: a probe
-// answering `absent` — the ordinary state on a first run, after the agent's TTL erased it,
-// or after `shellf clean` — was accepted, and the deposit that followed did `mkdir -p`,
-// which succeeds on a directory somebody else created in between and changes neither its
-// owner nor its mode. The path is derived from the published binary's digest and the SSH
-// user, so it is calculable; an attacker loops on creating it and waits for a deployment.
-// The agent then runs every `req-*.json` it finds there, `as root` steps included.
+// Creating and checking must therefore be **one** command (#413): a separate probe
+// answering "absent" leaves a window for somebody else to create the path first, and the
+// `mkdir -p` that followed would happily accept their directory, changing neither its
+// owner nor its mode.
 //
 // `mkdir` without `-p` is the whole fix: it fails when the path exists, so whoever created
 // the directory is the one that owns it. On the sticky /dev/shm or /tmp a local user cannot
 // remove ours to put theirs in its place, so winning the creation is winning outright.
-// `umask 077` makes what we create private without a second `chmod` to race against.
+// `umask 077` makes what we create private without a second `chmod` to race against — it
+// does not cover the pre-creation case, since it only sets the mode of a directory it
+// creates itself.
 func workdirEnsureCmd(wd string) string {
 	return fmt.Sprintf(`umask 077
 if mkdir %[1]s 2>/dev/null; then echo ok; exit 0; fi

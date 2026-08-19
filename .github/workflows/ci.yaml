@@ -16,6 +16,10 @@ jobs:
       - run: go vet ./...
       - run: go test ./... # fast feedback run
       - run: go build ./...
+      # The `bundled` build path is only exercised by release.yaml, which runs once a tag
+      # exists — too late to learn it does not compile. The embed slot is committed empty
+      # so this works from a clean checkout (ADR-0048).
+      - run: go build -tags bundled ./... && go test -tags bundled ./internal/agentbin/
 
   race:
     # Data-race detector for the concurrent paths (agent `parallel`, fleet
@@ -52,3 +56,25 @@ jobs:
           go-version-file: go.mod
       - run: bash test/e2e/def-coverage.sh
       - run: SHELLF_E2E=1 bash test/e2e/run.sh
+
+  cross-arch:
+    # An amd64 control host provisioning an arm64 target, which is the scenario #453
+    # shipped and could not test: no arm64 machine was available, so the path went out
+    # covered by unit tests alone (#457).
+    #
+    # QEMU emulates the *target*, deliberately. A native ARM runner would put the control
+    # host on ARM, which answers a different question — the regression to guard here is
+    # amd64 → arm64.
+    #
+    # Its own job because emulation is slow: a leg that drags must not delay the feedback
+    # the other jobs give in under a minute.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - run: SHELLF_E2E=1 bash test/e2e/cross-arch.sh

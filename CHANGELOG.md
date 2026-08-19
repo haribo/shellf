@@ -6,6 +6,28 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-19
+
+### Added
+
+- `--json` reports a run or a status sweep as machine-readable JSON on stdout, versioned so a consumer can detect a shape change. Secrets are masked in their escaped form too, since JSON encoding hides a secret containing a quote or a backslash from plain masking (#459).
+- `--limit <host|group>` narrows a run or a status sweep to part of what the plan targets, repeatable. It can only narrow, never extend; a limit that selects no host errors instead of reporting a green run that touched nobody (#460).
+- `--parallel <n>` sets how many hosts a run or a status sweep dials at once, instead of a constant 16 nobody could change without recompiling. `1` serialises the fan-out; a value below 1 is refused rather than read as unlimited (#462).
+- `-v` traces the control host's decisions on stderr — where it connected, the target's architecture, whether the agent was pushed or reused, the workdir chosen, and how long the job took. Secrets are masked, and stdout keeps carrying the report alone (#461).
+- arm64 targets. A release binary embeds the agent for the other architecture and pushes the one `uname -m` reports, so an amd64 control host can configure an arm64 host and back. A plain `go build` carries no peer and refuses a foreign target by name instead of pushing a binary it cannot run (#453, ADR-0048).
+- CI runs the cross-architecture push it could not test before: an amd64 control host provisioning an emulated arm64 target, asserting that the pushed agent is an aarch64 ELF and that a second run converges (#457).
+
+### Changed
+
+- `askOnce` waits for a bridge through `attached` instead of open-coding the same lock/wait/relock sequence, so a timing fix cannot land in one copy and miss the other (#473).
+- `docs/design.md` is in English like every other written artifact, and `docs/CONVERSATION.md` — a frozen French transcript git still holds in full — is removed from the reading order (#465).
+- The README no longer names a version in its prose — it announced 0.4.0 while 0.6.0 shipped. A release badge carries it instead, so it cannot go stale (#452).
+- Four duplicated comment blocks are gone, including two whose stale first half contradicted the second — `packageLibs` documented a def layout ADR-0038 replaced, and `workdirEnsureCmd` opened with the doc of a function that no longer exists (#463).
+
+### Fixed
+
+- A plan targeting a name the inventory does not define is refused before anything runs, instead of reporting an empty block and exiting 0 — a typo in a group name was a deployment that never happened, reported green. A group listing an undeclared alias is caught at load, and a declared-empty group reports `(no hosts)` (#451).
+
 ## [0.6.0] - 2026-08-18
 
 ### Added
@@ -195,7 +217,8 @@ agent that evaluates on the host — "raw shell, but idempotent, previewable, fa
   per-user agent/workdir scoping.
 - Commands: `run`, `status`, `clean`, and `version`.
 
-[Unreleased]: https://github.com/haribo/shellf/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/haribo/shellf/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/haribo/shellf/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/haribo/shellf/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/haribo/shellf/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/haribo/shellf/compare/v0.3.1...v0.4.0

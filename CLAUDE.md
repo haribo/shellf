@@ -64,7 +64,6 @@ Rules must be concise. One rule per line when possible.
 
 1. `docs/design.md` — WHY shellf is built this way: thesis, architectural bets, open holes. Not the language.
 2. `docs/language.md` — HOW to write shellf: the language spec. Current by definition.
-3. `docs/CONVERSATION.md` — the design discussion that produced it all (the WHY, historical).
 - History of decisions lives in `docs/adr/`, not in the docs above — each ADR carries its own rejected alternatives.
 - Documentation strategy: `docs/adr/0001-documentation-strategy.md`.
 - ADR lifecycle: never delete an ADR; a reversal is a **new** ADR, and both sides carry the link — `Superseded by ADR-NNN` on the old, `Supersedes ADR-MMM` on the new. A one-sided link is how the chain rots

@@ -3,6 +3,7 @@ package inventory
 import (
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -72,14 +73,34 @@ func TestMembers(t *testing.T) {
 		Hosts:  map[string]Host{"a": {}, "b": {}, "c": {}},
 		Groups: map[string][]string{"web": {"a", "b"}},
 	}
-	if got := inv.Members("web"); !reflect.DeepEqual(got, []string{"a", "b"}) {
+	if got, _ := inv.Members("web"); !reflect.DeepEqual(got, []string{"a", "b"}) {
 		t.Fatalf("group expands to its aliases: %v", got)
 	}
-	if got := inv.Members("c"); !reflect.DeepEqual(got, []string{"c"}) {
+	if got, _ := inv.Members("c"); !reflect.DeepEqual(got, []string{"c"}) {
 		t.Fatalf("a lone host is a singleton group: %v", got)
 	}
-	if got := inv.Members("ghost"); got != nil {
+	if got, _ := inv.Members("ghost"); got != nil {
 		t.Fatalf("an unknown target expands to nothing: %v", got)
+	}
+}
+
+// A target nobody declared and a group declared empty both expand to nothing, and
+// the caller must still be able to tell them apart: the first is a typo to refuse,
+// the second is a legitimate no-op. Collapsing them into one `nil` is how `on nope`
+// reported success while touching no host (#451).
+func TestMembers_UnknownIsNotEmpty(t *testing.T) {
+	inv := Inventory{
+		Hosts:  map[string]Host{"a": {}},
+		Groups: map[string][]string{"empty": {}},
+	}
+	if _, known := inv.Members("empty"); !known {
+		t.Fatal("a declared group is known, even with no members")
+	}
+	if _, known := inv.Members("ghost"); known {
+		t.Fatal("a target nobody declared must not be reported as known")
+	}
+	if _, known := inv.Members("a"); !known {
+		t.Fatal("a declared host is a known target")
 	}
 }
 
@@ -89,9 +110,36 @@ func TestMembers_GroupWinsOverSameNamedHost(t *testing.T) {
 		Hosts:  map[string]Host{"all": {}, "x": {}},
 		Groups: map[string][]string{"all": {"x"}},
 	}
-	got := inv.Members("all")
+	got, _ := inv.Members("all")
 	sort.Strings(got)
 	if !reflect.DeepEqual(got, []string{"x"}) {
 		t.Fatalf("group must win over a same-named host: %v", got)
+	}
+}
+
+// A group listing an alias no `host` declares used to reach the transport with an
+// empty address and fail as `host key for :22 not in known_hosts` — an inventory
+// error reported as an SSH one (#451). It is caught at load, naming both ends.
+func TestValidate_GroupMemberMustBeADeclaredHost(t *testing.T) {
+	inv := Inventory{
+		Hosts:  map[string]Host{"a": {}},
+		Groups: map[string][]string{"ghosts": {"a", "nobody"}},
+	}
+	err := inv.Validate()
+	if err == nil {
+		t.Fatal("an undeclared alias in a group must be refused at load")
+	}
+	if !strings.Contains(err.Error(), "nobody") || !strings.Contains(err.Error(), "ghosts") {
+		t.Fatalf("the error must name the alias and the group holding it: %v", err)
+	}
+}
+
+func TestValidate_AcceptsAWellFormedInventory(t *testing.T) {
+	inv := Inventory{
+		Hosts:  map[string]Host{"a": {}, "b": {}},
+		Groups: map[string][]string{"web": {"a", "b"}, "empty": {}},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Fatalf("a well-formed inventory must validate, including an empty group: %v", err)
 	}
 }

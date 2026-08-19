@@ -134,10 +134,6 @@ func (c *Channel) AskWith(resource string, payload []byte, vars map[string]strin
 	return b, err
 }
 
-// askOnce performs one exchange, assuming c.mu is held. Its third result says the
-// failure was a connection that went away mid-ask — the one case worth retrying, as
-// opposed to "nobody attached" or a refusal from the control host, which a second ask
-// would only repeat.
 // attached returns the live connection, waiting for a bridge if none has arrived yet.
 // Assumes c.mu is held, and releases it around the wait so accept() can install one.
 func (c *Channel) attached(resource string) (*proto.Conn, error) {
@@ -160,21 +156,19 @@ func (c *Channel) attached(resource string) (*proto.Conn, error) {
 	return c.conn, nil
 }
 
+// askOnce performs one exchange, assuming c.mu is held. Its third result says the failure
+// was a connection that went away mid-ask — the one case worth retrying, as opposed to
+// "nobody attached" or a refusal from the control host, which a second ask would only
+// repeat.
 func (c *Channel) askOnce(resource string, payload []byte, vars map[string]string) ([]byte, error, bool) {
-	if c.conn == nil {
-		// A bridge may still be attaching — the control host opens it while the job is
-		// already running. Wait, but not forever: a job blocked on an answer nobody will
-		// give must fail naming what it waited for (ADR-0031 §2).
-		ready := c.ready
-		c.mu.Unlock()
-		select {
-		case <-ready:
-		case <-time.After(attachWait):
-		}
-		c.mu.Lock()
-		if c.conn == nil {
-			return nil, fmt.Errorf("%s: no control host attached", resource), false
-		}
+	// The attach wait lives in attached(), which sync.go already uses. It used to be
+	// open-coded here as well, and two copies of a lock/wait/relock sequence do not stay
+	// identical: a timing fix applied to one would have left the other behind (#473).
+	//
+	// Its failure is deliberately not stale — nobody is attached, so a second ask would
+	// only wait and fail again.
+	if _, err := c.attached(resource); err != nil {
+		return nil, err, false
 	}
 
 	c.next++
