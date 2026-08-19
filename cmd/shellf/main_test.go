@@ -1007,3 +1007,50 @@ func TestStatusReport_BlockErrorAndEmptyBlock(t *testing.T) {
 		t.Fatalf("an empty block must say so: %q", text)
 	}
 }
+
+// `-v` must not undo what the report masks: the tracer is where redaction happens,
+// because the CLI is what knows the run's secrets (#461).
+func TestTracer_RedactsAndStaysOffStdout(t *testing.T) {
+	if tracer(false, nil) != nil {
+		t.Fatal("without -v there must be no tracer at all")
+	}
+	tr := tracer(true, []string{"sup3rs3cret"})
+	if tr == nil {
+		t.Fatal("with -v there must be one")
+	}
+
+	// Captured from stderr, which is also the assertion that it does not use stdout.
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stderr, stdout := os.Stderr, os.Stdout
+	outR, outW, _ := os.Pipe()
+	os.Stderr, os.Stdout = w, outW
+	tr("pushing %s to %s", "sup3rs3cret", "/tmp/agent")
+	os.Stderr, os.Stdout = stderr, stdout
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := outW.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf, outBuf strings.Builder
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(&outBuf, outR); err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(buf.String(), "sup3rs3cret") {
+		t.Fatalf("the secret leaked into the trace: %q", buf.String())
+	}
+	if !strings.Contains(buf.String(), "***") {
+		t.Fatalf("it must be masked, not dropped: %q", buf.String())
+	}
+	if outBuf.String() != "" {
+		t.Fatalf("nothing may reach stdout: %q", outBuf.String())
+	}
+}
