@@ -492,12 +492,6 @@ func shellfSources(dir string) ([]string, error) {
 	return srcs, nil
 }
 
-// packageLibs reads every sibling `*.shellf` file in the plan's directory (the
-// package), excluding the plan file itself and the inventory file. It also reads one
-// level of subdirectories: each is a sub-package, and its files are keyed `<dir>/<file>`
-// so the parser qualifies their defs as `<dir>.<def>` (ADR-0033). Two levels down is an
-// error, not a silent skip — a skipped directory is how an override fails to apply
-// while the plan reports success.
 // packageLibs reads every def package under `<root>/defs/` (ADR-0038 §2). Each
 // `defs/<name>/` is one package, and its files are keyed `<name>/<file>` — the same key
 // shape ADR-0033 already uses for sub-packages, so the parser qualifies the defs
@@ -875,15 +869,11 @@ func statusReport(reports []orchestrator.BlockReport) string {
 	var b strings.Builder
 	for _, blk := range reports {
 		fmt.Fprintf(&b, "on %s:\n", blk.Target)
-		// A block that could not run at all: no host to attach an outcome to, so the
-		// reason goes on the block. Without this the block printed its header and
-		// nothing else, and the run exited 0 (#451).
+		// Block error and empty block, rendered as in reportText (#451).
 		if blk.Err != nil {
 			fmt.Fprintf(&b, "  ! %v\n", blk.Err)
 			continue
 		}
-		// A target that resolves to nobody is a legitimate no-op, and it says so: an
-		// empty block reads exactly like a block where everything converged.
 		if len(blk.Hosts) == 0 {
 			fmt.Fprintf(&b, "  (no hosts)\n")
 			continue

@@ -24,10 +24,6 @@ import (
 // without it the marker dies at the call boundary — a def receives strings, so
 // `deliver(%"conf.j2", dst)` would read on the target, the opposite of what the plan asked
 // (#332).
-//
-// Two convenience wrappers stood here, `EvalDef` and `EvalDefWith`, each calling this one
-// with nils. Neither had a caller outside the tests, and one still documented an `apply/post`
-// sequence ADR-0035 removed — a wrapper nobody runs is a comment nothing contradicts (#447).
 func EvalDefFull(def Def, args, with map[string]string, control []string, ex engine.Executor, mode engine.Mode, resolve DefResolver, stack []string, fetch ControlFetcher, sync TreeSyncer, preview TreePreviewer) (res engine.Result, err error) {
 	defer func() {
 		if r := recover(); r != nil {

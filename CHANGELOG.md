@@ -19,6 +19,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `docs/design.md` is in English like every other written artifact, and `docs/CONVERSATION.md` — a frozen French transcript git still holds in full — is removed from the reading order (#465).
 - The README no longer names a version in its prose — it announced 0.4.0 while 0.6.0 shipped. A release badge carries it instead, so it cannot go stale (#452).
+- Four duplicated comment blocks are gone, including two whose stale first half contradicted the second — `packageLibs` documented a def layout ADR-0038 replaced, and `workdirEnsureCmd` opened with the doc of a function that no longer exists (#463).
 
 ### Fixed
 

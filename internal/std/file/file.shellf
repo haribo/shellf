@@ -51,16 +51,6 @@ def download(url: str, dst: str, sha256: str) {
 # mode and owner onto the staging file: a redirection preserved them, a bare rename
 # would silently reset them to the umask default. The trap removes the staging file if
 # anything fails; after a successful rename it is already gone.
-# Stage-then-rename, never a redirection at the destination (#298). `> "$path"`
-# truncates the file before writing it, so on the happy path — not just on a crash —
-# there is a window where a reader sees an empty or partial file. For an sshd_config
-# picked up by a concurrent reload, that window is a lockout.
-#
-# The staging file sits in the destination's own directory so the rename is within one
-# filesystem, hence atomic. `cp -p` first (when the destination exists) carries its
-# mode and owner onto the staging file: a redirection preserved them, a bare rename
-# would silently reset them to the umask default. The trap removes the staging file if
-# anything fails; after a successful rename it is already gone.
 #
 # Content validation is deliberately NOT here (#323): whether a file is valid sudoers or
 # a valid sshd_config is the business of an instruction that knows the format, in its

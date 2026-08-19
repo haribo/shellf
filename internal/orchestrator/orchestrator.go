@@ -71,11 +71,10 @@ func (e *UnknownTargetError) Error() string {
 	return fmt.Sprintf("unknown target: the inventory declares no host or group named %q", e.Target)
 }
 
-// Run executes the plan. Blocks run sequentially; each block fans out over its
-// live hosts. A host that fails (transport error or an err step) is dropped
-// from subsequent blocks.
-// Run executes the plan. baseVars (--vars + plan bindings) and setVars (--set)
-// resolve each Step's bare-identifier Refs per host, with precedence
+// Run executes the plan. Blocks run sequentially; each block fans out over its live
+// hosts, and a host that fails (transport error or an err step) is dropped from
+// subsequent blocks. baseVars (--vars + plan bindings) and setVars (--set) resolve each
+// Step's bare-identifier Refs per host, with precedence
 // base < per-host inventory var < --set.
 func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.Dial, baseVars, setVars map[string]string, defs map[string]string, opt Options) []BlockReport {
 	// Every target is resolved before anything runs. A name the inventory does not

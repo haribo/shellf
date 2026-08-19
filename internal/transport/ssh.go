@@ -182,24 +182,16 @@ func (s SSH) pathID(bin []byte) string { return hashID(bin) + "-" + sanitizeUser
 
 // posix wraps a transport command so the target runs it under /bin/sh, whatever its login
 // shell is: a non-POSIX login shell cannot parse the `&&`/`$()`/`for … do` the transport
-// uses (#241). Measured while fixing #439, since the comment used to name fish beside
-// nushell: fish parses POSIX quoting happily, and plan9's `rc` mangles only some forms —
-// nushell is the one that breaks on the transport's own scripts. There is no CI target for
-// it: nushell is not packaged in Debian, and downloading it at image-build time would put
-// the harness at the mercy of a network the rest of it deliberately avoids.
+// uses (#241). nushell is the one measured to break on these scripts; no CI target covers
+// it, since it is not packaged in Debian.
 //
-// The script travels base64-encoded, and that is the whole point. It used to be embedded
-// single-quoted, with the body's own quotes escaped as `'\”` — a POSIX-sh idiom, handed to
-// the **login shell**, which reads the command line before `sh` exists. Asking the shell
-// being worked around to understand POSIX quoting is asking it to be POSIX: nushell reads
-// that sequence as string-backslash-string and the command falls apart. It never bit while
-// the transport's scripts held no quote; the agent-verification probe introduced four of
-// them, and every such host became unreachable at the first contact (#439).
-//
-// base64's alphabet is `A-Za-z0-9+/=` — nothing any shell treats as syntax — so what the
-// login shell sees has nothing to reinterpret, and `sh` receives the script byte for byte.
-// `base64 -d` is coreutils and busybox alike, alongside the `find`, `stat -c` and
-// `sha256sum` the transport already requires of a target.
+// The script travels base64-encoded, and that is the whole point. Escaping it for POSIX sh
+// does not work, because the **login shell** reads the command line before `sh` exists —
+// asking the shell being worked around to understand POSIX quoting is asking it to be
+// POSIX (#439). base64's alphabet is `A-Za-z0-9+/=`, nothing any shell treats as syntax,
+// so what the login shell sees has nothing to reinterpret and `sh` receives the script
+// byte for byte. `base64 -d` is coreutils and busybox alike, alongside the `find`,
+// `stat -c` and `sha256sum` the transport already requires of a target.
 //
 // The pipe costs stdin: `sh` inherits the decoder's, so a script reading stdin gets the
 // spent pipe instead of what the caller sent. The two commands that do read it — pushing
@@ -544,26 +536,25 @@ s=$(sha256sum %[1]s 2>/dev/null | cut -d' ' -f1)
 if [ "$s" = "%[2]s" ]; then echo ok; else echo "stale $s"; fi`, path, wantSum)
 }
 
-// workdirStateCmd checks the rendezvous directory before a request is deposited in it.
+// workdirEnsureCmd creates the rendezvous directory and answers what it found: `ok`, or
+// `unsafe …`.
+//
 // The agent runs **any** `req-*.json` it finds there without asking who wrote it
 // (internal/agent/resident.go), so a directory another user can write to is a way to have
-// a request of their choosing executed, `become: root` included. `umask 077` does not
-// cover this: it sets the mode of a directory it *creates*, and both `/tmp` and `/dev/shm`
-// are world-writable, so the path can be pre-created (#391).
-// workdirEnsureCmd creates the workdir and answers what it found: `ok`, or `unsafe …`.
+// a request of their choosing executed, `as root` steps included. The path is derived from
+// the binary's digest and the SSH user, so it is calculable by anyone (#391).
 //
-// Creating and checking are one command on purpose (#413). They used to be two: a probe
-// answering `absent` — the ordinary state on a first run, after the agent's TTL erased it,
-// or after `shellf clean` — was accepted, and the deposit that followed did `mkdir -p`,
-// which succeeds on a directory somebody else created in between and changes neither its
-// owner nor its mode. The path is derived from the published binary's digest and the SSH
-// user, so it is calculable; an attacker loops on creating it and waits for a deployment.
-// The agent then runs every `req-*.json` it finds there, `as root` steps included.
+// Creating and checking must therefore be **one** command (#413): a separate probe
+// answering "absent" leaves a window for somebody else to create the path first, and the
+// `mkdir -p` that followed would happily accept their directory, changing neither its
+// owner nor its mode.
 //
 // `mkdir` without `-p` is the whole fix: it fails when the path exists, so whoever created
 // the directory is the one that owns it. On the sticky /dev/shm or /tmp a local user cannot
 // remove ours to put theirs in its place, so winning the creation is winning outright.
-// `umask 077` makes what we create private without a second `chmod` to race against.
+// `umask 077` makes what we create private without a second `chmod` to race against — it
+// does not cover the pre-creation case, since it only sets the mode of a directory it
+// creates itself.
 func workdirEnsureCmd(wd string) string {
 	return fmt.Sprintf(`umask 077
 if mkdir %[1]s 2>/dev/null; then echo ok; exit 0; fi
