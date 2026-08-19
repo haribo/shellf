@@ -162,9 +162,7 @@ func (c *Channel) attached(resource string) (*proto.Conn, error) {
 
 func (c *Channel) askOnce(resource string, payload []byte, vars map[string]string) ([]byte, error, bool) {
 	if c.conn == nil {
-		// A bridge may still be attaching — the control host opens it while the job is
-		// already running. Wait, but not forever: a job blocked on an answer nobody will
-		// give must fail naming what it waited for (ADR-0031 §2).
+		// Same attach wait as above (ADR-0031 §2).
 		ready := c.ready
 		c.mu.Unlock()
 		select {
