@@ -1,6 +1,9 @@
 package main
 
 import (
+	"errors"
+	"flag"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -769,5 +772,43 @@ func TestReportText_EmptyBlockSaysSo(t *testing.T) {
 	}
 	if !strings.Contains(text, "no hosts") {
 		t.Fatalf("an empty block must report why it did nothing: %q", text)
+	}
+}
+
+// `--parallel 0` is the operator typing something that cannot mean anything — it is
+// refused, never read as "unlimited" (#462). An *absent* flag is a different thing and
+// takes the default, which is why the check asks the flag set what was provided rather
+// than comparing to zero.
+func TestCheckParallel(t *testing.T) {
+	parsed := func(args ...string) (*flag.FlagSet, int) {
+		fs := flag.NewFlagSet("run", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		n := fs.Int("parallel", 0, "")
+		if err := fs.Parse(args); err != nil {
+			t.Fatal(err)
+		}
+		return fs, *n
+	}
+	// Absent: takes the default, so nothing is refused here.
+	fs, n := parsed()
+	checkParallel(fs, n) // must not exit
+	fs, n = parsed("--parallel", "4")
+	checkParallel(fs, n) // must not exit
+
+	// Provided and impossible: the process must exit 2. Asserted in a subprocess, since
+	// checkParallel exits rather than returning an error.
+	if os.Getenv("SHELLF_TEST_BAD_PARALLEL") != "" {
+		fs, n := parsed("--parallel", os.Getenv("SHELLF_TEST_BAD_PARALLEL"))
+		checkParallel(fs, n)
+		return
+	}
+	for _, bad := range []string{"0", "-1"} {
+		cmd := exec.Command(os.Args[0], "-test.run=TestCheckParallel")
+		cmd.Env = append(os.Environ(), "SHELLF_TEST_BAD_PARALLEL="+bad)
+		err := cmd.Run()
+		var ee *exec.ExitError
+		if !errors.As(err, &ee) || ee.ExitCode() != 2 {
+			t.Fatalf("--parallel %s must exit 2, got %v", bad, err)
+		}
 	}
 }

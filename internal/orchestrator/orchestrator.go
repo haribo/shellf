@@ -22,6 +22,15 @@ type Block struct {
 
 type Plan []Block
 
+// Options carries the run-wide knobs a caller may set. Its zero value is the behaviour
+// shellf had before any of them existed, so a caller that does not care passes
+// `Options{}` — and a new knob arrives as a field rather than as a tenth positional
+// parameter next to three consecutive maps (#462).
+type Options struct {
+	// Parallel caps how many hosts a block dials at once. 0 takes fleet's default.
+	Parallel int
+}
+
 // HostOutcome is one host's result for one block.
 type HostOutcome struct {
 	Host     string
@@ -50,7 +59,7 @@ func (e *UnknownTargetError) Error() string {
 // Run executes the plan. baseVars (--vars + plan bindings) and setVars (--set)
 // resolve each Step's bare-identifier Refs per host, with precedence
 // base < per-host inventory var < --set.
-func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.Dial, baseVars, setVars map[string]string, defs map[string]string) []BlockReport {
+func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.Dial, baseVars, setVars map[string]string, defs map[string]string, opt Options) []BlockReport {
 	// Every target is resolved before anything runs. A name the inventory does not
 	// declare is a typo in the plan, knowable without a single connection — and a run
 	// that discovers it at block 3 has already changed the hosts of blocks 1 and 2.
@@ -98,7 +107,7 @@ func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.D
 			}
 			return json.Marshal(proto.Request{Mode: mode, Steps: steps, Defs: defs})
 		}
-		results := fleet.Run(live, agentBin, reqFor, dial)
+		results := fleet.Run(live, agentBin, reqFor, dial, opt.Parallel)
 
 		report := BlockReport{Target: block.Target}
 		for _, hr := range results {
