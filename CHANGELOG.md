@@ -13,6 +13,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- `docs/design.md` is in English like every other written artifact, and `docs/CONVERSATION.md` — a frozen French transcript git still holds in full — is removed from the reading order (#465).
 - The README no longer names a version in its prose — it announced 0.4.0 while 0.6.0 shipped. A release badge carries it instead, so it cannot go stale (#452).
 
 ### Fixed
