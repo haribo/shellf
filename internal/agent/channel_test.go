@@ -261,3 +261,34 @@ func waitAttached(t *testing.T, ch *Channel) {
 	}
 	t.Fatal("no bridge attached")
 }
+
+// "Nobody attached" must not be reported as stale, or `Ask` retries a failure that can
+// only repeat itself. This is the invariant a careless refactor of the attach wait would
+// break, and nothing pinned it before #473.
+func TestAskOnce_NoBridgeIsNotStale(t *testing.T) {
+	old := attachWait
+	attachWait = 200 * time.Millisecond
+	defer func() { attachWait = old }()
+
+	c := &Channel{ready: make(chan struct{})} // no bridge will ever attach
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	start := time.Now()
+	_, err, stale := c.askOnce("~file.read", nil, nil)
+
+	if err == nil {
+		t.Fatal("with no bridge attached the ask must fail")
+	}
+	if !strings.Contains(err.Error(), "no control host attached") {
+		t.Fatalf("the failure must name what it waited for: %v", err)
+	}
+	if stale {
+		t.Fatal("nobody attached is not a stale connection: retrying it only repeats it")
+	}
+	// And it waited rather than failing instantly — the wait is what lets a bridge that is
+	// still attaching win the race (ADR-0031 §2).
+	if time.Since(start) < attachWait/2 {
+		t.Fatalf("it must wait for a bridge, returned after %s", time.Since(start))
+	}
+}
