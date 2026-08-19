@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-19
+
 ### Added
 
 - `--json` reports a run or a status sweep as machine-readable JSON on stdout, versioned so a consumer can detect a shape change. Secrets are masked in their escaped form too, since JSON encoding hides a secret containing a quote or a backslash from plain masking (#459).
@@ -215,7 +217,8 @@ agent that evaluates on the host — "raw shell, but idempotent, previewable, fa
   per-user agent/workdir scoping.
 - Commands: `run`, `status`, `clean`, and `version`.
 
-[Unreleased]: https://github.com/haribo/shellf/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/haribo/shellf/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/haribo/shellf/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/haribo/shellf/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/haribo/shellf/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/haribo/shellf/compare/v0.3.1...v0.4.0
