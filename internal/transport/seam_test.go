@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -481,4 +482,46 @@ func writeTempAgent(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return p
+}
+
+// `-v` exists so a failing run can be diagnosed without rebuilding with print statements
+// (#461). What it must say about the control host's own decisions: where it connected,
+// which agent it pushed or reused, and which workdir it chose.
+func TestRun_TraceReportsTheControlHostDecisions(t *testing.T) {
+	fc := &fakeConn{responder: func(cmd string) ([]byte, error) {
+		if strings.Contains(cmd, "uname -m") {
+			return []byte("x86_64\n"), nil
+		}
+		if strings.Contains(cmd, "sha256sum") {
+			return []byte("absent"), nil // forces a push, so the decision is visible
+		}
+		return nil, nil
+	}}
+	var lines []string
+	s := SSH{
+		Host: "h1", User: "deploy", Port: "22",
+		dialFn: func() (conn, error) { return fc, nil },
+		Trace:  func(format string, a ...any) { lines = append(lines, fmt.Sprintf(format, a...)) },
+	}
+
+	_, _ = s.Run(writeTempAgent(t), []byte(`{}`))
+
+	joined := strings.Join(lines, "\n")
+	for _, want := range []string{"deploy@h1:22", "amd64", "push", "workdir"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("the trace must mention %q:\n%s", want, joined)
+		}
+	}
+}
+
+// A nil Trace is the default and must cost nothing — no output, no panic.
+func TestRun_WithoutTraceStaysSilent(t *testing.T) {
+	fc := &fakeConn{responder: func(cmd string) ([]byte, error) {
+		if strings.Contains(cmd, "sha256sum") {
+			return []byte("absent"), nil
+		}
+		return nil, nil
+	}}
+	s := SSH{Host: "h1", dialFn: func() (conn, error) { return fc, nil }}
+	_, _ = s.Run(writeTempAgent(t), []byte(`{}`)) // must not panic
 }

@@ -39,6 +39,15 @@ type SSH struct {
 	KnownHosts  string        // known_hosts path; empty = ~/.ssh/known_hosts
 	Insecure    bool          // bypass host-key verification (dev only)
 
+	// Trace, when set, receives one line per control-host decision: where it connected,
+	// which agent it pushed or reused, which workdir it chose, how long the job took.
+	// Nil — the default — costs nothing.
+	//
+	// It is a callback rather than an io.Writer because masking is the caller's job: the
+	// CLI knows the run's secrets, the transport does not, and a diagnostic channel that
+	// prints what the report masks is worse than no diagnostic channel (#461).
+	Trace func(format string, a ...any)
+
 	// Channel serves the running job's requests for control-host resources
 	// (ADR-0031). Nil — the common case — means the plan asks for nothing, and no
 	// bridge is opened at all: a plan that needs nothing keeps today's behaviour
@@ -259,6 +268,7 @@ func (s SSH) agentFor(cn conn, self []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.trace("%s architecture %s", s.Host, arch)
 	return agentbin.For(arch, self)
 }
 
@@ -325,6 +335,13 @@ func parseDone(stdout []byte) (out []byte, ready bool) {
 	return stdout, true
 }
 
+// trace emits one diagnostic line when the caller asked for them.
+func (s SSH) trace(format string, a ...any) {
+	if s.Trace != nil {
+		s.Trace(format, a...)
+	}
+}
+
 func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
 	self, err := os.ReadFile(agentBin)
 	if err != nil {
@@ -334,6 +351,8 @@ func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
 	deadline := time.Now().Add(s.execTimeout())
 
 	// One connection: push (if not cached), ensure a resident agent, deposit the job.
+	started := time.Now()
+	s.trace("%s@%s:%s connecting", s.User, s.Host, s.port())
 	cn, err := s.dialConn()
 	if err != nil {
 		return nil, err
@@ -360,13 +379,16 @@ func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
 		_ = cn.close()
 		return nil, err
 	}
+	s.trace("%s workdir %s", s.Host, wd)
 	switch {
 	case st == "ok": // ours, unchanged → skip the transfer
+		s.trace("%s agent cached at %s", s.Host, path)
 	case strings.HasPrefix(st, "foreign"):
 		_ = cn.close()
 		return nil, fmt.Errorf("refusing to run %s: it is not ours (%s) — remove it on the target",
 			path, strings.TrimSpace(strings.TrimPrefix(st, "foreign")))
 	default: // absent, or ours with different bytes → (re)transfer
+		s.trace("%s push %d bytes to %s (%s)", s.Host, len(bin), path, st)
 		if err := push(cn, bin, path); err != nil {
 			_ = cn.close()
 			return nil, err
@@ -404,7 +426,9 @@ func (s SSH) Run(agentBin string, req []byte) ([]byte, error) {
 
 	// Poll for the result, re-dialing on a dropped session, until the deadline.
 	// The detached agent keeps running across drops, so a long job survives.
-	return s.poll(wd, jobid, deadline)
+	out, err := s.poll(wd, jobid, deadline)
+	s.trace("%s job %s finished in %s", s.Host, jobid, time.Since(started).Round(time.Millisecond))
+	return out, err
 }
 
 // bridge opens a session running `shellf __bridge` and serves the job's requests on it

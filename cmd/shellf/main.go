@@ -164,6 +164,7 @@ func runCmd(args []string) {
 	fs.Var(&secretEnvs, "secret-env", "secret from an env var, name=VAR (repeatable); redacted in output")
 	dryRun := fs.Bool("dry-run", false, "decide and preview without mutating")
 	asJSON := fs.Bool("json", false, "report as JSON on stdout (diagnostics stay on stderr)")
+	verbose := fs.Bool("v", false, "trace the control host's decisions on stderr (connection, agent, workdir, timing)")
 	// `--check` was the old name (ADR-0035). Accepting it silently would keep two
 	// spellings alive; this only exists to say what to type instead.
 	oldCheck := fs.Bool("check", false, "")
@@ -234,6 +235,7 @@ func runCmd(args []string) {
 		return transport.SSH{
 			User: h.User, Host: h.Address, Port: h.Port, Key: h.Key,
 			KnownHosts: *knownHosts, Insecure: *insecure, AgentTTL: *agentTTL,
+			Trace:   tracer(*verbose, secretValues),
 			Channel: channelFor(alias), // nil when the plan asks nothing: no bridge
 		}
 	}
@@ -697,6 +699,21 @@ func redact(s string, secrets []string) string {
 		}
 	}
 	return s
+}
+
+// tracer builds the transport's diagnostic callback, or nil when `-v` was not given.
+//
+// Masking happens here rather than in the transport: the CLI is what knows the run's
+// secrets. A diagnostic channel that prints what the report masks would be worse than no
+// diagnostic channel at all (#461). stderr, so a report on stdout stays parseable —
+// including under `--json`.
+func tracer(on bool, secrets []string) func(string, ...any) {
+	if !on {
+		return nil
+	}
+	return func(format string, a ...any) {
+		fmt.Fprintln(os.Stderr, "· "+redact(fmt.Sprintf(format, a...), secrets))
+	}
 }
 
 // cleanCmd: shellf clean --inventory <hosts.shellf> [target...]. Kills resident
