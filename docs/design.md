@@ -1,115 +1,115 @@
 # shellf — design
 
-> **Ce que fait ce document :** il dit *pourquoi shellf est bâti ainsi* — la thèse produit,
-> les paris d'architecture, ce qui reste ouvert. Il ne décrit pas le langage : ça, c'est
-> [`language.md`](language.md). L'historique des décisions, avec leurs alternatives
-> rejetées, vit dans [`adr/`](adr/) — pas ici.
+> **What this document does:** it says *why shellf is built this way* — the product thesis,
+> the architectural bets, what is still open. It does not describe the language: that is
+> [`language.md`](language.md). The history of decisions, with their rejected
+> alternatives, lives in [`adr/`](adr/) — not here.
 >
-> Statut : langage **implémenté** (interpréteur, transport SSH, agent résident, stdlib
-> embarquée). Nom `shellf` (de travail, dispo).
+> Status: language **implemented** (interpreter, SSH transport, resident agent, embedded
+> stdlib). Name `shellf` (working name, available).
 
-Légende : 🟠 **à trancher** · 🔴 **risque / problème dur**
-
----
-
-## 00 · Thèse produit
-
-### Le pitch
-
-« **Le shell brut, mais idempotent, prévisualisable et rapide.** »
-
-Chez Ansible/Puppet/Chef, tomber dans le `shell` est la défaite (perte d'idempotence). Or
-tout le monde y tombe. On construit l'outil **autour** de cette réalité, pas contre elle.
-
-### Les trois paris d'architecture
-
-- **Agentless, un seul binaire.** L'utilisateur n'a besoin que du binaire + accès SSH.
-  Rien à installer sur les cibles.
-- **Agent résident auto-nettoyé qui évalue sur la cible.** Poussé par SSH, mis en cache par
-  hash et laissé **résident** entre les jobs ; il s'auto-efface après un TTL d'inactivité
-  (rien ne survit à un reboot) — pas d'install permanente durable
-  ([ADR-0005](adr/0005-agent-lifecycle.md)). Il interprète le programme **sur la machine**
-  (une connexion, vitesse quasi-locale). C'est le minion Salt/Puppet. **≠ pyinfra**, qui
-  évalue en local et n'envoie que du shell.
-- **Deux plans.** Plan d'**orchestration** (côté contrôle : « sur ces 40 hôtes, dans cet
-  ordre ») + plan d'**exécution** (l'agent, sur la cible). Ne pas les mélanger — c'est le
-  péché de Jinja d'Ansible.
-
-### Philosophie
-
-**L'utilisateur est responsable, l'outil ne décide pas à sa place** (esprit C / shell, pas
-SGBD). Cible = power-user. **Contrepartie assumée :** observabilité irréprochable (la
-liberté sans traçabilité est un lance-flammes).
+Legend: 🟠 **to settle** · 🔴 **risk / hard problem**
 
 ---
 
-## 01 · Ce que l'architecture doit garantir
+## 00 · Product thesis
 
-### Dry-run = décisions, pas effets
+### The pitch
 
-On ne prédit pas ce que fait une commande (impossible : lock apt, réseau…). On prédit les
-**décisions** : les phases de lecture s'exécutent, la phase d'action est sautée. Rapport
-200 machines : « nginx s'installerait sur 12, déjà présent sur 188 ».
+"**Raw shell, but idempotent, previewable, and fast.**"
 
-**Le contrat qui rend ça possible :** les phases de lecture sont **sans effet de bord**.
-Sans ça, le dry-run est du flan. Quelles phases, dans quel mode :
+With Ansible/Puppet/Chef, falling back to `shell` is the defeat (idempotence is lost). Yet
+everybody falls back to it. shellf is built **around** that reality, not against it.
+
+### The three architectural bets
+
+- **Agentless, a single binary.** The user needs nothing but the binary and SSH access.
+  Nothing to install on the targets.
+- **A self-erasing resident agent that evaluates on the target.** Pushed over SSH, cached
+  by hash and left **resident** between jobs; it erases itself after an inactivity TTL
+  (nothing survives a reboot) — no durable permanent install
+  ([ADR-0005](adr/0005-agent-lifecycle.md)). It interprets the program **on the machine**
+  (one connection, near-local speed). This is the Salt/Puppet minion. **≠ pyinfra**, which
+  evaluates locally and ships nothing but shell.
+- **Two plans.** An **orchestration** plan (control side: "on these 40 hosts, in this
+  order") plus an **execution** plan (the agent, on the target). Do not mix them — that is
+  Ansible's Jinja sin.
+
+### Philosophy
+
+**The user is responsible; the tool does not decide for them** (the spirit of C and the
+shell, not of a DBMS). Audience: power users. **The accepted counterpart:** irreproachable
+observability (freedom without traceability is a flamethrower).
+
+---
+
+## 01 · What the architecture must guarantee
+
+### Dry-run = decisions, not effects
+
+We do not predict what a command does (impossible: apt lock, network…). We predict the
+**decisions**: the reading phases run, the action phase is skipped. Report across 200
+machines: "nginx would be installed on 12, already present on 188".
+
+**The contract that makes this possible:** the reading phases are **side-effect free**.
+Without that, the dry-run is worthless. Which phases, in which mode:
 [`language.md`](language.md), [ADR-0035](adr/0035-phases-and-modes.md).
 
-C'est un contrat, donc il se vérifie : le moteur ne doit jamais appeler la phase d'action
-en dry-run ni en `status`. Il l'a fait pendant des mois sans que rien ne le voie
-(#338) — l'invariant était écrit dans un commentaire, pas dans un test.
+It is a contract, so it gets verified: the engine must never call the action phase in
+dry-run nor in `status`. It did for months without anything noticing (#338) — the
+invariant was written in a comment, not in a test.
 
-### Trois questions distinctes, trois phases
+### Three distinct questions, three phases
 
-- **Précondition** — « ça *peut* marcher ? » (paquet existe, disque, droits) → échec =
-  **erreur**, avant toute action.
-- **Observation d'état** ([ADR-0013](adr/0013-observe-state-contract.md)) — l'état
-  *courant*, comparé aux arguments voulus → convergé = **skip**. Au lieu d'un booléen
-  écrit à la main, l'instruction renvoie son état et le moteur en dérive le skip *et* le
-  rapport `status`.
-- **Détection de changement** — « l'action a-t-elle *réellement* changé quelque chose ? »
-  → alimente le rapport et le chaînage (`if x.changed { … }`).
+- **Precondition** — "*can* this work?" (package exists, disk, permissions) → failure =
+  **error**, before any action.
+- **State observation** ([ADR-0013](adr/0013-observe-state-contract.md)) — the *current*
+  state, compared against the requested arguments → converged = **skip**. Instead of a
+  hand-written boolean, the instruction returns its state and the engine derives both the
+  skip *and* the `status` report from it.
+- **Change detection** — "did the action *actually* change anything?" → feeds the report
+  and the chaining (`if x.changed { … }`).
 
-Les confondre, c'est perdre soit l'idempotence, soit la prévisualisation.
+Conflating them loses either idempotence or previewability.
 
-### Parallélisme
+### Parallelism
 
-- **Inter-hôtes = pilier.** Même plan sur N machines en même temps. Gratuit, gros gain,
-  zéro conflit.
-- **Intra-hôte = explicite, à la charge de l'utilisateur.** Bloc `parallel { }` déclaré ;
-  le shell est opaque, l'outil ne peut pas inférer l'absence de conflit.
+- **Across hosts = a pillar.** The same plan on N machines at once. Free, a large gain,
+  zero conflict.
+- **Within a host = explicit, the user's call.** A declared `parallel { }` block; the shell
+  is opaque, so the tool cannot infer the absence of a conflict.
 
 ---
 
-## 02 · Trous ouverts
+## 02 · Open holes
 
-### 🟠 Composite non-atomique — échec partiel
+### 🟠 Non-atomic composite — partial failure
 
-Une action multi-étapes n'est pas transactionnelle : si l'étape 2 échoue, l'étape 1 a
-agi. **Une observation unique en tête ne rend PAS un composite idempotent**, et le
-rollback n'est pas résolu — il ne le sera pas, [ADR-0040](adr/0040-rerunnable-steps-and-unsafe-shell.md)
-dit pourquoi.
+A multi-step action is not transactional: if step 2 fails, step 1 has already acted. **A
+single observation at the head does NOT make a composite idempotent**, and rollback is not
+solved — it will not be, and
+[ADR-0040](adr/0040-rerunnable-steps-and-unsafe-shell.md) says why.
 
-Ce que shellf garantit à la place est plus faible et tenable : un run échoué laisse
-l'hôte dans un état d'où un run suivant peut repartir. Cela tient exactement quand chaque
-étape supporte d'être rejouée — et c'est refusé à l'écriture, pas espéré : le shell qu'une
-def sait déjà faire ne parse pas, sauf sous `unsafe shell`.
+What shellf guarantees instead is weaker and tenable: a failed run leaves the host in a
+state a subsequent run can resume from. That holds exactly when every step tolerates being
+replayed — and it is refused at writing time rather than hoped for: shell that a def
+already knows how to do does not parse, except under `unsafe shell`.
 
-Reste ouvert : l'atomicité elle-même. Un état partiel survit, visible et rejouable, mais
-il survit.
+Still open: atomicity itself. A partial state survives, visible and replayable, but it
+survives.
 
-### 🔴 Le vrai mur : l'écosystème, pas la technique
+### 🔴 The real wall: the ecosystem, not the technology
 
-Le langage = 5 % du boulot ; la stdlib d'instructions correctes cross-distro +
-l'écosystème = 95 %. Les alternatives à Ansible meurent de leur **cold-start
-communautaire**, pas de leur technique. Échappatoire : ne pas *battre* Ansible Galaxy,
-mais rendre le moment « j'abandonne le module et j'écris du shell » propre et idempotent.
-Barre abaissée de « des années » à « jour 1 ».
+The language is 5% of the work; a correct cross-distro stdlib of instructions plus the
+ecosystem is 95%. Alternatives to Ansible die of their **community cold start**, not of
+their technology. The way out: not to *beat* Ansible Galaxy, but to make the moment where
+"I give up on the module and write shell" clean and idempotent. The bar drops from "years"
+to "day one".
 
-### 🟠 Éprouver le langage sur des formes différentes
+### 🟠 Testing the language against different shapes
 
-Un langage ne se prouve pas sur un exemple — il **overfitte**. `file.copy` (l'observation
-n'est plus « présent/absent » mais « le contenu correspond-il ? ») et `service.ensure`
-(deux dimensions orthogonales : tourne ? + activé au boot ?) existent aujourd'hui et n'ont
-pas tordu le modèle. La question reste ouverte pour ce qui viendra : une forme qui ne
-rentre pas est un signal, pas un détail d'implémentation.
+A language is not proven by one example — it **overfits**. `file.copy` (where observation
+is no longer "present/absent" but "does the content match?") and `service.ensure` (two
+orthogonal dimensions: running? + enabled at boot?) exist today and did not bend the
+model. The question stays open for what comes next: a shape that does not fit is a signal,
+not an implementation detail.
