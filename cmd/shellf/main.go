@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -162,6 +163,7 @@ func runCmd(args []string) {
 	fs.Var(&secretFiles, "secret-file", "secret from a file, name=path (repeatable); redacted in output")
 	fs.Var(&secretEnvs, "secret-env", "secret from an env var, name=VAR (repeatable); redacted in output")
 	dryRun := fs.Bool("dry-run", false, "decide and preview without mutating")
+	asJSON := fs.Bool("json", false, "report as JSON on stdout (diagnostics stay on stderr)")
 	// `--check` was the old name (ADR-0035). Accepting it silently would keep two
 	// spellings alive; this only exists to say what to type instead.
 	oldCheck := fs.Bool("check", false, "")
@@ -237,7 +239,7 @@ func runCmd(args []string) {
 	}
 
 	opt := orchestrator.Options{Parallel: *parallel, Limit: limits}
-	printReports(orchestrator.Run(plan, inv, self, mode, dial, baseVars, setVars, defsSrc, opt), secretValues)
+	printReports(orchestrator.Run(plan, inv, self, mode, dial, baseVars, setVars, defsSrc, opt), secretValues, *asJSON)
 }
 
 // controlChannel builds the per-host control-host server (ADR-0031), or returns a
@@ -776,6 +778,7 @@ func statusCmd(args []string) {
 	parallel := fs.Int("parallel", 0, "hosts dialled at once (0 = 16); 1 serialises the fan-out")
 	var limits multiFlag
 	fs.Var(&limits, "limit", "restrict the sweep to a host or group (repeatable)")
+	asJSON := fs.Bool("json", false, "report as JSON on stdout (diagnostics stay on stderr)")
 	var secretFiles, secretEnvs kvFlags
 	fs.Var(&secretFiles, "secret-file", "secret from a file, name=path (repeatable); redacted in output")
 	fs.Var(&secretEnvs, "secret-env", "secret from an env var, name=VAR (repeatable); redacted in output")
@@ -827,6 +830,12 @@ func statusCmd(args []string) {
 	// `status` refuses an unknown target like `run` does. The render stays pure — the
 	// exit code is the caller's call, so a report string keeps one job (#451).
 	reports := orchestrator.Run(plan, inv, self, "status", dial, base, secrets, defsSrc, orchestrator.Options{Parallel: *parallel, Limit: limits})
+	if *asJSON {
+		out, _ := reportJSON(reports)
+		fmt.Print(redactJSON(out, secretValues))
+		exitFor(anyBlockError(reports))
+		return
+	}
 	fmt.Print(redact(statusReport(reports), secretValues))
 	exitFor(anyBlockError(reports))
 }
@@ -914,10 +923,105 @@ func orDash(s string) string {
 	return s
 }
 
-func printReports(reports []orchestrator.BlockReport, secrets []string) {
+func printReports(reports []orchestrator.BlockReport, secrets []string, asJSON bool) {
+	if asJSON {
+		// stdout carries the report and nothing else, or it is not parseable. Anything
+		// diagnostic belongs on stderr.
+		out, anyErr := reportJSON(reports)
+		fmt.Print(redactJSON(out, secrets))
+		exitFor(anyErr)
+		return
+	}
 	text, anyErr := reportText(reports)
 	fmt.Print(redact(text, secrets))
 	exitFor(anyErr)
+}
+
+// jsonReport is the machine-readable shape of a run. It is a contract the moment it
+// ships, so it carries a version: a consumer can detect a change instead of discovering
+// it as a parse error in production (#459).
+type jsonReport struct {
+	Version int         `json:"version"`
+	Blocks  []jsonBlock `json:"blocks"`
+}
+
+type jsonBlock struct {
+	Target string     `json:"target"`
+	Error  string     `json:"error,omitempty"` // the block could not run at all (#451)
+	Hosts  []jsonHost `json:"hosts"`
+}
+
+type jsonHost struct {
+	Host    string             `json:"host"`
+	Error   string             `json:"error,omitempty"` // unreachable, or a resolution failure
+	Halted  bool               `json:"halted,omitempty"`
+	Results []proto.StepResult `json:"results,omitempty"`
+}
+
+// jsonVersion is bumped when the shape changes in a way a consumer would notice.
+const jsonVersion = 1
+
+// reportJSON renders the same run reportText does, as JSON, and reports whether any host
+// errored. The two must agree on that boolean: a consumer branching on the exit code and
+// a human reading the prose have to see the same run.
+func reportJSON(reports []orchestrator.BlockReport) (string, bool) {
+	out := jsonReport{Version: jsonVersion, Blocks: make([]jsonBlock, 0, len(reports))}
+	anyErr := false
+
+	for _, blk := range reports {
+		jb := jsonBlock{Target: blk.Target, Hosts: []jsonHost{}}
+		if blk.Err != nil {
+			jb.Error = blk.Err.Error()
+			anyErr = true
+			out.Blocks = append(out.Blocks, jb)
+			continue
+		}
+		for _, h := range blk.Hosts {
+			jh := jsonHost{Host: h.Host}
+			if h.Err != nil {
+				jh.Error = h.Err.Error()
+				anyErr = true
+				jb.Hosts = append(jb.Hosts, jh)
+				continue
+			}
+			jh.Results, jh.Halted = h.Response.Results, h.Response.Halted
+			for _, st := range h.Response.Results {
+				// Same rule as the text renderer: a caught error is not a failed run
+				// (ADR-0009, #356).
+				anyErr = anyErr || (st.Category == "err" && !st.Caught)
+			}
+			jb.Hosts = append(jb.Hosts, jh)
+		}
+		out.Blocks = append(out.Blocks, jb)
+	}
+
+	b, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		// Nothing here can fail to marshal — every field is a plain Go value — but a
+		// silent empty report would be worse than a loud one.
+		fmt.Fprintf(os.Stderr, "rendering the JSON report: %v\n", err)
+		os.Exit(1)
+	}
+	return string(b) + "\n", anyErr
+}
+
+// redactJSON masks secrets in encoded JSON.
+//
+// `redact` alone is not enough here, and the gap is not theoretical: JSON escapes quotes,
+// backslashes and newlines, so a secret containing any of them is simply *not present*
+// verbatim in the encoded bytes — the plain ReplaceAll walks straight past it. Each secret
+// is therefore masked in both forms, raw and as JSON would write it.
+func redactJSON(s string, secrets []string) string {
+	for _, sec := range secrets {
+		if sec == "" {
+			continue
+		}
+		s = strings.ReplaceAll(s, sec, "***")
+		if enc, err := json.Marshal(sec); err == nil && len(enc) >= 2 {
+			s = strings.ReplaceAll(s, string(enc[1:len(enc)-1]), "***")
+		}
+	}
+	return s
 }
 
 // reportText renders the run/check report and reports whether any host errored.
