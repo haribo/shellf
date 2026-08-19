@@ -143,6 +143,15 @@ func checkParallel(fs *flag.FlagSet, n int) {
 	}
 }
 
+// multiFlag collects a repeatable string flag, in the order given.
+type multiFlag []string
+
+func (m *multiFlag) String() string { return strings.Join(*m, ",") }
+func (m *multiFlag) Set(v string) error {
+	*m = append(*m, v)
+	return nil
+}
+
 // runCmd: shellf run <plan.shellf> --inventory <hosts.shellf> [--dry-run] [flags].
 func runCmd(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
@@ -160,6 +169,8 @@ func runCmd(args []string) {
 	knownHosts := fs.String("known-hosts", "", "known_hosts path (default ~/.ssh/known_hosts)")
 	agentTTL := fs.Duration("agent-ttl", 0, "resident agent inactivity TTL before it self-erases (0 = 2h)")
 	parallel := fs.Int("parallel", 0, "hosts dialled at once (0 = 16); 1 serialises the fan-out")
+	var limits multiFlag
+	fs.Var(&limits, "limit", "restrict the run to a host or group (repeatable); narrows the plan, never extends it")
 	_ = fs.Parse(args) // flag.ExitOnError already exits on a parse error
 
 	// Before anything is read: a wrong flag must be the error the operator sees, not a
@@ -225,7 +236,7 @@ func runCmd(args []string) {
 		}
 	}
 
-	opt := orchestrator.Options{Parallel: *parallel}
+	opt := orchestrator.Options{Parallel: *parallel, Limit: limits}
 	printReports(orchestrator.Run(plan, inv, self, mode, dial, baseVars, setVars, defsSrc, opt), secretValues)
 }
 
@@ -761,8 +772,10 @@ func statusCmd(args []string) {
 	invPath := fs.String("inventory", "", "inventory file (required)")
 	insecure := fs.Bool("insecure", false, "skip host-key verification (dev only)")
 	knownHosts := fs.String("known-hosts", "", "known_hosts path (default ~/.ssh/known_hosts)")
-	// `status` sweeps the fleet exactly like `run` does, so it takes the same knob.
+	// `status` sweeps the fleet exactly like `run` does, so it takes the same knobs.
 	parallel := fs.Int("parallel", 0, "hosts dialled at once (0 = 16); 1 serialises the fan-out")
+	var limits multiFlag
+	fs.Var(&limits, "limit", "restrict the sweep to a host or group (repeatable)")
 	var secretFiles, secretEnvs kvFlags
 	fs.Var(&secretFiles, "secret-file", "secret from a file, name=path (repeatable); redacted in output")
 	fs.Var(&secretEnvs, "secret-env", "secret from an env var, name=VAR (repeatable); redacted in output")
@@ -813,7 +826,7 @@ func statusCmd(args []string) {
 	}
 	// `status` refuses an unknown target like `run` does. The render stays pure — the
 	// exit code is the caller's call, so a report string keeps one job (#451).
-	reports := orchestrator.Run(plan, inv, self, "status", dial, base, secrets, defsSrc, orchestrator.Options{Parallel: *parallel})
+	reports := orchestrator.Run(plan, inv, self, "status", dial, base, secrets, defsSrc, orchestrator.Options{Parallel: *parallel, Limit: limits})
 	fmt.Print(redact(statusReport(reports), secretValues))
 	exitFor(anyBlockError(reports))
 }

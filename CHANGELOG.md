@@ -8,6 +8,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `--limit <host|group>` narrows a run or a status sweep to part of what the plan targets, repeatable. It can only narrow, never extend; a limit that selects no host errors instead of reporting a green run that touched nobody (#460).
 - `--parallel <n>` sets how many hosts a run or a status sweep dials at once, instead of a constant 16 nobody could change without recompiling. `1` serialises the fan-out; a value below 1 is refused rather than read as unlimited (#462).
 - arm64 targets. A release binary embeds the agent for the other architecture and pushes the one `uname -m` reports, so an amd64 control host can configure an arm64 host and back. A plain `go build` carries no peer and refuses a foreign target by name instead of pushing a binary it cannot run (#453, ADR-0048).
 - CI runs the cross-architecture push it could not test before: an amd64 control host provisioning an emulated arm64 target, asserting that the pushed agent is an aarch64 ELF and that a second run converges (#457).
