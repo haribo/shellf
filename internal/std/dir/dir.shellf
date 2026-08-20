@@ -7,17 +7,31 @@ def ensure(path: str) {
     }
 }
 
-# `chown` accepts both `user` and `user:group`, so the comparison has to accept both too.
-# It happens in the shell, not by comparing an observed string to the argument: `stat`
-# always prints `user:group`, so a plan asking for `covuser` never matched what was read
-# and the def reported `changed` on every single run — firing every `if x.changed { … }`
-# downstream for nothing (#367). Caught by running it twice against a real target; no unit
-# test had, because a fake executor answers whatever the test asks for.
+# The observe walks the whole tree, because the apply chowns the whole tree.
+#
+# It used to `stat` the top directory alone while `apply` ran `chown -R`, so a directory
+# that already had the right owner was declared converged whatever its contents belonged
+# to. Concretely: `/etc/dkimkeys` ships owned by `opendkim`, a key generated inside it
+# lands root-owned, `dir.owner` reported `ok.already`, the `chown -R` never ran and the
+# daemon could not read its own key — with the run reporting green (#480).
+#
+# `chown` accepts both `user` and `user:group`, so the check has to accept both: `stat`
+# always prints `user:group`, and comparing that string to a plan asking for `covuser`
+# reported `changed` on every run, firing every `if x.changed { … }` downstream for
+# nothing (#367). Hence splitting the argument and asking `find` about each half.
+#
+# `-quit` stops at the first offender: the question is "is anything wrong here?", not
+# "list everything wrong", and a large tree should not be walked to the end to answer it.
 def owner(path: str, owner: str) as root {
     observe {
         return state(owned: shell {
-            cur="$(stat -c '%U:%G' "$path" 2>/dev/null)"
-            [ "$cur" = "$owner" ] || [ "${cur%%:*}" = "$owner" ]
+            u="${owner%%:*}"
+            g="${owner#*:}"
+            if [ "$g" = "$owner" ]; then
+                [ -z "$(find "$path" ! -user "$u" -print -quit 2>/dev/null)" ]
+            else
+                [ -z "$(find "$path" \( ! -user "$u" -o ! -group "$g" \) -print -quit 2>/dev/null)" ]
+            fi
         }.exit == 0)
     }
     apply {
