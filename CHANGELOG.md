@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- `docs/language.md` documents `import`, which it had never covered — both the local form and the remote one, with why `shellf.lock` is committed. The remote form also appears in the blog example, commented, using the RFC 2606 documentation domain (#376).
+
 ## [0.7.0] - 2026-08-19
 
 ### Added
