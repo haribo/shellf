@@ -25,6 +25,14 @@ import (
 // `deliver(%"conf.j2", dst)` would read on the target, the opposite of what the plan asked
 // (#332).
 func EvalDefFull(def Def, args, with map[string]string, control []string, ex engine.Executor, mode engine.Mode, resolve DefResolver, stack []string, fetch ControlFetcher, sync TreeSyncer, preview TreePreviewer) (res engine.Result, err error) {
+	var ev *evaluator
+	// Registered first, so it runs *last* — after the recover below has settled `res`.
+	// The other order would attach the shells to a result the recover then overwrites.
+	defer func() {
+		if ev != nil && len(ev.ran) > 0 {
+			res.Ran = ev.ran
+		}
+	}()
 	defer func() {
 		if r := recover(); r != nil {
 			if ce, ok := r.(calleeErr); ok {
@@ -43,9 +51,10 @@ func EvalDefFull(def Def, args, with map[string]string, control []string, ex eng
 
 	// A def's own `as <user>` escalates all its shells; it wins over an enclosing
 	// block's become (applied last). `As("")` is a no-op (ADR-0011).
-	ev := &evaluator{
+	ev = &evaluator{
 		ex: ex.As(def.Become).Using(def.Interp), vars: map[string]value{},
 		resolve: resolve, mode: mode, stack: stack, fetch: fetch, sync: sync, preview: preview,
+		def: def.Name,
 	}
 	for k, v := range args {
 		ev.vars[k] = v
@@ -225,7 +234,9 @@ type evaluator struct {
 	preview TreePreviewer
 	mode    engine.Mode
 	stack   []string
-	acted   bool // a shell ran, or a callee reported changed (ADR-0030 §3)
+	def     string               // the qualified name of the def being evaluated, for shell provenance
+	ran     []engine.ShellResult // every shell this def ran, in order (#470)
+	acted   bool                 // a shell ran, or a callee reported changed (ADR-0030 §3)
 }
 
 // DefResolver resolves an instruction name to its def. The agent supplies it (user
@@ -525,8 +536,17 @@ func (ev *evaluator) evalExpr(e Expr) value {
 	case ShellExpr:
 		// A per-block `shell(<interp>)` overrides the def-declared interpreter.
 		ev.acted = true
-		res := ev.ex.Using(x.Interp).Shell(x.Cmd, ev.shellEnv())
+		env := ev.shellEnv()
+		res := ev.ex.Using(x.Interp).Shell(x.Cmd, env)
+		// Where this command came from, carried on the result so a report can name it
+		// instead of showing an exit code with no command attached (#470).
+		res.Cmd, res.Def, res.Line = x.Cmd, ev.def, x.Line
+		res.Vars = citedVars(x.Cmd, env)
 		ev.last = res
+		// Every shell that ran, in order — what `-v` reports. A def only ever attaches
+		// the *one* result it returns, so without this the successful commands leave no
+		// trace at all, and a verbose run would show exactly what a silent one shows.
+		ev.ran = append(ev.ran, res)
 		return res
 	case ControlPath:
 		// A control-host path is data until a primitive reads it: `%"conf.j2"` names a
@@ -927,6 +947,49 @@ func (ev *evaluator) shellEnv() engine.Env {
 func (ev *evaluator) lastOK() bool {
 	sr, ok := ev.last.(engine.ShellResult)
 	return ok && sr.OK()
+}
+
+// citedVars keeps the variables a command can actually read — those it names as `$x` or
+// `${x}`. The whole environment would be both noise and exposure: a def's shell reads two
+// of the twenty values in scope, and the other eighteen have no business in a report.
+func citedVars(cmd string, env engine.Env) map[string]string {
+	var cited map[string]string
+	for name, val := range env {
+		if !citesVar(cmd, name) {
+			continue
+		}
+		if cited == nil {
+			cited = map[string]string{}
+		}
+		cited[name] = val
+	}
+	return cited
+}
+
+// citesVar reports whether cmd reads $name, as `${name}` or as a bare `$name`.
+//
+// The bare form needs a boundary check, not a substring match: `$p` occurs inside `$path`,
+// so a def declaring both would report a value its command never reads. Shell name
+// characters are letters, digits and underscore.
+func citesVar(cmd, name string) bool {
+	if strings.Contains(cmd, "${"+name+"}") {
+		return true
+	}
+	for i := 0; ; {
+		j := strings.Index(cmd[i:], "$"+name)
+		if j < 0 {
+			return false
+		}
+		end := i + j + 1 + len(name)
+		if end >= len(cmd) || !isShellNameByte(cmd[end]) {
+			return true
+		}
+		i = end
+	}
+}
+
+func isShellNameByte(c byte) bool {
+	return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 }
 
 func (ev *evaluator) toResult(o Outcome) engine.Result {

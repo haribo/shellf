@@ -60,7 +60,25 @@ func runRequest(req proto.Request, ex engine.Executor, ch *Channel) proto.Respon
 		return proto.Response{Results: []proto.StepResult{r}, Halted: true}
 	}
 	results, halted := runSteps(req.Steps, ex, mode(req.Mode), map[string]engine.Result{}, defs, ch)
+	if !req.Verbose {
+		// Every step collected its shells; only a verbose run reports them. Dropped here,
+		// once, rather than threaded as a flag through runSteps → runStep → runIf: the
+		// collection is free, the transport is not (#470).
+		//
+		// A failing step still names its command — that rides on `Shell`, the result the
+		// def itself handed back, and is not part of this.
+		stripRan(results)
+	}
 	return proto.Response{Results: results, Halted: halted}
+}
+
+// stripRan clears the per-step shell log, including nested steps: an `if` block and a
+// composed def both report through Sub, and a log left there would travel just the same.
+func stripRan(results []proto.StepResult) {
+	for i := range results {
+		results[i].Ran = nil
+		stripRan(results[i].Sub)
+	}
 }
 
 // userDefs re-parses each shipped def source and registers it under its resolved
@@ -76,7 +94,12 @@ func userDefs(srcByName map[string]string) (map[string]lang.Def, error) {
 		if err != nil || len(defs) != 1 {
 			return nil, fmt.Errorf("user def %q: %v", name, err)
 		}
-		m[name] = defs[0]
+		d := defs[0]
+		// The parsed name is what the file writes (`def mode(…)` → "mode"); the key is
+		// how the plan calls it (`file.mode`). A report naming the first is ambiguous —
+		// several packages define `mode` — so the def carries the qualified one (#470).
+		d.Name = name
+		m[name] = d
 	}
 	return m, nil
 }
@@ -280,7 +303,7 @@ func runStep(step proto.Step, ex engine.Executor, m engine.Mode, scope map[strin
 	if step.Bind != "" {
 		scope[step.Bind] = res
 	}
-	return proto.StepResult{Label: step.Label(), Category: res.Category.String(), Tag: res.Tag, Changed: res.Changed, Shell: res.Shell, Fields: res.Fields, Preview: res.Preview}
+	return proto.StepResult{Label: step.Label(), Category: res.Category.String(), Tag: res.Tag, Changed: res.Changed, Shell: res.Shell, Fields: res.Fields, Preview: res.Preview, Ran: res.Ran}
 }
 
 func copyScope(s map[string]engine.Result) map[string]engine.Result {

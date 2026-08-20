@@ -1054,3 +1054,21 @@ func TestTracer_RedactsAndStaysOffStdout(t *testing.T) {
 		t.Fatalf("nothing may reach stdout: %q", outBuf.String())
 	}
 }
+
+// A shell variable holds arbitrary content — a whole config file arrives as one `content`
+// argument. Printed raw it breaks the report's shape, which is what a first run showed
+// (#470).
+func TestOneLine_BoundsAValue(t *testing.T) {
+	if got := oneLine("hello\n"); got != "hello …" {
+		t.Fatalf("a trailing newline must not split the line: %q", got)
+	}
+	if got := oneLine("first\nsecond\nthird"); got != "first …" {
+		t.Fatalf("only the first line is kept: %q", got)
+	}
+	if got := oneLine(strings.Repeat("x", 200)); len(got) > 70 {
+		t.Fatalf("a long value must be cut: %d chars", len(got))
+	}
+	if got := oneLine("/opt/app"); got != "/opt/app" {
+		t.Fatalf("an ordinary value must pass through untouched: %q", got)
+	}
+}

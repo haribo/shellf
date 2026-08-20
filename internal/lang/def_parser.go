@@ -494,6 +494,7 @@ func (p *parser) primary() Expr {
 }
 
 func (p *parser) shellExpr(unsafe bool) Expr {
+	line := p.tok.line                // the `shell` keyword's own line, before any advance
 	interp := p.shellInterp()         // optional `shell(<interp>)` (ADR-0012)
 	body, err := p.lex.rawShellBody() // lexer sits right after "shell" / its interp
 	if err != nil {
@@ -505,7 +506,7 @@ func (p *parser) shellExpr(unsafe bool) Expr {
 		}
 	}
 	p.adv()
-	e := ShellExpr{Cmd: body, Interp: interp}
+	e := ShellExpr{Cmd: body, Interp: interp, Line: line}
 	if p.tok.kind == tIdent && p.tok.val == "unless" {
 		// Parsed and stored until #415, and read by nobody: the engine's guard is only
 		// ever filled from a plan step, and plans refuse the keyword. So it held in

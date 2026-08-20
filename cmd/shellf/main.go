@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -164,7 +165,7 @@ func runCmd(args []string) {
 	fs.Var(&secretEnvs, "secret-env", "secret from an env var, name=VAR (repeatable); redacted in output")
 	dryRun := fs.Bool("dry-run", false, "decide and preview without mutating")
 	asJSON := fs.Bool("json", false, "report as JSON on stdout (diagnostics stay on stderr)")
-	verbose := fs.Bool("v", false, "trace the control host's decisions on stderr (connection, agent, workdir, timing)")
+	verbose := fs.Bool("v", false, "trace the control host's decisions on stderr, and report every command run on the target")
 	// `--check` was the old name (ADR-0035). Accepting it silently would keep two
 	// spellings alive; this only exists to say what to type instead.
 	oldCheck := fs.Bool("check", false, "")
@@ -240,7 +241,7 @@ func runCmd(args []string) {
 		}
 	}
 
-	opt := orchestrator.Options{Parallel: *parallel, Limit: limits}
+	opt := orchestrator.Options{Parallel: *parallel, Limit: limits, Verbose: *verbose}
 	printReports(orchestrator.Run(plan, inv, self, mode, dial, baseVars, setVars, defsSrc, opt), secretValues, *asJSON)
 }
 
@@ -1096,6 +1097,53 @@ func allUnknownTargets(reports []orchestrator.BlockReport) bool {
 	return true
 }
 
+// shellSource renders one shell block: the source text, where it was written, and the
+// values it could read.
+//
+// The text is the source, with `$var` unexpanded, because that is what actually ran —
+// values reach the shell through its environment and no substituted command line ever
+// exists (internal/engine/executor.go). Printing a reconstructed one would show a string
+// that never executed, and would put a secret parameter in plain sight.
+func shellSource(b *strings.Builder, r engine.ShellResult, indent string) {
+	if r.Cmd == "" {
+		return // a diagnostic ShellResult the agent built by hand, with no command behind it
+	}
+	where := ""
+	if r.Def != "" && r.Line > 0 {
+		where = fmt.Sprintf("   %s:%d", r.Def, r.Line)
+	}
+	for i, line := range strings.Split(strings.TrimRight(r.Cmd, "\n"), "\n") {
+		if i == 0 {
+			fmt.Fprintf(b, "%s    $ %s%s\n", indent, line, where)
+			continue
+		}
+		fmt.Fprintf(b, "%s      %s\n", indent, line)
+	}
+	// Sorted: a map walk would reorder the report between two identical runs.
+	names := make([]string, 0, len(r.Vars))
+	for n := range r.Vars {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		fmt.Fprintf(b, "%s        %s = %s\n", indent, n, oneLine(r.Vars[n]))
+	}
+}
+
+// oneLine renders a value on a single bounded line. A variable holds arbitrary content —
+// a whole config file arrives as one `content` argument — and printing it raw breaks the
+// report's shape and floods it.
+func oneLine(v string) string {
+	const max = 60
+	if i := strings.IndexByte(v, '\n'); i >= 0 {
+		v = strings.TrimRight(v[:i], "\r") + " …"
+	}
+	if len(v) > max {
+		v = v[:max] + " …"
+	}
+	return v
+}
+
 func stepText(b *strings.Builder, s proto.StepResult, indent string) {
 	label := s.Category
 	if s.Tag != "" {
@@ -1107,6 +1155,16 @@ func stepText(b *strings.Builder, s proto.StepResult, indent string) {
 		for _, line := range strings.Split(strings.TrimRight(s.Shell.Stdout, "\n"), "\n") {
 			fmt.Fprintf(b, "%s    | %s\n", indent, line)
 		}
+	}
+	// The command that failed, and where it is written. Without it a report says a step
+	// exited 2 and never which of a def's commands did (#470).
+	if s.Category == "err" && s.Shell != nil {
+		shellSource(b, *s.Shell, indent)
+	}
+	// Under `-v`, every command the step ran — the successful ones included, which is the
+	// difference between a verbose run and a silent one.
+	for _, r := range s.Ran {
+		shellSource(b, r, indent)
 	}
 	// On a failure, what went wrong. Without this the diagnostics the agent attaches —
 	// an unbound variable, a refused resource, a call cycle — are written and never
