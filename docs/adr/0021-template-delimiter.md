@@ -2,7 +2,8 @@
 
 ## Status
 
-Active. Supersedes the delimiter choice of
+Superseded by [ADR-0049](0049-template-delimiter-tilde.md), which replaces both
+the `@{var}` delimiter and the `@@` escape below. Supersedes the delimiter choice of
 [ADR-0019](0019-templates.md) §3 (which reused `${var}`); the rest of ADR-0019
 stands.
 

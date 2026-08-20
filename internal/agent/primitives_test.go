@@ -53,7 +53,7 @@ func wire(t *testing.T, planDir string, declared []string, hostVars map[string]s
 // target — which is what `file.template` becomes once it is an ordinary def.
 func TestPrimitives_ReadReachesTheControlHost(t *testing.T) {
 	planDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(planDir, "conf.j2"), []byte("port = @{port}"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(planDir, "conf.j2"), []byte("port = ~{port}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	ch := wire(t, planDir, []string{"file.render:" + filepath.Join(planDir, "conf.j2")}, map[string]string{"port": "8080"})

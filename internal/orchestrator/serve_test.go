@@ -182,12 +182,12 @@ func TestAllowed_ClimbingOutOfAssetsIsRefused(t *testing.T) {
 // file and gets the substituted result (ADR-0042 §1).
 func TestServe_Render(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "conf.j2"), []byte("host = @{who}"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "conf.j2"), []byte("host = ~{who}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	allow := NewAllowed(dir, []string{"file.render:conf.j2"})
 	allow.Render = func(content string, _ map[string]string) (string, error) {
-		return strings.ReplaceAll(content, "@{who}", "web1"), nil
+		return strings.ReplaceAll(content, "~{who}", "web1"), nil
 	}
 
 	m := ask(t, allow, "file.render:conf.j2")
@@ -205,12 +205,12 @@ func TestServe_Render(t *testing.T) {
 // no other way to learn. The scope is the one thing an ask still brings with it (#392).
 func TestServe_RenderReceivesTheAskScope(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "conf.j2"), []byte("host = @{who}"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "conf.j2"), []byte("host = ~{who}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	allow := NewAllowed(dir, []string{"file.render:conf.j2"})
 	allow.Render = func(content string, scope map[string]string) (string, error) {
-		return strings.ReplaceAll(content, "@{who}", scope["who"]), nil
+		return strings.ReplaceAll(content, "~{who}", scope["who"]), nil
 	}
 
 	agent, control, done := chanPair()
@@ -235,7 +235,7 @@ func TestServe_RenderReceivesTheAskScope(t *testing.T) {
 // answer empty content, which would deliver a blank file and report success.
 func TestServe_RenderWithoutRendererFails(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "conf.j2"), []byte("host = @{who}"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "conf.j2"), []byte("host = ~{who}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// Declared, so the refusal can only come from the missing renderer.
@@ -252,7 +252,7 @@ func TestServe_RenderWithoutRendererFails(t *testing.T) {
 // halts instead of writing a file with a hole in it.
 func TestServe_RenderErrorSurfaces(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "conf.j2"), []byte("v = @{nope}"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "conf.j2"), []byte("v = ~{nope}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	allow := NewAllowed(dir, []string{"file.render:conf.j2"})
@@ -267,15 +267,15 @@ func TestServe_RenderErrorSurfaces(t *testing.T) {
 // #392 — the regression test for the hole ADR-0042 closes. A render whose resource the
 // plan never declared must be refused like every other ask. Before the fix the control
 // host substituted whatever text the target sent, so an imported def asked for
-// `@{db_password}` and was answered by the machine holding it.
+// `~{db_password}` and was answered by the machine holding it.
 func TestServe_RefusesAnUndeclaredRender(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "secret.tmpl"), []byte("p = @{db_password}"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "secret.tmpl"), []byte("p = ~{db_password}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	allow := NewAllowed(dir, []string{"file.render:conf.j2"})
 	allow.Render = func(content string, _ map[string]string) (string, error) {
-		return strings.ReplaceAll(content, "@{db_password}", "s3cr3t"), nil
+		return strings.ReplaceAll(content, "~{db_password}", "s3cr3t"), nil
 	}
 
 	m := ask(t, allow, "file.render:secret.tmpl")
