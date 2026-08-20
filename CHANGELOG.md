@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- A failing step reports the shell command that failed, where it is written (`file.mode:6`) and the values it could read. `-v` reports every command a step ran, successful ones included. The text is the source, `$var` unexpanded — no substituted command line ever runs, and reconstructing one would print a secret (#470).
+
 ### Changed
 
 - `docs/language.md` documents `import`, which it had never covered — both the local form and the remote one, with why `shellf.lock` is committed. The remote form also appears in the blog example, commented, using the RFC 2606 documentation domain (#376).
