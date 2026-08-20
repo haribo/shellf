@@ -363,6 +363,19 @@ for d in $acting; do
   fi
 done
 
+# `dir.owner` chowned the tree, not only its root. The idempotence sweep above cannot
+# catch this: the broken version reported `ok.already` on the *first* run, so it converged
+# — while the file inside stayed root-owned and the daemon meant to read it could not
+# (#480). Only looking at the file says so.
+owner="$(docker exec "$cname" stat -c '%U' /tmp/cov/owned/inside.txt 2>&1)"
+[ "$owner" = "covuser" ] || fail "dir.owner left a file inside the tree owned by '$owner' (#480)"
+
+# And `file.owner` changed its one file without touching the directory around it.
+owner="$(docker exec "$cname" stat -c '%U' /tmp/cov/owned-file.txt 2>&1)"
+[ "$owner" = "covuser" ] || fail "file.owner did not change the file's owner (got '$owner')"
+owner="$(docker exec "$cname" stat -c '%U' /tmp/cov 2>&1)"
+[ "$owner" != "covuser" ] || fail "file.owner must not chown the directory holding the file"
+
 # `dir.sync` removed what the source does not have, and `dir.copy` did not — one word
 # apart, so the difference is asserted rather than assumed (#373).
 docker exec "$cname" test -e /tmp/cov/mirror/stale.txt && fail "dir.sync did not remove the extra file"

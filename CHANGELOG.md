@@ -9,10 +9,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - A failing step reports the shell command that failed, where it is written (`file.mode:6`) and the values it could read. `-v` reports every command a step ran, successful ones included. The text is the source, `$var` unexpanded — no substituted command line ever runs, and reconstructing one would print a secret (#470).
+- `file.owner(path, owner)` changes one file's owner without touching its directory, a case that previously needed `unsafe shell { chown … }` (#480).
 
 ### Changed
 
 - `docs/language.md` documents `import`, which it had never covered — both the local form and the remote one, with why `shellf.lock` is committed. The remote form also appears in the blog example, commented, using the RFC 2606 documentation domain (#376).
+
+### Fixed
+
+- `dir.owner` observes the tree it chowns. It checked only the top directory while applying `chown -R`, so a directory already owned by the right user reported `ok.already` whatever its contents belonged to — a key left root-owned inside it stayed that way, with the run green (#480).
 
 ## [0.7.0] - 2026-08-19
 
