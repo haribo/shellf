@@ -18,6 +18,10 @@ on target {
     file.mode("/tmp/cov/written.txt", "640")
     file.line("/tmp/cov/lined.txt", "appended-line")
     file.replace("/tmp/cov/env.txt", "KEY", "value")
+    # #487: a value carrying sed metacharacters. The benign `"value"` above is what let the
+    # def ship writing `URL=https://aURL=oldb` for an ordinary query string — a happy-path
+    # argument tests the happy path, and nothing else.
+    file.replace("/tmp/cov/env.txt", "URL", "https://x.test/a?b=1&c=2|d/e")
     file.copy(%"tree/hello.txt", "/tmp/cov/copied.txt")
     file.delete("/tmp/cov/gone.txt")
 

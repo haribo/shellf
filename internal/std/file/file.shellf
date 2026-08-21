@@ -31,17 +31,43 @@ def mode(path: str, mode: str) {
 }
 
 # Ensure a `key=value` line in a file (e.g. an .env): replace the line if the key
-# is present, else append it. Idempotent on the exact line. Note: key/value are
-# used in a sed pattern, so keep them free of sed metacharacters (`|`, `&`, `/`).
+# is present, else append it. Idempotent on the exact line, whatever the value holds —
+# an URL with a query string is ordinary input here.
+#
+# It used to build a sed expression out of its own arguments, so the value was not
+# written, it was interpreted: `&` means "the whole matched line" in a replacement, `|`
+# was the delimiter, and a key holding `.` matched neighbouring lines. `URL=https://a&b`
+# landed as `URL=https://aURL=oldb`, which the observe then refused, so every run rewrote
+# and re-corrupted the file (#487). awk reads both through ENVIRON instead: nothing the
+# caller passes is ever parsed as syntax.
+#
+# Still unguarded: a `=` in the key, or a newline in either argument, cannot be written as
+# one `key=value` line. Refusing them belongs in `check`, and `check` cannot express it —
+# the language compares values with `==` and nothing else, so the only way to ask "does
+# this hold a newline" is a shell round trip on the target, in every mode, to validate an
+# argument the control host already holds. That contradicts ADR-0034 §5. Tracked as the
+# language gap it is (#492), not worked around here.
 def replace(path: str, key: str, value: str) {
+    check {
+        if key == "" { return err.keyMustNotBeEmpty }
+    }
     observe { return state(set: shell { grep -qxF -- "$key=$value" "$path" 2>/dev/null }.exit == 0) }
     apply {
         r = shell {
-            if grep -q "^$key=" "$path" 2>/dev/null; then
-                sed -i "s|^$key=.*|$key=$value|" "$path"
-            else
-                printf '%s=%s\n' "$key" "$value" >> "$path"
-            fi
+            # Staged like file.write, and for the same reason: the destination is never
+            # the thing being written, so nothing reads a half-rewritten file. `cp -p`
+            # first so the rename inherits the original mode and owner.
+            staged="$path.shellf.$$"
+            trap 'rm -f "$staged"' EXIT
+            src="$path"
+            if [ -f "$path" ]; then cp -p "$path" "$staged"; else src=/dev/null; fi
+            # One pass does both branches: rewrite the first line carrying the key, drop
+            # any further one (sed left duplicates behind), append when there was none.
+            awk 'BEGIN { p = ENVIRON["key"] "="; v = ENVIRON["value"]; n = length(p) }
+                 substr($0, 1, n) == p { if (!done) { print p v; done = 1 } next }
+                 { print }
+                 END { if (!done) print p v }' "$src" > "$staged"
+            mv -f "$staged" "$path"
         }
         if !r { return err.runtime(r) }
         return ok.set
