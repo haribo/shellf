@@ -478,7 +478,38 @@ on host {
 - A `with` binding wins over a same-named global (and, for a def, over the passed
   argument): it is the most local scope. Precedence: `with` > per-host > global.
 - It reaches a def's / `shell`'s body as an environment variable (`$k`) and a
-  template's render scope (`@{k}`).
+  template's render scope (`~{k}`).
+
+## Templates — `~{var}` (ADR-0049)
+
+A template is an ordinary file rendered on the control host. Its shellf placeholders are
+written `~{name}`; **everything else is copied byte for byte**:
+
+```
+DOMAIN=~{domain}                    → the value
+VIRTUAL_HOST=${DOMAIN}              → untouched, compose reads it
+rule: "Host(`{{ .Domain }}`)"       → untouched, Traefik reads it
+admin@~{domain}                     → admin@example.com
+```
+
+That is the point of the sigil being neither `$` nor `{{`: the files worth templating are
+exactly the ones that use those for their own tool.
+
+**A lone `~` is a literal `~`** — there is no escape, as there is none for a lone `{` in
+Jinja or Go. An undefined name, or an unterminated `~{`, is an error.
+
+### Writing a literal `~{…}`
+
+`~{raw}` … `~{endraw}` copies its contents verbatim: nothing inside is substituted and no
+name in it is looked up. It is how a template documents the placeholders it carries.
+
+```
+~{raw}
+# A placeholder looks like ~{name}; this line shows one without using it.
+~{endraw}
+```
+
+`raw` and `endraw` are reserved: a variable cannot be called either.
 
 ### Template render scope (ADR-0024)
 
@@ -495,6 +526,6 @@ for svc in ["traefik", "app"] {
 }
 ```
 
-`${svc}` resolves to the item at parse; the template then renders `@{svc}`. (The
+`${svc}` resolves to the item at parse; the template then renders `~{svc}`. (The
 `dst` and other string args already interpolate `${svc}` without `with` — only
 the template *file's* content needs the explicit pass.)

@@ -13,6 +13,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **BREAKING** — a template placeholder is `~{var}`, not `@{var}`, and the `@@` escape is gone: it made `admin@@{domain}` render as literal text, so a mail map was unwritable. `~{raw}` … `~{endraw}` now marks a verbatim region, letting a template document its own placeholders (#481, ADR-0049).
 - `docs/language.md` documents `import`, which it had never covered — both the local form and the remote one, with why `shellf.lock` is committed. The remote form also appears in the blog example, commented, using the RFC 2606 documentation domain (#376).
 
 ### Fixed
