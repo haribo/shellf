@@ -302,3 +302,76 @@ func TestEvalDef_Preview(t *testing.T) {
 		t.Fatalf("failing preview must degrade to plain would: %s preview=%q", res3, res3.Preview)
 	}
 }
+
+// A shell's report shows the variables that shell can read — and only those. The naive
+// substring match is wrong: `$p` is a prefix of `$path`, so a def with both would show a
+// value the command never reads (#470).
+func TestCitedVars_MatchesWholeNamesOnly(t *testing.T) {
+	env := engine.Env{"p": "short", "path": "/opt/app", "mode": "755", "unused": "x"}
+
+	got := citedVars(`chmod "$mode" "$path"`, env) // bare `$path`, where `$p` is a prefix
+
+	if len(got) != 2 || got["mode"] != "755" || got["path"] != "/opt/app" {
+		t.Fatalf("want mode and path only, got %v", got)
+	}
+	if _, ok := got["p"]; ok {
+		t.Fatal("`$p` must not match inside `$path`")
+	}
+	if _, ok := got["unused"]; ok {
+		t.Fatal("a variable the command never names must not be reported")
+	}
+}
+
+// No variable cited: nothing is carried, rather than an empty map that serialises as noise.
+func TestCitedVars_NoneCitedIsNil(t *testing.T) {
+	if got := citedVars(`systemctl daemon-reload`, engine.Env{"a": "1"}); got != nil {
+		t.Fatalf("want nil, got %v", got)
+	}
+}
+
+// Under `-v` a run must show every command, not only the one a failing def hands back.
+// Without this the verbose report equals the silent one (#470).
+func TestEvalDef_CollectsEveryShellItRan(t *testing.T) {
+	src := `def d(path: str) {
+    apply {
+        a = shell { test -d "$path" }
+        b = shell { systemctl is-enabled nginx }
+        return ok.created
+    }
+}`
+	defs, err := ParseDefs(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex := &ranFake{}
+	res, err := EvalDefFull(defs[0], map[string]string{"path": "/opt/app"}, nil, nil, ex,
+		engine.Apply, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(res.Ran) != 2 {
+		t.Fatalf("want the 2 commands that ran, got %d: %+v", len(res.Ran), res.Ran)
+	}
+	if res.Ran[0].Cmd != `test -d "$path"` || res.Ran[1].Cmd != `systemctl is-enabled nginx` {
+		t.Fatalf("commands lost or reordered: %q, %q", res.Ran[0].Cmd, res.Ran[1].Cmd)
+	}
+	// Source text, not a substituted command line: the value travels in the environment,
+	// so no expanded string ever existed.
+	if res.Ran[0].Vars["path"] != "/opt/app" {
+		t.Fatalf("the value must be carried separately: %v", res.Ran[0].Vars)
+	}
+	if res.Ran[0].Def != "d" || res.Ran[0].Line != 3 {
+		t.Fatalf("provenance lost: def=%q line=%d", res.Ran[0].Def, res.Ran[0].Line)
+	}
+}
+
+// ranFake succeeds at everything: this test is about what gets recorded, not about
+// outcomes.
+type ranFake struct{}
+
+func (f *ranFake) As(string) engine.Executor    { return f }
+func (f *ranFake) Using(string) engine.Executor { return f }
+func (f *ranFake) Shell(string, engine.Env) engine.ShellResult {
+	return engine.ShellResult{Exit: 0}
+}

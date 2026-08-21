@@ -1,5 +1,26 @@
 # chmod a path to an exact mode. Path-dependent (not intrinsically root — the
 # caller escalates with `as root` for system paths), like dir-ensure/file-write.
+# Own one file, without touching anything else in its directory. `dir.owner` chowns a
+# whole tree; changing a single file's owner had no instruction at all, so a plan had to
+# fall back on `unsafe shell { chown … }` — the escape hatch ADR-0040 exists to make rare
+# (#480).
+#
+# `as root`: giving a file away requires root on Linux whoever owns it, so unlike
+# `file.mode` this is intrinsically privileged rather than path-dependent (ADR-0011).
+def owner(path: str, owner: str) as root {
+    observe {
+        return state(owned: shell {
+            cur="$(stat -c '%U:%G' "$path" 2>/dev/null)"
+            [ "$cur" = "$owner" ] || [ "${cur%%:*}" = "$owner" ]
+        }.exit == 0)
+    }
+    apply {
+        r = shell { chown "$owner" "$path" }
+        if !r { return err.runtime(r) }
+        return ok.changed
+    }
+}
+
 def mode(path: str, mode: str) {
     observe { return state(mode: shell { stat -c '%a' "$path" 2>/dev/null }.stdout) }
     apply {

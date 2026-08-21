@@ -363,6 +363,19 @@ for d in $acting; do
   fi
 done
 
+# `dir.owner` chowned the tree, not only its root. The idempotence sweep above cannot
+# catch this: the broken version reported `ok.already` on the *first* run, so it converged
+# — while the file inside stayed root-owned and the daemon meant to read it could not
+# (#480). Only looking at the file says so.
+owner="$(docker exec "$cname" stat -c '%U' /tmp/cov/owned/inside.txt 2>&1)"
+[ "$owner" = "covuser" ] || fail "dir.owner left a file inside the tree owned by '$owner' (#480)"
+
+# And `file.owner` changed its one file without touching the directory around it.
+owner="$(docker exec "$cname" stat -c '%U' /tmp/cov/owned-file.txt 2>&1)"
+[ "$owner" = "covuser" ] || fail "file.owner did not change the file's owner (got '$owner')"
+owner="$(docker exec "$cname" stat -c '%U' /tmp/cov 2>&1)"
+[ "$owner" != "covuser" ] || fail "file.owner must not chown the directory holding the file"
+
 # `dir.sync` removed what the source does not have, and `dir.copy` did not — one word
 # apart, so the difference is asserted rather than assumed (#373).
 docker exec "$cname" test -e /tmp/cov/mirror/stale.txt && fail "dir.sync did not remove the extra file"
@@ -986,4 +999,47 @@ out="$(d --dry-run)"
 printf '%s' "$out" | grep -q 'ok.already' || fail "a converged file must still report already"
 printf '%s' "$out" | grep -q 'preview' && fail "a converged file must print no diff"
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out, booleans are booleans, dry-run diffs a change"
+say "22. a command is reported: on failure always, on success under -v (#470)"
+# Only a real agent running a real shell can prove this: the command text, its source
+# location and its variables are assembled on the target and travel back through the
+# protocol. A fake executor would assert the plumbing against itself.
+mkdir -p "$work/cmd/plans" "$work/cmd/inventories"
+cp "$work/inventory.shellf" "$work/cmd/inventories/inv.shellf"
+mkdir -p "$work/cmd/defs" "$work/cmd/assets"
+
+# A failing step names the command that failed, with no -v.
+cat > "$work/cmd/plans/fail.shellf" <<'EOF'
+on target {
+    file.mode("/tmp/shellf-e2e-absent-xyz", "755")
+}
+EOF
+rc=0; out="$("$work/shellf" run --inventory "$work/cmd/inventories/inv.shellf" --insecure   "$work/cmd/plans/fail.shellf" 2>&1)" || rc=$?
+printf '%s\n' "$out"
+[ "$rc" -ne 0 ] || fail "the failing plan must exit non-zero"
+printf '%s' "$out" | grep -q 'chmod "\$mode" "\$path"' \
+  || fail "a failing step must name the command that failed (#470)"
+printf '%s' "$out" | grep -qE 'file\.mode:[0-9]+' \
+  || fail "the command must name the def and line it was written on"
+printf '%s' "$out" | grep -q 'path = /tmp/shellf-e2e-absent-xyz' \
+  || fail "the values the command could read must be reported"
+# The source text, never a reconstructed command line: values travel in the environment.
+printf '%s' "$out" | grep -q 'chmod 755 /tmp' \
+  && fail "a substituted command must not be invented — it never ran"
+
+# A succeeding step says nothing without -v, and reports every command with it.
+cat > "$work/cmd/plans/ok.shellf" <<'EOF'
+on target {
+    dir.ensure("/tmp/shellf-e2e-cmd")
+}
+EOF
+out="$("$work/shellf" run --inventory "$work/cmd/inventories/inv.shellf" --insecure \
+  "$work/cmd/plans/ok.shellf" 2>&1)" || fail "the plan failed"
+printf '%s' "$out" | grep -q '\$ ' && fail "a successful run must report no command without -v"
+
+out="$("$work/shellf" run --inventory "$work/cmd/inventories/inv.shellf" --insecure -v \
+  "$work/cmd/plans/ok.shellf" 2>&1)" || fail "the verbose plan failed"
+printf '%s\n' "$out"
+printf '%s' "$out" | grep -qE 'dir\.ensure:[0-9]+' \
+  || fail "-v must report the commands a successful step ran (#470)"
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out, booleans are booleans, dry-run diffs a change, commands are reported"

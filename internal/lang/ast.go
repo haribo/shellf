@@ -125,6 +125,11 @@ type Call struct { // apt-cache-show(pkg)
 }
 type ShellExpr struct { // shell(<interp>) { … } or shell <line>
 	Cmd string
+	// Line is the 1-based source line of the `shell` keyword, kept so a failing command
+	// can name where it was written (#470). The lexer knew it and the AST used to drop
+	// it, which is why a report could say a step failed but never which of a def's five
+	// commands did.
+	Line int
 	// An `Unless` field stood here, filled by the def parser and read by nothing (#415).
 	// The guard lives on `engine.Shell`, filled from a plan step — and plans refuse the
 	// keyword, so a def's `unless` was a silent no-op.

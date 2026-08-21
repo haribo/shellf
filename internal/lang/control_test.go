@@ -149,7 +149,7 @@ func TestControl_RenderSubstitutesTheDefScope(t *testing.T) {
 		if resource != "file.render:c.j2" {
 			return nil, errors.New("unexpected resource " + resource)
 		}
-		rendered = strings.ReplaceAll("port = @{port}", "@{port}", vars["port"])
+		rendered = strings.ReplaceAll("port = ~{port}", "~{port}", vars["port"])
 		return []byte(rendered), nil
 	}
 	// `p` is marked as a control-host path, as a plan writing `%"c.j2"` would: unmarked,
@@ -395,7 +395,7 @@ on web {
 }
 
 // #392, ADR-0042 — the reverse of what this test asserted until then. `~file.render` took
-// content, which let an imported def submit `"@{db_password}"` and be answered by the
+// content, which let an imported def submit `"~{db_password}"` and be answered by the
 // machine holding it; it now names a declared template, and content is refused.
 func TestControl_RenderRequiresAControlPath(t *testing.T) {
 	fetch := func(string, []byte, map[string]string) ([]byte, error) { return []byte("x"), nil }
@@ -405,7 +405,7 @@ func TestControl_RenderRequiresAControlPath(t *testing.T) {
 		t.Fatalf("a marked template is what render takes: %v", err)
 	}
 
-	_, err := evalWithFetch(t, `def t() { apply { x = ~file.render("host = @{db_password}") return ok.done } }`, "t", nil, fetch)
+	_, err := evalWithFetch(t, `def t() { apply { x = ~file.render("host = ~{db_password}") return ok.done } }`, "t", nil, fetch)
 	if err == nil {
 		t.Fatal("content submitted by the target must be refused, not substituted")
 	}

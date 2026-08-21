@@ -30,6 +30,10 @@ type Options struct {
 	// Parallel caps how many hosts a block dials at once. 0 takes fleet's default.
 	Parallel int
 
+	// Verbose asks each host to report every shell it ran, not only a failing one
+	// (#470). It rides in Options because it is a property of the run, like Limit.
+	Verbose bool
+
 	// Limit narrows the run to these host aliases or group names. Empty means "the whole
 	// plan". It can only ever *narrow*: a plan is the authority on what it touches, and a
 	// flag able to add a host would make the plan a suggestion (#460).
@@ -142,7 +146,7 @@ func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.D
 			if err != nil {
 				return nil, &ResolveError{Err: err}
 			}
-			return json.Marshal(proto.Request{Mode: mode, Steps: steps, Defs: defs})
+			return json.Marshal(proto.Request{Mode: mode, Steps: steps, Defs: defs, Verbose: opt.Verbose})
 		}
 		results := fleet.Run(live, agentBin, reqFor, dial, opt.Parallel)
 

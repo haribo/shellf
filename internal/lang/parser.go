@@ -952,22 +952,44 @@ func (p *parser) interpolate(s string) string {
 	return out
 }
 
-// Template renders a template file (ADR-0021): `@{name}` is interpolated (a
-// different sigil from the plan's `${}`, so a config file's own `${…}`/`{{ }}`
-// pass through verbatim), and `@@` is a literal `@`. An unterminated `@{` or an
-// undefined name is an error.
+// Template renders a template file (ADR-0049): `~{name}` is interpolated, and everything
+// else is copied byte for byte — a config file's own `${…}` and `{{ … }}` reach the tool
+// that owns them untouched, which is the whole reason the sigil is neither.
+//
+// The sigil has **no escape**. A lone `~` is a literal `~`, exactly as a lone `{` is in
+// Jinja and Go: a two-character delimiter makes its opening character unambiguous, so
+// escaping it only creates the problem it pretends to solve. ADR-0021's `@@` rule made
+// `admin@@{domain}` render the text `admin@{domain}`, so an email address in a mail map
+// could not be written at all (#481).
+//
+// `~{raw}` … `~{endraw}` marks a verbatim region: the text inside is copied as-is and no
+// name in it is looked up. That is what lets a template document the placeholders it
+// carries, which is otherwise impossible in a file where every line is rendered.
+//
+// An unterminated `~{`, an unterminated region, or an undefined name is an error.
 func Template(s string, lookup func(string) (string, bool)) (string, error) {
+	const rawOpen, rawClose = "~{raw}", "~{endraw}"
 	var out strings.Builder
 	for i := 0; i < len(s); {
-		if s[i] == '@' && i+1 < len(s) && s[i+1] == '@' { // @@ -> @
-			out.WriteByte('@')
-			i += 2
+		if strings.HasPrefix(s[i:], rawOpen) {
+			rest := s[i+len(rawOpen):]
+			end := strings.Index(rest, rawClose)
+			if end < 0 {
+				return "", fmt.Errorf("unterminated ~{raw} region in template")
+			}
+			// The newline that ends the opening marker's line, and the one before the
+			// closing marker, belong to the markers rather than to the text: a region on
+			// its own lines would otherwise add a blank line at each end.
+			body := strings.TrimPrefix(rest[:end], "\n")
+			body = strings.TrimSuffix(body, "\n")
+			out.WriteString(body)
+			i += len(rawOpen) + end + len(rawClose)
 			continue
 		}
-		if s[i] == '@' && i+1 < len(s) && s[i+1] == '{' {
+		if s[i] == '~' && i+1 < len(s) && s[i+1] == '{' {
 			end := strings.IndexByte(s[i+2:], '}')
 			if end < 0 {
-				return "", fmt.Errorf("unterminated @{...} in template")
+				return "", fmt.Errorf("unterminated ~{...} in template")
 			}
 			name := s[i+2 : i+2+end]
 			v, ok := lookup(name)

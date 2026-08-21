@@ -53,7 +53,11 @@ func load() {
 			prefix = path.Base(dir) + "." // subdirectory → qualified package
 		}
 		for _, def := range parsed {
-			defs[prefix+def.Name] = def
+			// The def keeps the name a plan calls it by, not the bare one its file
+			// writes: `mode` exists in more than one package, so a report naming the
+			// unqualified one cannot be traced back (#470).
+			def.Name = prefix + def.Name
+			defs[def.Name] = def
 		}
 		return nil
 	})

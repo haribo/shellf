@@ -36,6 +36,15 @@ explicit human "go" each time — this overrides any standing "be autonomous".**
 
 - `gh pr create --base main --head develop --title "chore(release): vX.Y.Z"` with a
   short body. Wait until every check is green (`gh pr checks`).
+- **The body must carry one `Closes #N` per issue in this version.** A feature PR's
+  `Closes` never fires: GitHub honours the keyword only when the PR merges into the
+  **default branch**, and feature PRs target `develop`. So without this, every issue
+  shipped in the release stays open forever — after v0.7.0, eleven of them did, and were
+  closed by hand.
+  Collect them from the version's `CHANGELOG.md` section, which already names each issue:
+  `awk '/^## \[X.Y.Z\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md | grep -oE '#[0-9]+' | sort -u`
+  Read the list before pasting it: a `(#453, ADR-0048)` entry names the issue, but an
+  entry may also cite an issue it merely refers to.
 - **Stop. Show the PR and ask the user to approve the merge to `main`.**
 - On explicit approval only:
   `gh pr merge <n> --merge --subject "chore(release): vX.Y.Z (#<n>)" --body ""`

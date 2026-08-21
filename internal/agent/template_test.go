@@ -18,7 +18,7 @@ import (
 // the control host at all.
 func TestTemplateDef_RendersPerHost(t *testing.T) {
 	planDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(planDir, "motd.tmpl"), []byte("host = @{who}"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(planDir, "motd.tmpl"), []byte("host = ~{who}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	src := filepath.Join(planDir, "motd.tmpl")
@@ -49,7 +49,7 @@ func TestTemplateDef_RendersPerHost(t *testing.T) {
 // host does not have fails, rather than delivering a file with a hole in it.
 func TestTemplateDef_UndefinedVariableFails(t *testing.T) {
 	planDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(planDir, "x.tmpl"), []byte("v = @{nope}"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(planDir, "x.tmpl"), []byte("v = ~{nope}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	src := filepath.Join(planDir, "x.tmpl")

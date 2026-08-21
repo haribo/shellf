@@ -1,9 +1,8 @@
 # shellf — language spec
 
 > Living doc, and incomplete on purpose: what is written here is current, what is missing
-> is missing. Two shipped constructs have no chapter yet — `as <user>` escalation
-> ([ADR-0011](adr/0011-privilege-escalation.md)) and `import`
-> ([ADR-0015](adr/0015-local-imports.md), [ADR-0016](adr/0016-remote-modules.md)).
+> is missing. One shipped construct has no chapter yet — `as <user>` escalation
+> ([ADR-0011](adr/0011-privilege-escalation.md)).
 
 ## `Result` — an instruction's outcome
 
@@ -414,6 +413,51 @@ dir.sync(dst=/var/www/site, src=site) would.synced
 That preview is not a nicety. A destructive instruction whose dry-run says nothing tells
 the operator what they lost only afterwards.
 
+## `import` — using defs from elsewhere (ADR-0015, ADR-0016)
+
+Defs inside your project need no import: `defs/<name>/` is found by the layout and called
+`<name>.<def>` (ADR-0038). `import` is for defs that live **outside** it.
+
+```
+import site "../shared"                              # local: a directory, by path
+import web  "example.com/alice/shellf-web@v1.2.0"    # remote: a git repo, by tag
+```
+
+Both are called through their alias — `site.login-notice(…)`, `web.deploy(…)`. The alias
+is yours to choose; it does not have to match the directory or repository name.
+
+**The form decides which one it is: a spec is remote when it carries `@<version>`.** A
+local path never does, so there is no ambiguity and no flag.
+
+### Local — a directory
+
+The path is relative to the plan file. The directory holds `*.shellf` files of defs
+only: no `on` blocks, and no nested `import`.
+
+### Remote — a git repository
+
+- **`@<version>` is a tag or a full commit SHA.** A branch is refused: it moves, so it
+  cannot be pinned.
+- **The module is the repository root** — its `*.shellf` files, flat. Not a project
+  layout: `defs/` arranges *projects*, not modules. Importing a subdirectory is not
+  supported yet.
+- **No scheme means `https://`.** `example.com/alice/web` and
+  `https://example.com/alice/web` are the same thing; `file://` and `git@…` work too.
+- The control host runs `git` to fetch it. **The target needs neither git nor network** —
+  it only ever receives the agent.
+
+### `shellf.lock` — commit it
+
+The first run of a new import resolves the tag to a commit SHA and writes `shellf.lock`
+beside the plan, recording that SHA and a hash of the module's contents. Later runs use
+the locked SHA and **verify** the hash: if the tag was moved to different content, the run
+fails rather than following it silently. That check is the whole point — commit the lock,
+or you keep none of the guarantee.
+
+Once locked and cached (`~/.cache/shellf/modules/<sha>/`), a run needs no network.
+
+A module cannot import another module: there are no transitive dependencies, by design.
+
 ## Per-call override — `with { … }` (ADR-0022)
 
 Any instruction call — a def, `shell`, `file.template`, or a builtin — may be followed
@@ -434,7 +478,38 @@ on host {
 - A `with` binding wins over a same-named global (and, for a def, over the passed
   argument): it is the most local scope. Precedence: `with` > per-host > global.
 - It reaches a def's / `shell`'s body as an environment variable (`$k`) and a
-  template's render scope (`@{k}`).
+  template's render scope (`~{k}`).
+
+## Templates — `~{var}` (ADR-0049)
+
+A template is an ordinary file rendered on the control host. Its shellf placeholders are
+written `~{name}`; **everything else is copied byte for byte**:
+
+```
+DOMAIN=~{domain}                    → the value
+VIRTUAL_HOST=${DOMAIN}              → untouched, compose reads it
+rule: "Host(`{{ .Domain }}`)"       → untouched, Traefik reads it
+admin@~{domain}                     → admin@example.com
+```
+
+That is the point of the sigil being neither `$` nor `{{`: the files worth templating are
+exactly the ones that use those for their own tool.
+
+**A lone `~` is a literal `~`** — there is no escape, as there is none for a lone `{` in
+Jinja or Go. An undefined name, or an unterminated `~{`, is an error.
+
+### Writing a literal `~{…}`
+
+`~{raw}` … `~{endraw}` copies its contents verbatim: nothing inside is substituted and no
+name in it is looked up. It is how a template documents the placeholders it carries.
+
+```
+~{raw}
+# A placeholder looks like ~{name}; this line shows one without using it.
+~{endraw}
+```
+
+`raw` and `endraw` are reserved: a variable cannot be called either.
 
 ### Template render scope (ADR-0024)
 
@@ -451,6 +526,6 @@ for svc in ["traefik", "app"] {
 }
 ```
 
-`${svc}` resolves to the item at parse; the template then renders `@{svc}`. (The
+`${svc}` resolves to the item at parse; the template then renders `~{svc}`. (The
 `dst` and other string args already interpolate `${svc}` without `with` — only
 the template *file's* content needs the explicit pass.)

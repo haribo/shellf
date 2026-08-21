@@ -22,6 +22,21 @@
 # layout and needs no import — this shows the other case, sharing across projects.
 import site "../shared"
 
+# REMOTE IMPORT (ADR-0016), shown but not enabled: the same statement pointing at a git
+# repository instead of a directory. The spec is remote because it carries `@<tag>`.
+#
+#   import web "example.com/alice/shellf-web@v1.2.0"
+#   ...
+#   web.deploy("/opt/blog")
+#
+# `example.com` is the address RFC 2606 reserves for documentation, so the line is
+# readable without pretending some repository exists. It stays commented for that same
+# reason: this example is executed by the e2e harness, and a live import would make the
+# build depend on a repository — and a network — that shellf does not control. The
+# mechanism itself is exercised for real in `test/e2e/run.sh` step 9, against a git
+# repository the harness builds on the spot. See docs/language.md for the full form,
+# including why `shellf.lock` is committed.
+
 on app {
     common.banner("Managed by shellf — do not edit by hand")
     site.login-notice("blog host — managed by shellf")
@@ -60,8 +75,8 @@ on app {
         }
     }
 
-    # Render the .env per host (ADR-0019/0024): `@{domain}` is the host's inventory
-    # var, `@{db_password}` is the secret passed via --secret-file (redacted in all
+    # Render the .env per host (ADR-0019/0024/0049): `~{domain}` is the host's inventory
+    # var, `~{db_password}` is the secret passed via --secret-file (redacted in all
     # output, ADR-0018). Config files keep their own `${...}` untouched.
     # `as root`, because `blog.data-dir` created /opt/blog as root and the connecting
     # user cannot write there. `file.template` is path-dependent, not intrinsically

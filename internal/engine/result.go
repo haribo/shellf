@@ -32,6 +32,11 @@ type Result struct {
 	Shell    *ShellResult // optional diagnostics payload
 	Fields   []FieldDiff  // status mode: the observed-vs-desired state of a resource (ADR-0013)
 	Preview  string       // check mode: what an action would do, from the `preview` phase (ADR-0029)
+	// Ran is every shell this instruction executed, in order. Reported under `-v` only:
+	// a def attaches at most the one result it returns, so without this a verbose run
+	// would show exactly what a silent one shows — which is no verbose mode at all
+	// (#470).
+	Ran []ShellResult
 }
 
 // FieldDiff is one observed field of a resource in Status mode: its current

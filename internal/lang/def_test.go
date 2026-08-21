@@ -200,3 +200,55 @@ func TestParams_TypeVocabularyIsClosed(t *testing.T) {
 		t.Fatalf("the refusal must name what is accepted: %v", err)
 	}
 }
+
+// A shell block keeps the line it was written on, so a failing command can say where it
+// came from. The lexer always knew it; the AST used to drop it (#470).
+func TestParseDef_ShellKeepsItsSourceLine(t *testing.T) {
+	src := `def d(p: str) {
+    observe { return state(present: shell { test -f "$p" }.exit == 0) }
+    apply {
+        r = shell { touch "$p" }
+        if !r { return err.runtime(r) }
+        return ok.created
+    }
+}`
+	defs, err := ParseDefs(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(defs) != 1 {
+		t.Fatalf("want 1 def, got %d", len(defs))
+	}
+
+	// The `observe` shell sits inside a state field; the `apply` one is a let value.
+	var got []int
+	for _, ph := range defs[0].Phases {
+		for _, st := range ph.Stmts {
+			switch v := st.(type) {
+			case StateReturnStmt:
+				for _, f := range v.Fields {
+					got = append(got, shellLines(f.Value)...)
+				}
+			case LetStmt:
+				got = append(got, shellLines(v.Value)...)
+			}
+		}
+	}
+	if len(got) != 2 || got[0] != 2 || got[1] != 4 {
+		t.Fatalf("source lines lost: %v, want [2 4]", got)
+	}
+}
+
+// shellLines returns the source line of every ShellExpr reachable from e, one level of
+// Binary/Field deep — enough for the shapes a def actually writes.
+func shellLines(e Expr) []int {
+	switch v := e.(type) {
+	case ShellExpr:
+		return []int{v.Line}
+	case Field:
+		return shellLines(v.Recv)
+	case Binary:
+		return append(shellLines(v.L), shellLines(v.R)...)
+	}
+	return nil
+}

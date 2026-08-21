@@ -6,6 +6,19 @@ type ShellResult struct {
 	Exit   int
 	Stdout string
 	Stderr string
+
+	// Cmd is the shell block's source text, and Def/Line say where it was written
+	// (#470). Filled by the evaluator rather than the executor: the executor receives a
+	// script and knows nothing of the def it came from.
+	//
+	// The text is the **source**, with `$var` unexpanded, because that is what actually
+	// ran — values reach the shell through the environment (see Env below), so no
+	// substituted command line ever exists. Vars carries those values separately, which
+	// keeps a secret out of a rendered command string.
+	Cmd  string            `json:",omitempty"`
+	Def  string            `json:",omitempty"` // qualified def name, e.g. "service.ensure"
+	Line int               `json:",omitempty"` // 1-based line of `shell` within that def
+	Vars map[string]string `json:",omitempty"` // the variables the block could read
 }
 
 // OK is sugar for "the command succeeded".

@@ -31,6 +31,25 @@ on target {
     dir.ensure("/tmp/cov/owned")
     dir.owner("/tmp/cov/owned", "covuser")
 
+    # The shape that caught #480, and it has to be built in this order: the directory
+    # already belongs to covuser (line above), and *then* a root-owned file appears inside
+    # it — exactly how a package ships /etc/dkimkeys owned by opendkim and a key generated
+    # there lands root-owned.
+    #
+    # Ordering it the other way proves nothing: a directory that is itself wrong makes even
+    # a top-level-only observe report `changed`, so its `chown -R` fixes the tree by
+    # accident and the bug hides. Measured — the first version of this coverage passed
+    # against the broken def.
+    as root {
+        file.write("/tmp/cov/owned/inside.txt", "root-owned until the chown\n")
+    }
+    dir.owner("/tmp/cov/owned", "covuser")
+
+    # One file, without touching its neighbours — the case `dir.owner` cannot express and
+    # that used to need `unsafe shell { chown … }` (#480).
+    file.write("/tmp/cov/owned-file.txt", "owned alone\n")
+    file.owner("/tmp/cov/owned-file.txt", "covuser")
+
     # --- archives -------------------------------------------------------------------
     # `archive.extract` reads a *target* path, so the tarball is delivered first: two
     # defs chained, which is also how a real plan uses them.

@@ -209,6 +209,11 @@ type Request struct {
 	// registered under the key (ADR-0014/0015).
 	Defs  map[string]string `json:"defs,omitempty"`
 	Steps []Step            `json:"steps"`
+	// Verbose asks the agent to report every shell each step ran, not only the one a
+	// failing def hands back. Gated on the request rather than sent always: a job with
+	// many steps would otherwise carry every command it ran, on every host, for nobody
+	// (#470).
+	Verbose bool `json:"verbose,omitempty"`
 }
 
 type StepResult struct {
@@ -220,11 +225,12 @@ type StepResult struct {
 	// result because the *report* has to tell the two apart: an error the plan handled is
 	// not a failed run, and counting it as one made `shellf run … && …` unusable for any
 	// plan using `?` (#356).
-	Caught  bool                `json:"caught,omitempty"`
-	Shell   *engine.ShellResult `json:"shell,omitempty"`
-	Fields  []engine.FieldDiff  `json:"fields,omitempty"`  // status mode: observed vs desired (ADR-0013)
-	Preview string              `json:"preview,omitempty"` // check mode: what an action would do (ADR-0029)
-	Sub     []StepResult        `json:"sub,omitempty"`
+	Caught  bool                 `json:"caught,omitempty"`
+	Shell   *engine.ShellResult  `json:"shell,omitempty"`
+	Fields  []engine.FieldDiff   `json:"fields,omitempty"`  // status mode: observed vs desired (ADR-0013)
+	Preview string               `json:"preview,omitempty"` // check mode: what an action would do (ADR-0029)
+	Ran     []engine.ShellResult `json:"ran,omitempty"`     // every shell this step ran; `-v` only (#470)
+	Sub     []StepResult         `json:"sub,omitempty"`
 }
 
 type Response struct {

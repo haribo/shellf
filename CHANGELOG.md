@@ -6,6 +6,22 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-21
+
+### Added
+
+- A failing step reports the shell command that failed, where it is written (`file.mode:6`) and the values it could read. `-v` reports every command a step ran, successful ones included. The text is the source, `$var` unexpanded — no substituted command line ever runs, and reconstructing one would print a secret (#470).
+- `file.owner(path, owner)` changes one file's owner without touching its directory, a case that previously needed `unsafe shell { chown … }` (#480).
+
+### Changed
+
+- **BREAKING** — a template placeholder is `~{var}`, not `@{var}`, and the `@@` escape is gone: it made `admin@@{domain}` render as literal text, so a mail map was unwritable. `~{raw}` … `~{endraw}` now marks a verbatim region, letting a template document its own placeholders (#481, ADR-0049).
+- `docs/language.md` documents `import`, which it had never covered — both the local form and the remote one, with why `shellf.lock` is committed. The remote form also appears in the blog example, commented, using the RFC 2606 documentation domain (#376).
+
+### Fixed
+
+- `dir.owner` observes the tree it chowns. It checked only the top directory while applying `chown -R`, so a directory already owned by the right user reported `ok.already` whatever its contents belonged to — a key left root-owned inside it stayed that way, with the run green (#480).
+
 ## [0.7.0] - 2026-08-19
 
 ### Added
@@ -217,7 +233,8 @@ agent that evaluates on the host — "raw shell, but idempotent, previewable, fa
   per-user agent/workdir scoping.
 - Commands: `run`, `status`, `clean`, and `version`.
 
-[Unreleased]: https://github.com/haribo/shellf/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/haribo/shellf/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/haribo/shellf/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/haribo/shellf/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/haribo/shellf/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/haribo/shellf/compare/v0.4.0...v0.5.0
