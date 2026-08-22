@@ -1,0 +1,16 @@
+# `file.replace`, when the key is already there twice, with a value carrying the
+# metacharacters the old sed expression interpreted.
+#
+# Red on the pre-#487 def, twice over: `s|^K=.*|…|` rewrote *every* matching line, so the
+# duplicate survived as a second rewritten line, and `&` in the value spliced the matched
+# line back in.
+on target {
+    dir.ensure("/tmp/adv-file-replace")
+    unsafe shell { printf 'K=one\nOTHER=keep\nK=two\n' > /tmp/adv-file-replace/env.txt }
+    file.replace("/tmp/adv-file-replace/env.txt", "K", "https://x.test/a?b=1&c=2|d/e")
+    shell {
+        [ "$(grep -c '^K=' /tmp/adv-file-replace/env.txt)" = "1" ] || exit 1
+        grep -qxF -- 'K=https://x.test/a?b=1&c=2|d/e' /tmp/adv-file-replace/env.txt || exit 1
+        grep -qxF -- 'OTHER=keep' /tmp/adv-file-replace/env.txt || exit 1
+    }
+}

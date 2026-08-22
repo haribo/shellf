@@ -1,0 +1,21 @@
+# `file.write` onto a destination that already holds something.
+#
+# Not an empty file and not a fresh one: a different content, a restrictive mode, and an
+# owner who is not the writer. The mode is what a naive stage-then-rename loses (#298), and
+# a `.env` at 600 losing its bits is a secret becoming world-readable.
+on target {
+    dir.ensure("/tmp/adv-file-write")
+    as root {
+        unsafe shell {
+            printf 'old content\n' > /tmp/adv-file-write/f.txt
+            chmod 600 /tmp/adv-file-write/f.txt
+            chown covuser /tmp/adv-file-write/f.txt
+        }
+        file.write("/tmp/adv-file-write/f.txt", "new content\n")
+        shell {
+            grep -qx 'new content' /tmp/adv-file-write/f.txt || exit 1
+            [ "$(stat -c '%a' /tmp/adv-file-write/f.txt)" = "600" ] || exit 1
+            [ "$(stat -c '%U' /tmp/adv-file-write/f.txt)" = "covuser" ] || exit 1
+        }
+    }
+}

@@ -1083,4 +1083,39 @@ out="$(rc_plan)" || fail "the second plan failed"
 printf '%s' "$out" | grep -q 'ok.already' \
   || fail "an installed package must report already"
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out, booleans are booleans, dry-run diffs a change, commands are reported, purged packages reinstalled"
+say "24. every def, from a hostile starting state (#489)"
+# The other half of `coverage.shellf`. That plan proves idempotence — run twice, the second
+# run says `already` — and a def that is wrong in a *stable* way passes it: #486 converged
+# on both runs while the package was not on the machine. These plans start from a state
+# that is wrong on purpose and assert the machine, not the verdict.
+#
+# One plan per case, and every one is run: a plan halts on its first error by design, so a
+# single file would let the first defect hide all the others. Failures are collected and
+# counted, which is what makes this a discovery harness rather than a tripwire.
+#
+# Each runs ONCE and is not expected to converge: a case rebuilds its hostile state, so a
+# second run legitimately acts again. See adverse-cases.md for the contract.
+#
+# After the coverage sweep, because the cases reuse `covuser` from it.
+adverse_red=0
+# Flat in `plans/`, prefixed rather than in a sub-directory: a plan lives beside `defs/`,
+# `assets/` and `inventories/`, and a `plans/adverse/` sub-directory is not a project
+# (ADR-0038). Measured — the first version of this step put them one level down and all
+# eight refused to load.
+for plan in "$here"/plans/adverse-*.shellf; do
+  case_name="$(basename "$plan" .shellf)"
+  case_name="${case_name#adverse-}"
+  rc=0
+  aout="$("$work/shellf" run --inventory "$work/inventory.shellf" --insecure "$plan" 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ] || printf '%s' "$aout" | grep -qE 'err\.'; then
+    printf '\033[1;31m  RED   %s\033[0m\n' "$case_name"
+    printf '%s\n' "$aout" | sed 's/^/        /'
+    adverse_red=$((adverse_red + 1))
+  else
+    printf '  green %s\n' "$case_name"
+  fi
+done
+out=""  # `fail` reprints $out, and every case already printed its own
+[ "$adverse_red" -eq 0 ] || fail "$adverse_red adverse case(s) red — a def did not reach the state it reported (#489)"
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out, booleans are booleans, dry-run diffs a change, commands are reported, purged packages reinstalled, defs survive a hostile state"

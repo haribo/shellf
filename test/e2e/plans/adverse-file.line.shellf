@@ -1,0 +1,10 @@
+# `file.line`, when a longer line already contains the one asked for.
+#
+# The #388 shape, kept as a live regression: without `-x` the observe matches a substring,
+# so `foo` is reported present because `foobar` is there, and the line is never appended.
+on target {
+    dir.ensure("/tmp/adv-file-line")
+    unsafe shell { printf 'appended-line-longer\n' > /tmp/adv-file-line/f.txt }
+    file.line("/tmp/adv-file-line/f.txt", "appended-line")
+    shell { grep -qxF -- 'appended-line' /tmp/adv-file-line/f.txt || exit 1 }
+}
