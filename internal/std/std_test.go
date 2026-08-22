@@ -103,10 +103,10 @@ func TestDeployDefs_ActionShaped(t *testing.T) {
 func TestDeployDefs_TruthyAndValue(t *testing.T) {
 	// A truthy-field resource (file-replace): converged skips, drift applies.
 	rep := map[string]string{"path": "/etc/x", "key": "K", "value": "v"}
-	if got := eval(t, "file.replace", rep, &fakeExec{observe: converged, applyMatch: "sed"}, engine.Apply).String(); got != "ok.already" {
+	if got := eval(t, "file.replace", rep, &fakeExec{observe: converged, applyMatch: "awk"}, engine.Apply).String(); got != "ok.already" {
 		t.Fatalf("file-replace converged: got %s", got)
 	}
-	if got := eval(t, "file.replace", rep, &fakeExec{observe: drift, apply: converged, applyMatch: "printf"}, engine.Apply).String(); got != "ok.set" {
+	if got := eval(t, "file.replace", rep, &fakeExec{observe: drift, apply: converged, applyMatch: "awk"}, engine.Apply).String(); got != "ok.set" {
 		t.Fatalf("file-replace drift: got %s", got)
 	}
 	// A value-field resource (file-mode): observed mode matches the arg → skip.

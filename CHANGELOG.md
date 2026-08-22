@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- `file.replace` writes its value instead of interpreting it. It built a sed expression from its own arguments, so `&` spliced the matched line back in and `|` failed the run: an URL with a query string landed corrupted, and the def then rewrote it on every run (#487).
+
 ## [0.8.0] - 2026-08-21
 
 ### Added
