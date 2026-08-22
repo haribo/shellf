@@ -2,7 +2,16 @@ def install(pkg: str) as root {
     check {
         if pkg == "" { return err.pkgMustNotBeNull }
     }
-    observe { return state(installed: shell { dpkg -s "$pkg" >/dev/null 2>&1 }.exit == 0) }
+    # `dpkg -s` was the wrong question: it exits 0 for a package in state `rc` — removed
+    # without `--purge`, so its record and config files survive while its binaries are
+    # gone — and the def then reported `already` on a host where the package was not
+    # installed. That answer is *stable*, so both runs of the idempotence sweep agreed and
+    # the harness stayed green; only looking at the machine said otherwise (#486).
+    #
+    # `install ok installed` is the one status meaning the files are on the host. Every
+    # other one — `deinstall ok config-files`, `unknown ok not-installed`, any
+    # half-configured state — reads as not installed, which is what it is.
+    observe { return state(installed: shell { dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q '^install ok installed' }.exit == 0) }
     apply {
         r = shell { apt-get install -y "$pkg" }
         if !r { return err.runtime(r) }
