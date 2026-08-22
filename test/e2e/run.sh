@@ -1042,4 +1042,45 @@ printf '%s\n' "$out"
 printf '%s' "$out" | grep -qE 'dir\.ensure:[0-9]+' \
   || fail "-v must report the commands a successful step ran (#470)"
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out, booleans are booleans, dry-run diffs a change, commands are reported"
+say "23. apt.install reinstalls a package whose files were removed (#486)"
+# `dpkg -s` exits 0 for a package in state `rc`: removed without `--purge`, so its dpkg
+# record and config files survive while its binaries are gone. The observe read that exit
+# code, so the def reported `already` on a host where the package was not installed.
+#
+# The two-run sweep above cannot see this — the wrong answer is stable, so both runs say
+# `already` and the harness stays green. Only the machine says otherwise, which is why
+# this step asks the machine.
+#
+# It cannot live in coverage.shellf either: the setup removes the package on every run, so
+# the second run would legitimately report `installed` and break the convergence sweep.
+docker exec "$cname" sh -c 'DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nano >/dev/null 2>&1 && apt-get remove -y nano >/dev/null 2>&1' \
+  || fail "could not install then remove the package"
+
+# The state is asserted, not assumed: a setup that silently purged (or failed to install)
+# would leave a step that passes while proving nothing.
+out="$(docker exec "$cname" dpkg-query -W -f='${Status}' nano 2>&1)" || fail "no dpkg record left: $out"
+[ "$out" = "deinstall ok config-files" ] || fail "wanted state rc, got '$out' — the case proves nothing"
+docker exec "$cname" test -x /usr/bin/nano && fail "the binary is still there, so nothing is being tested"
+
+mkdir -p "$work/rc/plans" "$work/rc/inventories"
+cp "$work/inventory.shellf" "$work/rc/inventories/inv.shellf"
+cat > "$work/rc/plans/plan.shellf" <<'EOF'
+on target {
+    apt.install("nano")
+}
+EOF
+rc_plan() { "$work/shellf" run --inventory "$work/rc/inventories/inv.shellf" --insecure "$work/rc/plans/plan.shellf" 2>&1; }
+
+out="$(rc_plan)" || fail "the plan failed"
+printf '%s\n' "$out"
+printf '%s' "$out" | grep -q 'ok.already' \
+  && fail "a package whose files are gone must not report already (#486)"
+docker exec "$cname" test -x /usr/bin/nano \
+  || fail "apt.install returned success on a package it never installed (#486)"
+
+# And the fix must not cost idempotence: now that it is really installed, it converges.
+out="$(rc_plan)" || fail "the second plan failed"
+printf '%s' "$out" | grep -q 'ok.already' \
+  || fail "an installed package must report already"
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out, booleans are booleans, dry-run diffs a change, commands are reported, purged packages reinstalled"
