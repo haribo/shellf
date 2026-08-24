@@ -1,0 +1,26 @@
+# `service.ensure`, when the unit runs but is not enabled at boot.
+#
+# Two orthogonal dimensions, and a fresh container has them agreeing. Disabling without
+# stopping splits them: the unit is active but will not come back after a reboot, and a def
+# that gets this wrong leaves a machine that serves today and not tomorrow.
+#
+# A throwaway unit, not `ssh`: the first version of this case used ssh, and in this image
+# `systemctl enable ssh` *stops* it (SysV synchronisation plus a generated
+# `sshd-unix-local.socket`). That made the case red for a reason that has nothing to do
+# with the def — an assertion resting on one unit's quirk tests the quirk. The quirk did
+# expose a real defect, filed as #495 rather than asserted here.
+on target {
+    as root {
+        unsafe shell {
+            printf '[Unit]\nDescription=shellf adverse probe\n[Service]\nExecStart=/bin/sleep infinity\n[Install]\nWantedBy=multi-user.target\n' > /etc/systemd/system/adv-probe.service
+            systemctl daemon-reload
+            systemctl start adv-probe
+            systemctl disable adv-probe >/dev/null 2>&1 || true
+        }
+        service.ensure("adv-probe", true, true)
+        shell {
+            systemctl is-enabled --quiet adv-probe || exit 1
+            systemctl is-active --quiet adv-probe || exit 1
+        }
+    }
+}

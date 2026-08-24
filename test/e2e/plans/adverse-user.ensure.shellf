@@ -1,0 +1,11 @@
+# `user.ensure`, when the user exists with the wrong login shell.
+#
+# The fresh-container path only ever exercises "the user is absent", where `useradd -m`
+# does everything. Here `useradd` is a no-op and the whole outcome rides on `chsh`.
+on target {
+    as root {
+        unsafe shell { id advuser >/dev/null 2>&1 || useradd -M -s /bin/false advuser }
+        user.ensure("advuser", "/bin/sh")
+        shell { [ "$(getent passwd advuser | cut -d: -f7)" = "/bin/sh" ] || exit 1 }
+    }
+}

@@ -1,0 +1,31 @@
+# `archive.extract`, onto a destination holding another archive's contents.
+#
+# The sentinel records which archive was extracted, so a *different* archive must
+# re-extract — that part is a contract and is asserted as one.
+#
+# What happens to what the old archive left behind is NOT a decision anybody has taken.
+# `tar xzf` extracts over the destination without removing, so the stale file survives.
+# The assertion below pins that as the current behaviour, deliberately: not because it is
+# right, but so that changing it is a decision somebody makes rather than a side effect
+# nobody notices. The `dir.copy` / `dir.sync` pair (#373) settled the same question one
+# word apart, explicitly; this def never had that conversation.
+on target {
+    as root {
+        unsafe shell {
+            rm -rf /tmp/adv-archive
+            mkdir -p /tmp/adv-archive/src/inner /tmp/adv-archive/dst
+            printf 'one\n' > /tmp/adv-archive/src/inner/one.txt
+            tar czf /tmp/adv-archive/a.tar.gz -C /tmp/adv-archive/src .
+            printf 'stale\n' > /tmp/adv-archive/dst/stale.txt
+            printf 'not-the-hash-of-this-archive\n' > /tmp/adv-archive/dst/.shellf-archive-sha256
+        }
+        archive.extract("/tmp/adv-archive/a.tar.gz", "/tmp/adv-archive/dst")
+        shell {
+            # The contract: a different archive re-extracts.
+            test -f /tmp/adv-archive/dst/inner/one.txt || exit 1
+            # The characterisation: extraction does not remove. Change this line only
+            # together with a decision about what `archive.extract` promises.
+            test -f /tmp/adv-archive/dst/stale.txt || exit 1
+        }
+    }
+}

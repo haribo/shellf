@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- An adverse-state e2e plan per def: each starts from a state that is wrong on purpose and asserts the machine rather than the verdict. The coverage sweep proves idempotence, which a def that is wrong *stably* passes — #486 converged on both runs while the package was absent (#489).
+
 ### Fixed
 
 - `file.replace` writes its value instead of interpreting it. It built a sed expression from its own arguments, so `&` spliced the matched line back in and `|` failed the run: an URL with a query string landed corrupted, and the def then rewrote it on every run (#487).
