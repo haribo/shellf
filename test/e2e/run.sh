@@ -1118,4 +1118,33 @@ done
 out=""  # `fail` reprints $out, and every case already printed its own
 [ "$adverse_red" -eq 0 ] || fail "$adverse_red adverse case(s) red — a def did not reach the state it reported (#489)"
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out, booleans are booleans, dry-run diffs a change, commands are reported, purged packages reinstalled, defs survive a hostile state"
+say "25. dir.owner does not converge over a path that does not exist (#507)"
+# Its observe read success from `find` printing nothing — and a missing path prints
+# nothing, so a directory that is not there was declared correctly owned. Caught by the
+# #490 dogfood, in the most ordinary preview there is:
+#
+#   dir.ensure(path=/opt/hosting) would.created      <- so it does not exist
+#   dir.owner(owner=app, path=/opt/hosting) ok.already
+#
+# `--dry-run` is the right mode to assert it in: nothing is created, so the path stays
+# absent for real, and the verdict is the whole question.
+mkdir -p "$work/owner/plans" "$work/owner/inventories"
+cp "$work/inventory.shellf" "$work/owner/inventories/inv.shellf"
+cat > "$work/owner/plans/plan.shellf" <<'EOF'
+on target {
+    dir.owner("/tmp/shellf-507-absent", "root")
+}
+EOF
+docker exec "$cname" rm -rf /tmp/shellf-507-absent
+out="$("$work/shellf" run --inventory "$work/owner/inventories/inv.shellf" --insecure --dry-run \
+  "$work/owner/plans/plan.shellf" 2>&1)" || fail "the preview failed"
+printf '%s\n' "$out"
+printf '%s' "$out" | grep -q 'ok.already' \
+  && fail "dir.owner reported a missing path as correctly owned (#507)"
+
+# And the honest verdict is drift, not an error: `check` runs in every mode, so refusing
+# here would make `dir.ensure` + `dir.owner` unpreviewable — the shape #508 is about.
+printf '%s' "$out" | grep -q 'would.changed' \
+  || fail "a missing path must preview as a change, not as an error (#507, #508)"
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out, booleans are booleans, dry-run diffs a change, commands are reported, purged packages reinstalled, defs survive a hostile state, dir.owner sees a missing path"

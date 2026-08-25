@@ -23,15 +23,31 @@ def ensure(path: str) {
 # `-quit` stops at the first offender: the question is "is anything wrong here?", not
 # "list everything wrong", and a large tree should not be walked to the end to answer it.
 def owner(path: str, owner: str) as root {
+    # Convergence is read from `find` printing nothing — so the observe has to be sure it
+    # *looked*. Two ways it could print nothing without the tree being right:
+    #
+    #   - the path does not exist. `find` fails, `2>/dev/null` swallows the message, and the
+    #     emptiness read as "nothing here has the wrong owner". A `--dry-run` said
+    #     `dir.ensure … would.created` and, one line down, `dir.owner … ok.already` (#507).
+    #   - a subdirectory cannot be read. Same silence, same wrong conclusion.
+    #
+    # Hence the existence test and `|| exit 1`: a `find` that did not complete is not a
+    # converged tree. Refusing a missing path in `check` would have been the other fix, and
+    # it is worse — `check` runs in every mode (ADR-0035), so `dir.ensure` followed by
+    # `dir.owner` would stop being previewable at all (#508). Drift is the honest answer:
+    # the preview says `would.changed`, and an apply fails on `chown` with a message that
+    # names the path.
     observe {
         return state(owned: shell {
             u="${owner%%:*}"
             g="${owner#*:}"
+            [ -d "$path" ] || exit 1
             if [ "$g" = "$owner" ]; then
-                [ -z "$(find "$path" ! -user "$u" -print -quit 2>/dev/null)" ]
+                out="$(find "$path" ! -user "$u" -print -quit 2>&1)" || exit 1
             else
-                [ -z "$(find "$path" \( ! -user "$u" -o ! -group "$g" \) -print -quit 2>/dev/null)" ]
+                out="$(find "$path" \( ! -user "$u" -o ! -group "$g" \) -print -quit 2>&1)" || exit 1
             fi
+            [ -z "$out" ]
         }.exit == 0)
     }
     apply {
