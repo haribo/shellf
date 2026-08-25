@@ -141,7 +141,9 @@ func TestTruthyResources(t *testing.T) {
 		{"docker.install", "get.docker.com", "installed", nil},
 		{"docker.network", "network create", "created", map[string]string{"name": "web"}},
 		{"ufw.enable", "--force enable", "enabled", nil},
-		{"ufw.open", "ufw allow", "opened", map[string]string{"port": "443", "proto": "tcp"}},
+		// `ufw allow "` and not `ufw allow`: the observe now looks for that same text inside
+		// `ufw show added`, so the bare word no longer tells the two apart (#515).
+		{"ufw.open", `ufw allow "`, "opened", map[string]string{"port": "443", "proto": "tcp"}},
 		{"dir.ensure", "mkdir", "created", map[string]string{"path": "/opt/x"}},
 		{"file.line", ">>", "added", map[string]string{"path": "/etc/x", "line": "z"}},
 		{"file.delete", "rm -rf", "deleted", map[string]string{"path": "/tmp/gone"}},

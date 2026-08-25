@@ -1,9 +1,17 @@
-# The rule is matched on `ufw status`'s first column, exactly. A plain `grep` matches a
-# substring, so `ufw.open("80", "tcp")` reported `allowed` on a host where only `8080/tcp`
-# was open — a port believed open that is not, which is the dangerous direction for a
+# `ufw show added` and not `ufw status`: the running firewall answers nothing while it is
+# down — `ufw status` prints `Status: inactive` and not one rule — so this def observed a
+# firewall that was not talking and re-opened the port on every run. It never showed,
+# because the idempotence sweep reads the *second* run and `ufw.enable` has run by then.
+# The window is the first deployment, and every plan opens 22 **before** enabling: enabling
+# a deny-inbound firewall first locks the operator out, so acting on an inactive ufw is not
+# an edge case (#515).
+#
+# `show added` lists what is stored, in both states, as the command that created it —
+# `ufw allow 22/tcp`. The whole line is matched, never a substring: `22/tcp` is a substring
+# of `122/tcp`, and a port believed open that is not is the dangerous direction for a
 # firewall to be wrong in (#388).
 def open(port: str, proto: str) as root {
-    observe { return state(allowed: shell { ufw status | awk -v p="$port/$proto" '$1 == p { found = 1 } END { exit !found }' }.exit == 0) }
+    observe { return state(allowed: shell { ufw show added | grep -qxF -- "ufw allow $port/$proto" }.exit == 0) }
     apply {
         r = shell { ufw allow "$port/$proto" }
         if !r { return err.runtime(r) }
