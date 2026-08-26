@@ -1,11 +1,18 @@
 # `user.ensure`, when the user exists with the wrong login shell.
 #
-# The fresh-container path only ever exercises "the user is absent", where `useradd -m`
-# does everything. Here `useradd` is a no-op and the whole outcome rides on `chsh`.
+# The fresh-container path only ever exercises "the user is absent", where `useradd` does
+# everything. Here `useradd` is a no-op and the whole outcome rides on `chsh`.
+#
+# The second case covers the `system` parameter on an account that is already there: it must
+# not try to convert it, and it must still reconcile the shell.
 on target {
     as root {
         unsafe shell { id advuser >/dev/null 2>&1 || useradd -M -s /bin/false advuser }
         user.ensure("advuser", "/bin/sh")
         shell { [ "$(getent passwd advuser | cut -d: -f7)" = "/bin/sh" ] || exit 1 }
+
+        unsafe shell { id advsvc >/dev/null 2>&1 || useradd -M -s /bin/false advsvc }
+        user.ensure("advsvc", "/usr/sbin/nologin", true)
+        shell { [ "$(getent passwd advsvc | cut -d: -f7)" = "/usr/sbin/nologin" ] || exit 1 }
     }
 }

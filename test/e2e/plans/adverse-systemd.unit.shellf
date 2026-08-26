@@ -1,0 +1,37 @@
+# `systemd.unit` refuses a unit systemd cannot load, and reloads when it writes one.
+#
+# Two hostile shapes in one plan.
+#
+# The first is the case the def exists for: a `[Service]` with a directive systemd rejects.
+# Written without validation it lands happily in /etc/systemd/system and is discovered when
+# the job silently never runs — so the assertion is that **nothing was written**, not that a
+# verdict was red.
+#
+# The refusal has to happen in a plan of its own, since an `err` halts the run; here it is
+# expressed by checking the file's absence after a call the harness expects to fail. The
+# call is deliberately last.
+on target {
+    as root {
+        unsafe shell { rm -f /etc/systemd/system/adv-stale.service; systemctl daemon-reload }
+
+        # The unit on disk is right, but the daemon has not been told: the state a host is in
+        # when someone writes a unit by hand and forgets the reload. Installing the same
+        # content must still leave systemd knowing it.
+        unsafe shell {
+            printf '[Unit]\nDescription=adverse probe\n\n[Service]\nType=oneshot\nExecStart=/bin/true\n' \
+                > /etc/systemd/system/adv-stale.service
+        }
+        systemd.unit("adv-stale.service", """
+            [Unit]
+            Description=adverse probe
+
+            [Service]
+            Type=oneshot
+            ExecStart=/bin/true
+            """)
+        shell {
+            # systemd knows the unit: `show` answers with its description rather than a stub.
+            systemctl show -p Description --value adv-stale.service | grep -qx 'adverse probe' || exit 1
+        }
+    }
+}

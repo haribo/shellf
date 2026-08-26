@@ -1,0 +1,34 @@
+# Set the host's timezone.
+#
+# Every host sets one and no def did, so the first dogfood wrote
+# `unsafe shell { timedatectl set-timezone … }` (#499).
+#
+# `/etc/localtime` directly, and **not** `timedatectl`: the official tool needs a system
+# dbus, which a container does not have — measured during that dogfood, where the block
+# failed with `Failed to connect to system scope bus` for a reason that had nothing to do
+# with shellf. A def only reachable through a bus is a def the e2e harness cannot exercise,
+# and `CLAUDE.md` is explicit that a unit test with a fake executor does not stand in for
+# that. Writing the link is also what `timedatectl` does underneath, and it works on a host
+# without systemd at all.
+#
+# `/etc/timezone` is written too: Debian's own tooling reads it, and a host where the two
+# disagree is one where `dpkg-reconfigure tzdata` silently undoes this def.
+def timezone(zone: str) as root {
+    check {
+        z = shell { test -f "/usr/share/zoneinfo/$zone" }
+        if !z { return err.unknownZone(z) }
+    }
+    observe {
+        # The link's target, not `date +%Z`: an abbreviation like CEST is seasonal and
+        # shared by several zones, so comparing it would converge on the wrong continent.
+        return state(zone: shell { readlink -f /etc/localtime | sed 's#^/usr/share/zoneinfo/##' }.stdout)
+    }
+    apply {
+        r = shell {
+            ln -sf "/usr/share/zoneinfo/$zone" /etc/localtime
+            printf '%s\n' "$zone" > /etc/timezone
+        }
+        if !r { return err.runtime(r) }
+        return ok.set
+    }
+}

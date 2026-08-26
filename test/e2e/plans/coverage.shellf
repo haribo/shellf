@@ -31,6 +31,8 @@ on target {
 
     # --- users, groups, ownership ---------------------------------------------------
     user.ensure("covuser", "/bin/sh")
+    # A service account: no home, no login, a UID from the system range.
+    user.ensure("covsvc", "/usr/sbin/nologin", true)
     user.group("covuser", "adm")
     # Its own directory, not the shared one: chowning /tmp/cov to another user would take
     # away the connecting user's access to everything else this plan puts there.
@@ -87,6 +89,27 @@ on target {
     service.restart("ssh")
     service.reload("ssh")
     systemd.daemon-reload()
+    # A unit and its timer: one def, the schedule living in the content.
+    systemd.unit("cov-probe.service", """
+        [Unit]
+        Description=shellf coverage probe
+
+        [Service]
+        Type=oneshot
+        ExecStart=/bin/true
+        """)
+    systemd.unit("cov-probe.timer", """
+        [Unit]
+        Description=Run the shellf coverage probe daily
+
+        [Timer]
+        OnCalendar=daily
+
+        [Install]
+        WantedBy=timers.target
+        """)
+
+    system.timezone("Europe/Paris")
 
     # --- packages -------------------------------------------------------------------
     # A kernel parameter, set live and persisted.
