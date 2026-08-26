@@ -111,6 +111,10 @@ on target {
 
     system.timezone("Europe/Paris")
 
+    # A basic-auth credential. The password is a plan literal here because the coverage
+    # plan takes no secret; a real plan passes it with --secret-file (ADR-0018).
+    htpasswd.entry("/tmp/cov/users", "covadmin", "hunter2")
+
     # --- packages -------------------------------------------------------------------
     # A kernel parameter, set live and persisted.
     #

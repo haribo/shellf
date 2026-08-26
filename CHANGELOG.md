@@ -9,6 +9,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - `dir.mode(path, mode)` sets a directory's own permission bits. `file.mode` chmods a directory perfectly well, so this adds no capability — it adds a call site that does not lie, next to `dir.ensure` / `dir.owner` / `dir.copy` / `dir.sync`. Not recursive (#505).
+- `htpasswd.entry(path, user, password)` writes a basic-auth credential once. `openssl passwd` salts randomly, so a def comparing hashes rewrites the file on every run; this one verifies the stored hash against the password using its own salt. The password reaches openssl on stdin, never argv (#503).
+
 - `systemd.unit(name, content)` installs a unit file, refusing one `systemd-analyze verify` rejects before it reaches /etc, and reloading systemd when the content changes. A timer is a unit: its schedule lives in its `[Timer]` section (#506).
 - `system.timezone(zone)` sets the host timezone by writing `/etc/localtime` and `/etc/timezone`. Not `timedatectl`, which needs a system dbus a container has no — so the def stays exercisable against a real target (#499).
 - `user.ensure` takes `system` (default false): a service account with no home, no login and a UID from the system range, which the def could not express since it always ran `useradd -m` (#501).
