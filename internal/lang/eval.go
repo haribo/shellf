@@ -166,15 +166,71 @@ func EvalDefFull(def Def, args, with map[string]string, control []string, ex eng
 
 	// Pass 2: effectful phases. A trailing `return` in apply is the nominal
 	// outcome (evalPhase reaches it); running to the end with no return yields
-	// an implicit tag-less `ok` (ADR-0007).
+	// an implicit tag-less `ok` (ADR-0007) — and either way the verdict is a proposal
+	// until `confirm` has looked (ADR-0050).
 	for _, ph := range def.Phases {
 		if ph.Name == "apply" {
 			if o := ev.evalPhase(ph); o != nil {
-				return ev.changedIfActed(ev.toResult(*o)), nil
+				return ev.confirm(def, desired, ev.changedIfActed(ev.toResult(*o))), nil
 			}
 		}
 	}
-	return ev.changedIfActed(engine.Ok("")), nil
+	return ev.confirm(def, desired, ev.changedIfActed(engine.Ok(""))), nil
+}
+
+// confirm re-reads the def's `observe` after an apply that acted, and refuses a success the
+// state does not support (ADR-0050).
+//
+// An apply used to establish its own verdict from its shell's exit code: every command
+// exited 0, so the def reported success, and nothing ever checked that the effect landed.
+// Six defects had that shape before this existed — #390, #411, #418, #480, #486, #507 —
+// each fixed by sharpening one `observe`, none of them addressing why a wrong verdict could
+// be printed at all. The case that named the cause is `service.ensure`: its observe was
+// *correct*, it saw drift, the apply ran `start` then `enable`, both exited 0, and the unit
+// was stopped by the time the def returned. `ok.converged`, over a stopped service.
+//
+// The gates below are the whole cost control. Re-observing costs one round trip, and only
+// where it can mean something:
+//
+//   - an err is left alone: the failure is already reported, and re-reading state would
+//     replace a precise message with a vague one
+//   - `ev.acted` false means nothing happened, so there is nothing to confirm
+//   - a def with no `observe` is action-shaped (ADR-0029): a restart restarting is the
+//     point, and it has no state to disagree with
+//
+// A converged run — the common case for a plan that has run before — never reaches here,
+// because pass 1 returned `already` long before.
+func (ev *evaluator) confirm(def Def, desired map[string]string, r engine.Result) engine.Result {
+	if r.Category != engine.OK || !ev.acted {
+		return r
+	}
+	var obs *Phase
+	for i := range def.Phases {
+		if def.Phases[i].Name == "observe" {
+			obs = &def.Phases[i]
+		}
+	}
+	if obs == nil {
+		return r
+	}
+	observed := ev.evalObserve(obs.Stmts)
+	if converged(observed, desired) {
+		return r
+	}
+	// Name the fields that did not move. "The apply did not take effect" sends the reader
+	// nowhere; the same rule as #470, which reports the command that failed rather than a
+	// summary of it.
+	var missed []string
+	for _, f := range diffFields(observed, desired) {
+		if !f.Converged {
+			missed = append(missed, fmt.Sprintf("%s: observed %q, desired %q", f.Name, f.Current, f.Desired))
+		}
+	}
+	out := engine.Err("unconfirmed")
+	out.Shell = &engine.ShellResult{
+		Stderr: "the apply ran and the state did not follow — " + strings.Join(missed, "; "),
+	}
+	return out
 }
 
 // changedIfActed marks a Result Changed when a run apply did something and did not

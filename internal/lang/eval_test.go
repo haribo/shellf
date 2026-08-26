@@ -33,6 +33,17 @@ type evalFake struct {
 	calls      map[string]bool
 	lastInterp string     // interpreter of the last shell (ADR-0012 threading)
 	lastEnv    engine.Env // env of the last shell (ADR-0022 `with` threading)
+
+	// ADR-0050 re-reads `observe` after an apply that acted, so a fake now has to say what
+	// the apply produced. Without it every drift case reports `err.unconfirmed`, because
+	// the fake answers the second observe exactly as it answered the first — insisting the
+	// state never moved.
+	//
+	// `applyScript` names the script that acts; `after` overrides the probes' answers once
+	// it has run. Both are opt-in: a test that never reaches an apply needs neither.
+	applyScript string
+	after       map[string]engine.ShellResult
+	applied     bool
 }
 
 func (f *evalFake) As(string) engine.Executor { return f }
@@ -68,6 +79,13 @@ func (f *evalFake) Shell(script string, env engine.Env) engine.ShellResult {
 	}
 	f.calls[script] = true
 	f.lastEnv = env
+	if script == f.applyScript {
+		f.applied = true
+	} else if f.applied {
+		if r, ok := f.after[script]; ok {
+			return r
+		}
+	}
 	if r, ok := f.resp[script]; ok {
 		return r
 	}
@@ -112,6 +130,8 @@ func TestEvalDef_Installs(t *testing.T) {
 	f := &evalFake{resp: map[string]engine.ShellResult{
 		dpkgS: {Exit: 1}, // not installed
 		aptS:  {Exit: 0}, // install ok
+	}, applyScript: aptS, after: map[string]engine.ShellResult{
+		dpkgS: {Exit: 0}, // and installed afterwards, which ADR-0050 re-reads
 	}}
 	if got := runApt(t, f, "nginx", engine.Apply).String(); got != "ok.pkgInstalled" {
 		t.Fatalf("got %s, want ok.pkgInstalled", got)

@@ -122,9 +122,20 @@ apply worked. An opt-in rule is a rule that protects the defs which never needed
   the correct direction — it is the phase the whole model rests on.
 - **The stdlib must be swept before this lands**, def by def, for observes too coarse to
   confirm their own apply. Doing it after would mean discovering them as CI failures.
-- **Cost is bounded and measurable.** One shell per acting def. The coverage plan is the
-  place to measure it: count the shells issued before and after, and record the number
-  rather than asserting it is negligible.
+- **Cost is bounded, and measured.** One re-observation per **acting** def — which is one
+  shell per *observed field*, not per def: `service.ensure` and `sudo.write` declare two
+  fields each. Counted on `coverage.shellf`, which exercises every def, against two
+  identical fresh containers:
+
+  | run | before | after |
+  | --- | ------ | ----- |
+  | first (every def acts) | 76 shells | 109 shells (+33, +43%) |
+  | converged (nothing acts) | 45 shells | 45 shells (no cost) |
+
+  The converged run is the common case for a plan that has run before, and it is free: pass
+  1 returns `already` long before the re-observation. The first run pays, and pays in the
+  cheapest currency it has — a probe next to an `apt-get install` or a tree transfer is
+  noise. What the number is *not* is a time measurement, and it should not be read as one.
 - **It does not make a composite atomic.** A multi-step apply that fails halfway still
   leaves a partial state; confirming the final state says the step failed, not that it was
   undone. Rollback stays out of scope

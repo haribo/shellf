@@ -14,6 +14,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A def that declares an `observe` re-reads it after acting: an apply whose effect did not land now reports `err.unconfirmed`, naming the field that did not move, instead of the success its shell's exit code claimed. Action-shaped defs and converged runs are untouched (#495, ADR-0050).
 - The `ufw` defs converge while the firewall is down. `ufw.open` and `ufw.default` observed `ufw status`, which reports nothing until ufw is enabled — and every plan opens SSH and sets its policies *before* enabling, so both acted on every run of a first deployment (#515).
 - `apt.update` is action-shaped: it always refreshes and says so. Its observe read a mtime that records when the repository last published, not when this host refreshed, so it could essentially never converge and acted on every run while reporting otherwise. Gate it like a handler (#488).
 - The e2e convergence sweep matches column-aligned verdicts. It required a single space before `ok.`, so every def rendering short — `apt.update()`, `ufw.enable()` — escaped the guard that fails a def observing state yet acting on a converged target (#518).
