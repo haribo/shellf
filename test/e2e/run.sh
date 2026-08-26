@@ -1147,4 +1147,51 @@ printf '%s' "$out" | grep -q 'ok.already' \
 printf '%s' "$out" | grep -q 'would.changed' \
   || fail "a missing path must preview as a change, not as an error (#507, #508)"
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out, booleans are booleans, dry-run diffs a change, commands are reported, purged packages reinstalled, defs survive a hostile state, dir.owner sees a missing path"
+say "26. the ufw defs converge while the firewall is inactive (#515)"
+# `ufw status` reports nothing while ufw is down, so `ufw.open` and `ufw.default` observed
+# a firewall that was not answering and acted on every run. It never showed because the
+# idempotence sweep looks at the *second* run of the coverage plan, and by then `ufw.enable`
+# has run — the window where both defs act on an inactive ufw is the first run, which
+# nothing checks for convergence.
+#
+# The order in every plan is open-22 → policies → enable, and it is load-bearing: enabling a
+# deny-inbound firewall before allowing SSH locks the operator out. So acting on an inactive
+# ufw is not an edge case, it is what the first deployment always does.
+#
+# Asserted on the *verdict* of a second run, which is why this is a step and not an adverse
+# plan: the rule does land on the machine, what is wrong is the def's reading of it.
+mkdir -p "$work/ufw/plans" "$work/ufw/inventories"
+cp "$work/inventory.shellf" "$work/ufw/inventories/inv.shellf"
+cat > "$work/ufw/plans/plan.shellf" <<'EOF'
+on target {
+    ufw.open("2222", "tcp")
+    ufw.default("deny", "allow")
+}
+EOF
+ufwplan() { "$work/shellf" run --inventory "$work/ufw/inventories/inv.shellf" --insecure "$work/ufw/plans/plan.shellf" 2>&1; }
+
+# Down, not reset: the rules the coverage plan added stay, and the connection is never at
+# risk — a disabled firewall allows everything.
+docker exec "$cname" ufw disable >/dev/null 2>&1 || fail "could not disable ufw"
+docker exec "$cname" ufw status | grep -q inactive || fail "ufw did not go down, the case proves nothing"
+
+out="$(ufwplan)" || fail "the first ufw run failed"
+out="$(ufwplan)" || fail "the second ufw run failed"
+printf '%s\n' "$out"
+printf '%s' "$out" | grep -qE 'ufw\.open.*ok\.already' \
+  || fail "ufw.open did not converge on an inactive firewall (#515)"
+printf '%s' "$out" | grep -qE 'ufw\.default.*ok\.already' \
+  || fail "ufw.default did not converge on an inactive firewall (#515)"
+
+# Back up, so the harness leaves the target as it found it.
+docker exec "$cname" ufw --force enable >/dev/null 2>&1 || fail "could not re-enable ufw"
+
+# And the same defs still converge with the firewall up — the fix must read both states,
+# not swap one blind spot for the other.
+out="$(ufwplan)" || fail "the ufw run failed with the firewall up"
+printf '%s' "$out" | grep -qE 'ufw\.open.*ok\.already' \
+  || fail "ufw.open stopped converging on an active firewall (#515)"
+printf '%s' "$out" | grep -qE 'ufw\.default.*ok\.already' \
+  || fail "ufw.default stopped converging on an active firewall (#515)"
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out, booleans are booleans, dry-run diffs a change, commands are reported, purged packages reinstalled, defs survive a hostile state, dir.owner sees a missing path, ufw converges while down"
