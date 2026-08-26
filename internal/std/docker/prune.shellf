@@ -1,0 +1,18 @@
+# Reclaim disk from images no longer used by a container.
+#
+# **Action-shaped** (ADR-0029): pruning always acts, and the only state it could observe is
+# the pruning itself. A def that grew a fake observe here would report `already` on a host
+# whose disk is filling, which is the failure this project keeps finding.
+#
+# A host that builds its images locally accumulates a layer set on every rebuild — the
+# first dogfood reached for `unsafe shell { docker image prune }` for exactly that (#504).
+#
+# Deliberately not `docker system prune`: that removes volumes, which is data loss. If it is
+# ever wanted it arrives as its own, explicitly named def — never as a flag on this one.
+def prune(until: str = "168h") as root {
+    apply {
+        r = shell { docker image prune -af --filter "until=$until" }
+        if !r { return err.runtime(r) }
+        return ok.pruned
+    }
+}

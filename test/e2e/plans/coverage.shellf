@@ -22,6 +22,8 @@ on target {
     # def ship writing `URL=https://aURL=oldb` for an ordinary query string — a happy-path
     # argument tests the happy path, and nothing else.
     file.replace("/tmp/cov/env.txt", "URL", "https://x.test/a?b=1&c=2|d/e")
+    # `file.ensure`: created with its mode in one step, and never truncated afterwards.
+    file.ensure("/tmp/cov/acme.json", "600")
     file.copy(%"tree/hello.txt", "/tmp/cov/copied.txt")
     file.delete("/tmp/cov/gone.txt")
 
@@ -87,6 +89,15 @@ on target {
     systemd.daemon-reload()
 
     # --- packages -------------------------------------------------------------------
+    # A kernel parameter, set live and persisted.
+    #
+    # `net.*` and NOT `vm.*`: sysctl keys under `vm.` are **not namespaced**, so a
+    # `sysctl -w` inside this privileged container writes the **host's** kernel. Measured —
+    # setting `vm.swappiness` in the container changed it on the developer's machine. `net.`
+    # keys live in the network namespace docker already gives the container, so the write
+    # stops at its boundary (verified: 1234 inside, host untouched at 4096).
+    sysctl.set("net.core.somaxconn", "1024")
+
     apt.update()
     apt.install("nginx-light")
 
@@ -126,6 +137,8 @@ on target {
                "services:\n  idle:\n    image: debian:stable-slim\n    command: sleep 300\n")
     docker.compose-up("/tmp/cov/stack")
     docker.compose-restart("/tmp/cov/stack", "idle")
+    # Action-shaped: it always acts, and reclaiming nothing is a normal outcome here.
+    docker.prune()
 
     # --- firewall -------------------------------------------------------------------
     # Order matters and is the point: opening 22 before denying inbound is what keeps the

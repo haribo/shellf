@@ -1,0 +1,25 @@
+# Set a kernel parameter, live and across reboots.
+#
+# Observed on the **running** kernel, not on the file: a value persisted to
+# /etc/sysctl.d and never applied is a value that does not take effect until the next
+# reboot, and a def reporting `already` over it would be describing a file rather than a
+# machine. The apply therefore does both, and the observe reads the only thing that matters.
+#
+# The first dogfood wrote this by hand — a `printf` into /etc/sysctl.d plus `sysctl
+# --system`, with no observe at all, acting on every run (#500).
+def set(key: str, value: str) as root {
+    check {
+        if key == "" { return err.keyMustNotBeEmpty }
+    }
+    observe { return state(value: shell { sysctl -n "$key" 2>/dev/null }.stdout) }
+    apply {
+        r = shell {
+            # The file name carries the key, so two parameters never overwrite each other.
+            f="/etc/sysctl.d/90-shellf-$(printf '%s' "$key" | tr '/.' '--').conf"
+            printf '%s=%s\n' "$key" "$value" > "$f"
+            sysctl -w "$key=$value" >/dev/null
+        }
+        if !r { return err.runtime(r) }
+        return ok.set
+    }
+}
