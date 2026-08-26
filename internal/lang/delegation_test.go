@@ -133,15 +133,25 @@ def wrap(p: str) { leaf(p) }`
 // delegFake answers the observe read and lets everything else succeed. Its own type
 // rather than a field on evalFake: this file's needs are different, and widening a
 // shared helper for one test is how helpers stop being readable.
-type delegFake struct{ observe engine.ShellResult }
+type delegFake struct {
+	observe engine.ShellResult
+	// The callee's apply writes the file, so its observe converges afterwards — which is
+	// what ADR-0050 re-reads. Without this the drifted-apply case reports
+	// `err.unconfirmed`: the fake would be saying the write changed nothing.
+	wrote bool
+}
 
 func (f *delegFake) As(string) engine.Executor    { return f }
 func (f *delegFake) Using(string) engine.Executor { return f }
 
 func (f *delegFake) Shell(script string, _ engine.Env) engine.ShellResult {
 	if strings.Contains(script, "test -f") {
+		if f.wrote {
+			return engine.ShellResult{Exit: 0}
+		}
 		return f.observe
 	}
+	f.wrote = true
 	return engine.ShellResult{Exit: 0}
 }
 

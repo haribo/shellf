@@ -18,6 +18,22 @@ type fakeExec struct {
 	apply      engine.ShellResult
 	applyMatch string
 	calls      []string
+
+	// ADR-0050 re-reads `observe` after an apply that acted, so a fake has to model the
+	// one thing every fake silently assumed until then: **that an apply changes what an
+	// observe sees**. Without this, every drift case reports `err.unconfirmed` — correctly,
+	// since the fake would be insisting the state never moved.
+	//
+	// `after` is the observe's answer once the apply has run. Nil means "exit 0", which
+	// converges a truthy field; a def whose observe reports a *value* (file.mode reads
+	// `stat -c %a`) must give the value its apply produces, since an empty stdout matches
+	// no desired value.
+	after *engine.ShellResult
+	// stuck models the failure ADR-0050 exists to catch: the apply runs, exits 0, and the
+	// state does not follow. The default (false) is the honest world; this is the exception
+	// a test asks for on purpose.
+	stuck   bool
+	applied bool
 }
 
 func (f *fakeExec) As(string) engine.Executor    { return f }
@@ -26,7 +42,14 @@ func (f *fakeExec) Using(string) engine.Executor { return f }
 func (f *fakeExec) Shell(script string, _ engine.Env) engine.ShellResult {
 	f.calls = append(f.calls, script)
 	if f.applyMatch != "" && strings.Contains(script, f.applyMatch) {
+		f.applied = true
 		return f.apply
+	}
+	if f.applied && !f.stuck {
+		if f.after != nil {
+			return *f.after
+		}
+		return engine.ShellResult{Exit: 0}
 	}
 	return f.observe
 }
@@ -114,7 +137,10 @@ func TestDeployDefs_TruthyAndValue(t *testing.T) {
 	if got := eval(t, "file.mode", fm, &fakeExec{observe: engine.ShellResult{Stdout: "755\n"}, applyMatch: "chmod"}, engine.Apply).String(); got != "ok.already" {
 		t.Fatalf("file-mode converged: got %s", got)
 	}
-	if got := eval(t, "file.mode", fm, &fakeExec{observe: engine.ShellResult{Stdout: "644\n"}, apply: converged, applyMatch: "chmod"}, engine.Apply).String(); got != "ok.changed" {
+	// `after`: file.mode's observe reads `stat -c %a`, a value — so once the chmod has run
+	// the fake has to answer with the mode it set, or the re-observation of ADR-0050 sees
+	// an empty stdout and reports `err.unconfirmed`.
+	if got := eval(t, "file.mode", fm, &fakeExec{observe: engine.ShellResult{Stdout: "644\n"}, apply: converged, applyMatch: "chmod", after: &engine.ShellResult{Stdout: "755\n"}}, engine.Apply).String(); got != "ok.changed" {
 		t.Fatalf("file-mode drift: got %s", got)
 	}
 }
@@ -271,8 +297,9 @@ func TestValueResource_GitClone(t *testing.T) {
 	if got := eval(t, "git.clone", args, &fakeExec{observe: engine.ShellResult{Stdout: "http://x/r\n"}, applyMatch: "git clone"}, engine.Apply).String(); got != "ok.already" {
 		t.Fatalf("git-clone matching: got %s, want ok.already", got)
 	}
-	// absent (empty remote) → clone.
-	if got := eval(t, "git.clone", args, &fakeExec{observe: engine.ShellResult{Stdout: ""}, apply: engine.ShellResult{Exit: 0}, applyMatch: "git clone"}, engine.Apply).String(); got != "ok.cloned" {
+	// absent (empty remote) → clone. `after` is the remote the clone leaves behind: the
+	// observe reads a value, so ADR-0050's re-read needs the value the apply produced.
+	if got := eval(t, "git.clone", args, &fakeExec{observe: engine.ShellResult{Stdout: ""}, apply: engine.ShellResult{Exit: 0}, applyMatch: "git clone", after: &engine.ShellResult{Stdout: "http://x/r\n"}}, engine.Apply).String(); got != "ok.cloned" {
 		t.Fatalf("git-clone absent: got %s, want ok.cloned", got)
 	}
 	// wrong remote → drift → clone fails on an existing dst → err.runtime
@@ -325,4 +352,66 @@ func TestReadOnlyQuestions(t *testing.T) {
 	if got := eval(t, "file.exists", map[string]string{"path": "/etc/x"}, &fakeExec{observe: converged}, engine.Check).String(); got != "ok.present" {
 		t.Fatalf("file-exists present: got %s, want ok.present", got)
 	}
+}
+
+// ADR-0050 / #495: an apply proposes a verdict, the re-observation establishes it.
+//
+// Before this, a def's outcome came from the exit code of its apply shell and nothing else:
+// every command exited 0, so the def reported success, and nothing checked that the effect
+// landed. Six defects had that shape — #390, #411, #418, #480, #486, #507 — and the case
+// that named the cause was `service.ensure` reporting `ok.converged` over a unit that had
+// been stopped between `start` and `enable`, with an observe that was itself correct.
+//
+// `stuck` is the fake's way of saying "the apply ran, exited 0, and the state did not
+// follow" — the one thing a fake could never express before, because every fake silently
+// assumed an apply changes what an observe sees.
+func TestConfirm_RefusesASuccessTheStateDoesNotSupport(t *testing.T) {
+	t.Run("an apply whose effect does not land is refused", func(t *testing.T) {
+		f := &fakeExec{observe: drift, apply: converged, applyMatch: "apt-get install", stuck: true}
+		res := eval(t, "apt.install", map[string]string{"pkg": "nginx"}, f, engine.Apply)
+		if res.Category != engine.ERR || res.Tag != "unconfirmed" {
+			t.Fatalf("an apply the state does not confirm must not report success, got %s", res)
+		}
+		// The message names the field that did not move: "the apply did not take effect"
+		// sends the reader nowhere (same rule as #470).
+		if res.Shell == nil || !strings.Contains(res.Shell.Stderr, "installed") {
+			t.Fatalf("the failure must name the field that did not move, got %+v", res.Shell)
+		}
+	})
+
+	t.Run("an apply whose effect lands reports its own verdict", func(t *testing.T) {
+		f := &fakeExec{observe: drift, apply: converged, applyMatch: "apt-get install"}
+		if got := eval(t, "apt.install", map[string]string{"pkg": "nginx"}, f, engine.Apply).String(); got != "ok.installed" {
+			t.Fatalf("got %s, want ok.installed", got)
+		}
+	})
+
+	// The gates of ADR-0050 §2, each one a round trip not taken.
+	t.Run("an action-shaped def is not re-observed", func(t *testing.T) {
+		// service.restart declares no observe: a restart restarting is the point.
+		f := &fakeExec{apply: converged, applyMatch: "restart", stuck: true}
+		if got := eval(t, "service.restart", map[string]string{"name": "sshd"}, f, engine.Apply).String(); got != "ok.restarted" {
+			t.Fatalf("a def with no observe has no state to confirm, got %s", got)
+		}
+	})
+
+	t.Run("a converged def never reaches the re-observation", func(t *testing.T) {
+		// Pass 1 returns `already`, so `stuck` is never consulted — and no extra shell runs.
+		f := &fakeExec{observe: converged, applyMatch: "apt-get install", stuck: true}
+		res := eval(t, "apt.install", map[string]string{"pkg": "nginx"}, f, engine.Apply)
+		if res.String() != "ok.already" {
+			t.Fatalf("got %s, want ok.already", res)
+		}
+		if len(f.calls) != 1 {
+			t.Fatalf("a converged run must cost one observe, got %d shells: %v", len(f.calls), f.calls)
+		}
+	})
+
+	t.Run("a failed apply keeps its own error", func(t *testing.T) {
+		// Re-reading state here would replace a precise message with a vague one.
+		f := &fakeExec{observe: drift, apply: engine.ShellResult{Exit: 100}, applyMatch: "apt-get install", stuck: true}
+		if got := eval(t, "apt.install", map[string]string{"pkg": "nginx"}, f, engine.Apply).String(); got != "err.runtime" {
+			t.Fatalf("got %s, want err.runtime", got)
+		}
+	})
 }

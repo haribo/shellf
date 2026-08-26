@@ -61,6 +61,9 @@ func TestObserve_DriftOnPresence_RunsApply(t *testing.T) {
 		"probe-present": {Stdout: "absent\n"},
 		"probe-version": {Stdout: "\n"},
 		"do-install":    {Exit: 0},
+	}, applyScript: "do-install", after: map[string]engine.ShellResult{
+		// What the install leaves behind — ADR-0050 re-reads the probes after it.
+		"probe-present": {Stdout: "present\n"},
 	}}
 	got := evalObserveDef(t, f, map[string]string{"pkg": "nginx"}, engine.Apply)
 	if got.String() != "ok.installed" {
@@ -80,6 +83,9 @@ func TestObserve_DriftOnVersion_RunsApply(t *testing.T) {
 		"probe-present": {Stdout: "present\n"},
 		"probe-version": {Stdout: "1.2.0\n"},
 		"do-install":    {Exit: 0},
+	}, applyScript: "do-install", after: map[string]engine.ShellResult{
+		// The install moved the version to the one asked for.
+		"probe-version": {Stdout: "1.3.0\n"},
 	}}
 	got := evalObserveDef(t, f, map[string]string{"pkg": "nginx", "version": "1.3.0"}, engine.Apply)
 	if got.String() != "ok.installed" || !f.calls["do-install"] {

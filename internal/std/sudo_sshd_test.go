@@ -90,6 +90,17 @@ type checkFake struct {
 	nameOK, visudoOK, sshdOK   bool
 	sawChmod0440, sawChmod0600 bool
 	converged                  bool // the file and its mode are already right
+
+	// ADR-0050 re-reads `observe` after an apply, and these defs compose `file.write` +
+	// `file.mode`, so three observes now run after work: the two callees' own, and this
+	// def's. Without modelling what the apply produced, every write reports
+	// `err.unconfirmed` because the fake keeps insisting nothing moved.
+	//
+	// The two facts are tracked apart on purpose. A single "applied" flag makes the write
+	// converge `file.mode` as well, so the chmod never runs and the def silently stops
+	// setting the mode sudo insists on — measured while writing this.
+	wrote    bool // file.write's staged rename landed
+	chmodded bool // file.mode's chmod ran
 }
 
 func (c *checkFake) As(string) engine.Executor    { return c }
@@ -111,14 +122,18 @@ func (c *checkFake) Shell(script string, env engine.Env) engine.ShellResult {
 		case "600":
 			c.sawChmod0600 = true
 		}
+		c.chmodded = true
+		return engine.ShellResult{Exit: 0}
+	case strings.Contains(script, "mv -f"):
+		c.wrote = true
 		return engine.ShellResult{Exit: 0}
 	case strings.Contains(script, "stat -c"):
-		if c.converged {
-			return engine.ShellResult{Stdout: "440\n"}
+		if c.converged || c.chmodded {
+			return engine.ShellResult{Stdout: env["mode"] + "\n"}
 		}
 		return engine.ShellResult{Stdout: "644\n"} // drift, so file.mode applies
 	case strings.Contains(script, "cmp -s"):
-		return boolExit(c.converged) // file.write's observe
+		return boolExit(c.converged || c.wrote) // file.write's observe
 	}
 	return engine.ShellResult{Exit: 0}
 }
