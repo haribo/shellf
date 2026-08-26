@@ -32,6 +32,9 @@ on target {
     user.group("covuser", "adm")
     # Its own directory, not the shared one: chowning /tmp/cov to another user would take
     # away the connecting user's access to everything else this plan puts there.
+    dir.ensure("/tmp/cov/modes")
+    dir.mode("/tmp/cov/modes", "750")
+
     dir.ensure("/tmp/cov/owned")
     dir.owner("/tmp/cov/owned", "covuser")
 
