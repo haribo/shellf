@@ -15,6 +15,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - The `ufw` defs converge while the firewall is down. `ufw.open` and `ufw.default` observed `ufw status`, which reports nothing until ufw is enabled — and every plan opens SSH and sets its policies *before* enabling, so both acted on every run of a first deployment (#515).
+- `apt.update` is action-shaped: it always refreshes and says so. Its observe read a mtime that records when the repository last published, not when this host refreshed, so it could essentially never converge and acted on every run while reporting otherwise. Gate it like a handler (#488).
+- The e2e convergence sweep matches column-aligned verdicts. It required a single space before `ok.`, so every def rendering short — `apt.update()`, `ufw.enable()` — escaped the guard that fails a def observing state yet acting on a converged target (#518).
 - `dir.owner` no longer reports a path that does not exist as correctly owned. It read convergence from `find` printing nothing, and a missing path — or a subdirectory it cannot read — prints nothing (#507).
 - `file.replace` writes its value instead of interpreting it. It built a sed expression from its own arguments, so `&` spliced the matched line back in and `|` failed the run: an URL with a query string landed corrupted, and the def then rewrote it on every run (#487).
 - `apt.install` observes whether a package is installed, not whether dpkg still holds a record of it. `dpkg -s` exits 0 for a package removed without `--purge`, so the def reported `already` on a host whose binaries were gone — stably, on every run (#486).

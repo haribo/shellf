@@ -353,8 +353,13 @@ observed="$(
   done | sort -u
 )"
 
-acting="$(printf '%s' "$out" | grep -oE '^\s+[a-z][a-z0-9.-]*\(.*\) ok\.[a-z]+$' \
-  | sed -E 's/^\s+([a-z][a-z0-9.-]*)\(.*\) ok\.([a-z]+)$/\1 \2/' \
+# `\)\s+ok\.` and not `\) ok\.`: the report pads short instruction lines so verdicts line
+# up, so a def with no arguments renders as `apt.update()             ok.updated` and a
+# single-space pattern never matched it. Every def whose call renders short escaped this
+# guard — `apt.update`, `docker.install`, `ufw.enable`, `systemd.daemon-reload` — and three
+# of those four declare an `observe`. It hid #488 for as long as both existed (#518).
+acting="$(printf '%s' "$out" | grep -oE '^\s+[a-z][a-z0-9.-]*\(.*\)\s+ok\.[a-z]+$' \
+  | sed -E 's/^\s+([a-z][a-z0-9.-]*)\(.*\)\s+ok\.([a-z]+)$/\1 \2/' \
   | grep -vE ' (already|present|ready|match|converged)$' | awk '{print $1}' | sort -u)"
 
 for d in $acting; do
