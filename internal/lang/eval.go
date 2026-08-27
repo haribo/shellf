@@ -115,6 +115,17 @@ func EvalDefFull(def Def, args, with map[string]string, control []string, ex eng
 		return ev.statusResult(def, desired), nil
 	}
 
+	// A question — whole body a `check`, nothing to observe or apply — is **not evaluated**
+	// in check mode (ADR-0051). Its body interrogates state, and in `--dry-run` the plan has
+	// applied nothing, so any state the plan itself produces is not there yet: it fails for
+	// a reason that will not exist at apply time, and that `err` halts the preview.
+	//
+	// Measured on the #490 dogfood: a plan that brought a stack up and then waited for it
+	// spent the full 60s timeout, reported `err.timeout`, and hid every step that followed.
+	// Deploy-then-verify is the most ordinary plan shape there is.
+	//
+	// `would` is also what makes an `if` on a question honest: the agent already treats a
+	// `WOULD` condition as undetermined and previews the branch rather than claiming it runs.
 	// Pass 1: read-only decision phases. A `check` outcome wins (err →
 	// halt, or a question's ok/err). An `observe` phase reports current state;
 	// convergence (state == desired) is the derived skip (ADR-0013).
@@ -122,7 +133,7 @@ func EvalDefFull(def Def, args, with map[string]string, control []string, ex eng
 		switch ph.Name {
 		case "check":
 			if o := ev.evalPhase(ph); o != nil {
-				return ev.toResult(*o), nil
+				return ev.questionInCheck(def, mode, ev.toResult(*o)), nil
 			}
 		case "observe":
 			if converged(ev.evalObserve(ph.Stmts), desired) {
@@ -231,6 +242,36 @@ func (ev *evaluator) confirm(def Def, desired map[string]string, r engine.Result
 		Stderr: "the apply ran and the state did not follow — " + strings.Join(missed, "; "),
 	}
 	return out
+}
+
+// questionInCheck softens a *failing* question in check mode, and only there (ADR-0051).
+//
+// A question — whole body a `check`, nothing to observe or apply — reads the world. In
+// `--dry-run` the plan has applied nothing, so a question about state the plan itself
+// produces fails for a reason that will not exist at apply time. That `err` halts the
+// preview: a plan that brings a stack up and then waits for it spent the full 60s timeout,
+// reported `err.timeout`, and hid every step after it (#508).
+//
+// Only the failure is softened, and the asymmetry is the whole point:
+//
+//   - `ok` in check stays `ok`. The state is already there, and the plan does not destroy
+//     it, so the answer holds at apply time. `if dir.exists("/opt/legacy") { migrate() }`
+//     must still resolve — an operator previewing it wants to know which branch runs.
+//   - `err` in check becomes `would.<tag>`. It is exactly the case where the plan may be
+//     about to create what was asked about, so the answer is not knowable yet.
+//
+// `would` is also what makes the conditional honest: the agent already treats a `WOULD`
+// condition as undetermined and previews the branch rather than claiming it runs.
+func (ev *evaluator) questionInCheck(def Def, mode engine.Mode, r engine.Result) engine.Result {
+	if mode != engine.Check || r.Category != engine.ERR {
+		return r
+	}
+	if !isQuestion(def) {
+		return r
+	}
+	// No tag: `would.present` over an absent path reads as a claim, and the point is that
+	// nothing is being claimed. A bare `would` says "not knowable yet", which is the answer.
+	return engine.Would("")
 }
 
 // changedIfActed marks a Result Changed when a run apply did something and did not

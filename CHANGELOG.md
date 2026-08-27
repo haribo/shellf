@@ -10,7 +10,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `dir.mode(path, mode)` sets a directory's own permission bits. `file.mode` chmods a directory perfectly well, so this adds no capability — it adds a call site that does not lie, next to `dir.ensure` / `dir.owner` / `dir.copy` / `dir.sync`. Not recursive (#505).
 - `htpasswd.entry(path, user, password)` writes a basic-auth credential once. `openssl passwd` salts randomly, so a def comparing hashes rewrites the file on every run; this one verifies the stored hash against the password using its own salt. The password reaches openssl on stdin, never argv (#503).
-
 - `systemd.unit(name, content)` installs a unit file, refusing one `systemd-analyze verify` rejects before it reaches /etc, and reloading systemd when the content changes. A timer is a unit: its schedule lives in its `[Timer]` section (#506).
 - `system.timezone(zone)` sets the host timezone by writing `/etc/localtime` and `/etc/timezone`. Not `timedatectl`, which needs a system dbus a container has no — so the def stays exercisable against a real target (#499).
 - `user.ensure` takes `system` (default false): a service account with no home, no login and a UID from the system range, which the def could not express since it always ran `useradd -m` (#501).
@@ -21,6 +20,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `docs/dogfood.md` records what a real deployment could not express in shellf. The first report — Debian 13, Traefik, an app built on the host, a systemd-timer backup — needed 6 `unsafe shell` blocks and surfaced 2 bugs and a language gap (#490).
 - An adverse-state e2e plan per def: each starts from a state that is wrong on purpose and asserts the machine rather than the verdict. The coverage sweep proves idempotence, which a def that is wrong *stably* passes — #486 converged on both runs while the package was absent (#489).
 - `test/e2e/vm.sh` runs the e2e harness inside a throwaway VM. The harness starts a `--privileged` container sharing the host kernel, which ended a developer's graphical session four times; the VM makes that cost nothing. CI is unchanged — a runner is already disposable (#529).
+
+### Changed
+
+- A read-only question that answers *no* in `--dry-run` reports `would` instead of an error, so a plan that deploys a service and then checks it can be previewed to the end. A *yes* still resolves (#508, ADR-0051 amending ADR-0004).
 
 ### Fixed
 

@@ -148,11 +148,22 @@ func TestDeployDefs_TruthyAndValue(t *testing.T) {
 func TestDeployDefs_Questions(t *testing.T) {
 	// http-check is a read-only question (check phase): match → ok, else err.
 	args := map[string]string{"url": "http://x", "status": "200"}
-	if got := eval(t, "http.check", args, &fakeExec{observe: converged}, engine.Check).String(); got != "ok.match" {
+	if got := eval(t, "http.check", args, &fakeExec{observe: converged}, engine.Apply).String(); got != "ok.match" {
 		t.Fatalf("http-check match: got %s", got)
 	}
-	if got := eval(t, "http.check", args, &fakeExec{observe: drift}, engine.Check).String(); got != "err.mismatch" {
+	if got := eval(t, "http.check", args, &fakeExec{observe: drift}, engine.Apply).String(); got != "err.mismatch" {
 		t.Fatalf("http-check mismatch: got %s", got)
+	}
+
+	// In check mode a *failing* question answers `would` instead (ADR-0051): the service it
+	// asks about is often the one the plan is about to deploy, so the failure is an artefact
+	// of previewing rather than a fact about the run. A match still resolves — the state is
+	// there and the plan does not remove it.
+	if got := eval(t, "http.check", args, &fakeExec{observe: converged}, engine.Check).String(); got != "ok.match" {
+		t.Fatalf("http-check match in check: got %s, want ok.match", got)
+	}
+	if got := eval(t, "http.check", args, &fakeExec{observe: drift}, engine.Check).String(); got != "would" {
+		t.Fatalf("http-check mismatch in check: got %s, want would", got)
 	}
 }
 
@@ -342,12 +353,19 @@ func TestStatusMode(t *testing.T) {
 }
 
 func TestReadOnlyQuestions(t *testing.T) {
-	// A question resolves in pass 1: deterministic even in CHECK (never `would`).
+	// A question resolves in pass 1, and in CHECK the resolution is asymmetric (ADR-0051,
+	// amending ADR-0004): a `yes` holds — the state is there and the plan does not remove it
+	// — while a `no` is exactly what the plan may be about to create, so it answers `would`
+	// rather than an error that would halt the preview.
 	if got := eval(t, "dir.exists", map[string]string{"path": "/opt"}, &fakeExec{observe: converged}, engine.Check).String(); got != "ok.present" {
 		t.Fatalf("dir-exists present: got %s, want ok.present", got)
 	}
-	if got := eval(t, "dir.exists", map[string]string{"path": "/opt"}, &fakeExec{observe: drift}, engine.Check).String(); got != "err.absent" {
-		t.Fatalf("dir-exists absent: got %s, want err.absent", got)
+	if got := eval(t, "dir.exists", map[string]string{"path": "/opt"}, &fakeExec{observe: drift}, engine.Check).String(); got != "would" {
+		t.Fatalf("dir-exists absent in check: got %s, want would", got)
+	}
+	// In apply the answer is a fact, and an absent path is an error like any other.
+	if got := eval(t, "dir.exists", map[string]string{"path": "/opt"}, &fakeExec{observe: drift}, engine.Apply).String(); got != "err.absent" {
+		t.Fatalf("dir-exists absent in apply: got %s, want err.absent", got)
 	}
 	if got := eval(t, "file.exists", map[string]string{"path": "/etc/x"}, &fakeExec{observe: converged}, engine.Check).String(); got != "ok.present" {
 		t.Fatalf("file-exists present: got %s, want ok.present", got)
