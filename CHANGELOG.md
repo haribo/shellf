@@ -20,6 +20,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - ADR-0050: a verdict is observed, not asserted. A def that declares an `observe` re-reads it after acting, so an apply whose effect never landed reports `err.unconfirmed` instead of success — the cause behind #390, #411, #418, #480, #486 and #507 (#495).
 - `docs/dogfood.md` records what a real deployment could not express in shellf. The first report — Debian 13, Traefik, an app built on the host, a systemd-timer backup — needed 6 `unsafe shell` blocks and surfaced 2 bugs and a language gap (#490).
 - An adverse-state e2e plan per def: each starts from a state that is wrong on purpose and asserts the machine rather than the verdict. The coverage sweep proves idempotence, which a def that is wrong *stably* passes — #486 converged on both runs while the package was absent (#489).
+- `test/e2e/vm.sh` runs the e2e harness inside a throwaway VM. The harness starts a `--privileged` container sharing the host kernel, which ended a developer's graphical session four times; the VM makes that cost nothing. CI is unchanged — a runner is already disposable (#529).
 
 ### Fixed
 

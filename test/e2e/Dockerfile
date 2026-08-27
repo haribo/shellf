@@ -43,9 +43,22 @@ RUN useradd -m -s /bin/bash deploy \
 # sshd as a unit, so systemd owns it like on a real machine: `service.ensure("ssh", …)`
 # then means something. Mask what a container cannot do and that would only fail loudly
 # at boot.
+#
+# `systemd-sysctl` is masked for a different and sharper reason: it does not fail, it
+# **succeeds on the wrong kernel**. sysctl keys outside a namespace are shared with the
+# host, and this container is `--privileged`, so at boot it applied this image's
+# `sysctl.d` files to the machine running the tests. Measured on an Arch/GNOME developer
+# machine: `kernel.core_pattern` came out of a harness run set to `core` — Debian's value —
+# where Arch configures `|/usr/lib/systemd/systemd-coredump …`, so nothing on that host
+# would have produced a usable core dump again until it was restored by hand. The
+# developer's graphical session ended one second after the container started (#528).
+#
+# Nothing here needs it. The `sysctl.set` coverage sets its own keys explicitly, and picks
+# a `net.` one precisely because those live in the network namespace — this mask is the
+# same hazard from the other end: the image's sysctls rather than the plan's.
 RUN systemctl enable ssh docker \
  && systemctl mask systemd-firstboot systemd-udevd systemd-udev-trigger \
-                   systemd-modules-load systemd-network-generator
+                   systemd-modules-load systemd-network-generator systemd-sysctl
 
 STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]
