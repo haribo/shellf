@@ -7,3 +7,50 @@ def daemon-reload() as root {
         return ok.reloaded
     }
 }
+
+# Install a unit file, validated before it lands, and reload systemd when it changes.
+#
+# A scheduled backup — one of the most ordinary things a systemd host does — took two raw
+# `file.write`, a `daemon-reload`, and a `service.ensure` pointed at a timer in the first
+# dogfood (#506). Three things were wrong with that, and this def answers each:
+#
+#   - **nothing validated the unit.** A malformed `[Service]` was written happily and
+#     discovered when the job silently never ran. `systemd-analyze verify` exists for this,
+#     and `check` is where it belongs — the shape `sudo.write` and `sshd.config` already
+#     use, on their own temporary, so a refused content never reaches /etc (#323).
+#   - **the reload was the caller's to remember.** Forget it and the unit on disk is not the
+#     unit systemd knows: a green run over a stale daemon. Only this def knows whether
+#     anything changed, so the reload belongs to it.
+#   - **`name` had to carry the suffix anyway**, so a timer is just another unit here — its
+#     schedule lives in its `[Timer]` section. One def, no generated content: shellf
+#     delivers what the author wrote rather than assembling unit files on their behalf.
+#
+# `name` includes the extension (`app-backup.service`, `app-backup.timer`). Enabling and
+# starting stay `service.ensure`'s job, which is why this def does neither.
+def unit(name: str, content: str) as root {
+    check {
+        n = shell { printf '%s' "$name" | grep -qE '^[A-Za-z0-9_@.-]+\.(service|timer|socket|path|mount|target)$' }
+        if !n { return err.badName(n) }
+        r = shell {
+            d=$(mktemp -d)
+            trap 'rm -rf "$d"' EXIT
+            printf '%s\n' "$content" > "$d/$name"
+            # `verify` reads the unit by path and reports what a malformed one would do at
+            # load time. It warns about units it cannot resolve here (a missing dependency
+            # lives in /etc, not in the temporary), so only a non-zero exit is a refusal.
+            systemd-analyze verify "$d/$name" 2>&1
+        }
+        if !r { return err.validation(r) }
+    }
+    observe {
+        f = "/etc/systemd/system/${name}"
+        return state(synced: shell { test -f "$f" && printf '%s\n' "$content" | cmp -s - "$f" }.exit == 0)
+    }
+    apply {
+        file.write("/etc/systemd/system/${name}", "${content}\n")
+        # The reload is part of installing a unit, not a separate step for the caller to
+        # remember. It runs only here, on the path where the content actually changed.
+        systemd.daemon-reload()
+        return ok.installed
+    }
+}

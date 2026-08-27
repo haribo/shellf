@@ -1,0 +1,16 @@
+# `system.timezone` observes the zone the link points at, not the clock's abbreviation.
+#
+# The hostile shape: the host is on a zone that shares an abbreviation with the wanted one.
+# `date +%Z` says CEST for both Europe/Paris and Europe/Berlin in summer, so a def comparing
+# it converges on the wrong continent — and the abbreviation changes twice a year, so half
+# the year the same def reports drift and rewrites for nothing.
+on target {
+    as root {
+        unsafe shell { ln -sf /usr/share/zoneinfo/Europe/Berlin /etc/localtime; printf 'Europe/Berlin\n' > /etc/timezone }
+        system.timezone("Europe/Paris")
+        shell {
+            [ "$(readlink -f /etc/localtime)" = "/usr/share/zoneinfo/Europe/Paris" ] || exit 1
+            grep -qx 'Europe/Paris' /etc/timezone || exit 1
+        }
+    }
+}
