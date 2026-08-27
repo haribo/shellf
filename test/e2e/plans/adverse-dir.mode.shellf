@@ -1,0 +1,26 @@
+# `dir.mode` sets the directory's own bits, and stops there.
+#
+# The hostile shape: a directory whose own mode is already right, holding an entry whose
+# mode is wrong. A recursive implementation would "fix" the child and report `changed`,
+# firing every `if x.changed { … }` downstream forever — and quietly widening or narrowing
+# permissions the plan never asked about.
+#
+# `dir.owner` is recursive and its observe walks the tree to match (#480). This def is the
+# other choice, deliberately, so the case pins it: converged means *the directory*, and the
+# file inside keeps the mode it had.
+on target {
+    dir.ensure("/tmp/adv-dir-mode")
+    as root {
+        unsafe shell {
+            printf 'x\n' > /tmp/adv-dir-mode/inside.txt
+            chmod 777 /tmp/adv-dir-mode/inside.txt
+            chmod 700 /tmp/adv-dir-mode
+        }
+        dir.mode("/tmp/adv-dir-mode", "750")
+        shell {
+            [ "$(stat -c '%a' /tmp/adv-dir-mode)" = "750" ] || exit 1
+            # Untouched: the def owns one directory's bits, not its contents.
+            [ "$(stat -c '%a' /tmp/adv-dir-mode/inside.txt)" = "777" ] || exit 1
+        }
+    }
+}

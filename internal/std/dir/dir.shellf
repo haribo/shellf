@@ -57,6 +57,28 @@ def owner(path: str, owner: str) as root {
     }
 }
 
+# The mode of the directory itself, not of its contents.
+#
+# `file.mode` chmods a directory perfectly well — `chmod` does not care what its target is —
+# so this def adds no capability. It adds a call site that does not lie: the first dogfood
+# wrote `file.mode("/var/backups/app", "750")` for a directory holding database dumps, and
+# `dir.ensure` / `dir.owner` / `dir.copy` / `dir.sync` all existed while this one did not
+# (#505).
+#
+# **Not recursive**, unlike `dir.owner`. That def chowns the whole tree and walks it to
+# observe, because the two must agree — a top-level-only observe over a `chown -R` is what
+# #480 was. Here the operation is the directory's own bits, which is what a caller writing
+# `dir.mode` means; a recursive variant would be a different operation, and it would need an
+# observe that walks. If it is ever wanted it arrives as a parameter, with that observe.
+def mode(path: str, mode: str) {
+    observe { return state(mode: shell { stat -c '%a' "$path" 2>/dev/null }.stdout) }
+    apply {
+        r = shell { chmod "$mode" "$path" }
+        if !r { return err.runtime(r) }
+        return ok.changed
+    }
+}
+
 # A read-only question: no apply phase, deterministic in check (never `would`).
 def exists(path: str) {
     check {
