@@ -281,7 +281,18 @@ See [ADR-0009](adr/0009-error-handling.md).
 
 ### Read-only questions
 
-`dir.exists` / `file.exists` are **questions**: read-only defs with **no `apply` phase**, so they resolve in pass 1 and are **deterministic in check** (never `undetermined`), unlike an effectful instruction.
+`dir.exists` / `file.exists` are **questions**: read-only defs with **no `apply` phase**, so they resolve in pass 1, unlike an effectful instruction.
+
+In `--dry-run` the resolution is **asymmetric** (ADR-0051, amending ADR-0004):
+
+| the question answers | in check | why |
+|---|---|---|
+| yes | `ok.<tag>` — resolved | the state is there, and the plan does not remove it |
+| no | `would` — not knowable yet | a `no` is often exactly what the plan is about to create |
+
+So `if dir.exists("/opt/legacy") { … }` still resolves on a host where the directory exists, while a plan that creates a directory and then asks about it previews the branch as `undetermined` instead of taking the `else`. Without this, a plan that verifies its own deployment could not be previewed at all: the check ran for real, failed because nothing had been applied, and halted the preview.
+
+**A `check` phase must not depend on state the plan itself produces.** That is a rule for writing defs, not something the model can enforce: `systemd.unit` shipped validating its content with `systemd-analyze verify`, which refuses a unit whose `ExecStart` is not yet on disk — so a plan delivering a script and the unit calling it could not be previewed. The fix belonged in the def.
 
 ```
 if dir.exists("/opt/app") {   // present → then, absent → else — deterministic even in --dry-run
