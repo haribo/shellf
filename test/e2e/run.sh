@@ -13,6 +13,12 @@ set -euo pipefail
 
 : "${SHELLF_E2E:?set SHELLF_E2E=1 to run the end-to-end harness (needs Docker)}"
 
+# On a development machine, run this through `test/e2e/vm.sh run` instead of directly.
+# The target below is a `--privileged` container with systemd as PID 1: it shares the
+# kernel of whatever machine it runs on, and it has ended a developer's graphical session
+# four times — rewriting `kernel.core_pattern` and `vm.swappiness` on the way (#528, #529).
+# CI calls this script directly on purpose, because a runner is already disposable.
+
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
 work="$(mktemp -d)"
@@ -43,6 +49,18 @@ if ! docker image inspect "$image_tag" >/dev/null 2>&1; then
   say "build the target image ($image_tag) — once, then reused"
   docker build -q -t "$image_tag" -f "$here/Dockerfile" "$here" >/dev/null
 fi
+
+# Recorded before the target exists, compared after it has booted. `systemd-sysctl` inside
+# the container writes keys that are **not namespaced**, so a `--privileged` target applies
+# its own image's `sysctl.d` to the machine running the tests — it does not fail, it
+# succeeds on the wrong kernel. Measured once for real: a harness run left the developer's
+# `kernel.core_pattern` set to Debian's `core`, replacing Arch's systemd-coredump handler,
+# and the graphical session ended a second after the container started (#528).
+#
+# The unit is masked in the Dockerfile. This is the assertion behind the mask, in the same
+# spirit as the cgroup guard below: check the specific, known-dangerous outcome rather than
+# trust a flag.
+host_core_pattern="$(sysctl -n kernel.core_pattern 2>/dev/null || true)"
 
 say "start the throwaway target ($image_tag)"
 # systemd as PID 1 plus a docker daemon inside. `--privileged` is the documented way; the
@@ -88,6 +106,14 @@ esac
 if docker exec "$cname" sh -c 'find /sys/fs/cgroup -maxdepth 4 -name "session-*.scope" | head -1' 2>/dev/null | grep -q .; then
   docker rm -f "$cname" >/dev/null 2>&1
   fail "the target can see host login sessions — it would log the operator out"
+fi
+
+# And it must not have written to the host's kernel on the way up (#528).
+now_core_pattern="$(sysctl -n kernel.core_pattern 2>/dev/null || true)"
+if [ "$now_core_pattern" != "$host_core_pattern" ]; then
+  docker rm -f "$cname" >/dev/null 2>&1
+  printf 'before: %s\nafter:  %s\n' "$host_core_pattern" "$now_core_pattern" >&2
+  fail "the target rewrote the host's kernel.core_pattern — systemd-sysctl is not masked (#528)"
 fi
 
 # Wait for the boot to settle: `systemctl is-system-running` answers `running` (or
