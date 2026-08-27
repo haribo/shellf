@@ -1,22 +1,38 @@
-# `systemd.unit` refuses a unit systemd cannot load, and reloads when it writes one.
+# `systemd.unit` judges a unit by what `systemd-analyze verify` *says*, not by its exit code.
 #
-# Two hostile shapes in one plan.
+# The exit code answers a different question than it appears to (#525), and backwards in
+# both directions:
 #
-# The first is the case the def exists for: a `[Service]` with a directive systemd rejects.
-# Written without validation it lands happily in /etc/systemd/system and is discovered when
-# the job silently never runs — so the assertion is that **nothing was written**, not that a
-# verdict was red.
+#   well-formed unit, ExecStart not on disk yet  ->  exit 1   (would be refused)
+#   malformed unit, `Type=banana`                ->  exit 0   (would be accepted)
 #
-# The refusal has to happen in a plan of its own, since an `err` halts the run; here it is
-# expressed by checking the file's absence after a call the harness expects to fail. The
-# call is deliberately last.
+# The distinction that works is structural rather than a catalogue of messages: a problem
+# **in the file** carries a line number (`…/x.service:5: Failed to parse …`), a problem with
+# the **environment** does not (`x.service: Command … is not executable`). Only the first is
+# knowable when the plan is read, and only the first is this def's business.
+#
+# Two shapes here, plus the stale-daemon one. The refusal case itself cannot live in this
+# plan — an `err` halts the run — so it is step 27 of run.sh, which asserts that nothing
+# was written.
 on target {
     as root {
-        unsafe shell { rm -f /etc/systemd/system/adv-stale.service; systemctl daemon-reload }
+        # 1. A unit whose ExecStart does not exist yet. This is the ordinary shape: a plan
+        #    delivers a script and the unit that calls it, so at check time the script is
+        #    not there. It must install, not refuse — the first version halted every
+        #    `--dry-run` of such a plan (#525, and #508's shape).
+        unsafe shell { rm -f /etc/systemd/system/adv-pending.service; systemctl daemon-reload }
+        systemd.unit("adv-pending.service", """
+            [Unit]
+            Description=adverse pending binary
 
-        # The unit on disk is right, but the daemon has not been told: the state a host is in
-        # when someone writes a unit by hand and forgets the reload. Installing the same
-        # content must still leave systemd knowing it.
+            [Service]
+            Type=oneshot
+            ExecStart=/usr/local/bin/not-delivered-yet.sh
+            """)
+        shell { test -f /etc/systemd/system/adv-pending.service || exit 1 }
+
+        # 2. The file on disk is already correct while the daemon has not been told: the
+        #    state a host is in when someone writes a unit by hand and forgets the reload.
         unsafe shell {
             printf '[Unit]\nDescription=adverse probe\n\n[Service]\nType=oneshot\nExecStart=/bin/true\n' \
                 > /etc/systemd/system/adv-stale.service
@@ -30,7 +46,6 @@ on target {
             ExecStart=/bin/true
             """)
         shell {
-            # systemd knows the unit: `show` answers with its description rather than a stub.
             systemctl show -p Description --value adv-stale.service | grep -qx 'adverse probe' || exit 1
         }
     }

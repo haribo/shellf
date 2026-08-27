@@ -35,10 +35,23 @@ def unit(name: str, content: str) as root {
             d=$(mktemp -d)
             trap 'rm -rf "$d"' EXIT
             printf '%s\n' "$content" > "$d/$name"
-            # `verify` reads the unit by path and reports what a malformed one would do at
-            # load time. It warns about units it cannot resolve here (a missing dependency
-            # lives in /etc, not in the temporary), so only a non-zero exit is a refusal.
-            systemd-analyze verify "$d/$name" 2>&1
+            # Judged on what `verify` SAYS, never on its exit code — which answers a
+            # different question, and backwards in both directions (#525):
+            #
+            #   well-formed unit, ExecStart not on disk yet  ->  exit 1
+            #   malformed unit, `Type=banana`                ->  exit 0
+            #
+            # The first refused every plan that delivers a script and the unit calling it,
+            # `--dry-run` included, since the script is not there when the plan is read.
+            # The second let through the only thing this check exists to stop.
+            #
+            # A problem **in the file** carries a line number — `…/x.service:5: Failed to
+            # parse …`, `…:3: Unknown key …`. A problem with the **environment** does not —
+            # `x.service: Command … is not executable`, `Unit nosuch.service not found`.
+            # Only the first is knowable when the plan is read, and only the first is this
+            # def's business. Structural, so it is not a catalogue of messages to maintain.
+            bad=$(systemd-analyze verify "$d/$name" 2>&1 | grep -E ':[0-9]+: ' || true)
+            [ -z "$bad" ] || { printf '%s\n' "$bad" >&2; exit 1; }
         }
         if !r { return err.validation(r) }
     }
