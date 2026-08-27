@@ -1199,4 +1199,39 @@ printf '%s' "$out" | grep -qE 'ufw\.open.*ok\.already' \
 printf '%s' "$out" | grep -qE 'ufw\.default.*ok\.already' \
   || fail "ufw.default stopped converging on an active firewall (#515)"
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out, booleans are booleans, dry-run diffs a change, commands are reported, purged packages reinstalled, defs survive a hostile state, dir.owner sees a missing path, ufw converges while down"
+say "27. a malformed unit is refused and never written (#525)"
+# The other half of the systemd.unit contract, and it needs its own step because an `err`
+# halts a plan: what matters is that **nothing reached /etc/systemd/system**, which cannot
+# be asserted from inside the plan that was halted.
+#
+# `Type=banana` is the shape that exposed the defect: `systemd-analyze verify` reports it
+# and exits **0**, so a def trusting the exit code writes a unit systemd will silently
+# ignore. The def now reads the message, where a problem in the file carries a line number.
+mkdir -p "$work/unit/plans" "$work/unit/inventories"
+cp "$work/inventory.shellf" "$work/unit/inventories/inv.shellf"
+cat > "$work/unit/plans/plan.shellf" <<'EOF'
+on target {
+    as root {
+        systemd.unit("adv-malformed.service", """
+            [Unit]
+            Description=malformed
+
+            [Service]
+            Type=banana
+            ExecStart=/bin/true
+            """)
+    }
+}
+EOF
+docker exec "$cname" rm -f /etc/systemd/system/adv-malformed.service
+rc=0
+out="$("$work/shellf" run --inventory "$work/unit/inventories/inv.shellf" --insecure \
+  "$work/unit/plans/plan.shellf" 2>&1)" || rc=$?
+printf '%s\n' "$out"
+[ "$rc" -ne 0 ] || fail "a malformed unit must not be installed (#525)"
+printf '%s' "$out" | grep -q 'err.validation' \
+  || fail "a malformed unit must be refused in check, not fail later (#525)"
+docker exec "$cname" test -e /etc/systemd/system/adv-malformed.service \
+  && fail "a refused unit must leave nothing in /etc/systemd/system (#525)"
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out, booleans are booleans, dry-run diffs a change, commands are reported, purged packages reinstalled, defs survive a hostile state, dir.owner sees a missing path, ufw converges while down, a malformed unit is refused"
