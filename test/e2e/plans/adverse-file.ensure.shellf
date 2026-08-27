@@ -1,0 +1,18 @@
+# `file.ensure` reconciles the mode of an existing file, and never its content.
+#
+# The hostile shape is the whole point of the def: the file is already there, holding
+# something, with the wrong mode. A naive `install -m /dev/null` implementation truncates
+# it — which for the case that motivated this def (Traefik's ACME store, #502) means
+# destroying the account key it was asked to protect.
+on target {
+    dir.ensure("/tmp/adv-file-ensure")
+    unsafe shell {
+        printf 'existing content\n' > /tmp/adv-file-ensure/acme.json
+        chmod 644 /tmp/adv-file-ensure/acme.json
+    }
+    file.ensure("/tmp/adv-file-ensure/acme.json", "600")
+    shell {
+        [ "$(stat -c '%a' /tmp/adv-file-ensure/acme.json)" = "600" ] || exit 1
+        grep -qx 'existing content' /tmp/adv-file-ensure/acme.json || exit 1
+    }
+}

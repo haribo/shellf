@@ -74,6 +74,33 @@ def replace(path: str, key: str, value: str) {
     }
 }
 
+# Create a file if it is absent, with an exact mode, and never touch its content.
+#
+# `file.write` always owns the content, so it cannot express "make sure this exists" — and
+# `file.write(path, "")` followed by `file.mode` is two steps with a window between them
+# where the file carries the umask default. Traefik's ACME store is the case that found it:
+# it must exist, be 600 before traefik writes a key into it, and must not be zero-length
+# (#502). By the time anyone notices that window, it holds a private key.
+#
+# `install -m` creates with the mode in one step. On an existing file only the mode is
+# reconciled — truncating it would be the defect this def exists to avoid.
+def ensure(path: str, mode: str) {
+    observe {
+        return state(ready: shell { test -f "$path" && [ "$(stat -c '%a' "$path")" = "$mode" ] }.exit == 0)
+    }
+    apply {
+        r = shell {
+            if [ -f "$path" ]; then
+                chmod "$mode" "$path"
+            else
+                install -m "$mode" /dev/null "$path"
+            fi
+        }
+        if !r { return err.runtime(r) }
+        return ok.ready
+    }
+}
+
 def download(url: str, dst: str, sha256: str) {
     observe {
         return state(present: shell { test -f "$dst" && echo "$sha256  $dst" | sha256sum -c --status }.exit == 0)

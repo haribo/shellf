@@ -1,0 +1,22 @@
+# `sysctl.set` observes the running kernel, not the file it writes.
+#
+# The hostile shape: the persisted file already says what the plan wants, while the live
+# kernel says something else — the state a host is in between a write and a reboot. A def
+# observing the file would report `already` over a kernel that disagrees, and the setting
+# would silently not apply until someone reboots.
+# A `net.` key, never a `vm.` one: sysctl keys outside the network namespace are shared
+# with the host, so a privileged container writing `vm.swappiness` changes the developer's
+# own machine. Measured, and restored by hand afterwards.
+on target {
+    as root {
+        unsafe shell {
+            printf 'net.core.somaxconn=1024\n' > /etc/sysctl.d/90-shellf-net-core-somaxconn.conf
+            sysctl -w net.core.somaxconn=512 >/dev/null
+        }
+        sysctl.set("net.core.somaxconn", "1024")
+        shell {
+            [ "$(sysctl -n net.core.somaxconn)" = "1024" ] || exit 1
+            grep -qxF 'net.core.somaxconn=1024' /etc/sysctl.d/90-shellf-net-core-somaxconn.conf || exit 1
+        }
+    }
+}
