@@ -1,0 +1,23 @@
+# Traefik's static configuration. `~{acme_email}` is this host's inventory var, rendered on
+# the control host; everything else is copied byte for byte (ADR-0049).
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+  websecure:
+    address: ":443"
+providers:
+  docker:
+    exposedByDefault: false
+    network: web
+certificatesResolvers:
+  le:
+    acme:
+      email: ~{acme_email}
+      storage: /acme/acme.json
+      httpChallenge:
+        entryPoint: web

@@ -1,0 +1,23 @@
+# `~{domain}` is rendered from the inventory; the Traefik label's own backticks and the
+# compose `${…}` syntax pass through untouched.
+services:
+  app:
+    build: ./src
+    restart: unless-stopped
+    env_file: .env
+    # Bound to the loopback, not published to the world: the container is reachable from
+    # the internet only through Traefik, and this is what the plan's own health check
+    # probes after a deploy. Dropping it would mean the deployment cannot verify itself.
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      - web
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.app.rule=Host(`~{domain}`)
+      - traefik.http.routers.app.entrypoints=websecure
+      - traefik.http.routers.app.tls.certresolver=le
+      - traefik.http.services.app.loadbalancer.server.port=8080
+networks:
+  web:
+    external: true

@@ -31,7 +31,11 @@ func TestExamplesResolvePerHost(t *testing.T) {
 
 	for _, p := range plans {
 		t.Run(filepath.Base(p), func(t *testing.T) {
-			base := map[string]string{}
+			// Secrets an example passes as an instruction argument (ADR-0018): the plan
+			// cannot resolve without them, and an inventory is deliberately not where a
+			// secret lives. Placeholders only — this test resolves references, it runs
+			// nothing. An example introducing a new secret adds it here.
+			base := map[string]string{"dashboard_password": "placeholder"}
 			plan, _, err := loadPlanPackage(p, invs[0], base, map[string]string{})
 			if err != nil {
 				t.Fatalf("load: %v", err)
