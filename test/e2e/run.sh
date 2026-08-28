@@ -471,6 +471,11 @@ mkdir -p "$appsrc"
 # a remote URL; what this exercises — clone, resolve the tag, check it out detached — is the
 # same mechanism either way.
 docker cp "$appsrc" "$edgename:/srv/app-repo" >/dev/null
+# `docker cp` keeps the host's UID, and git refuses a repository owned by somebody else
+# ("dubious ownership"). It happened to work locally — the developer's UID matched
+# `deploy`'s inside the image — and failed on the CI runner, whose UID does not. Owned by
+# root here, which is who clones it.
+docker exec "$edgename" chown -R root:root /srv/app-repo
 
 cat > "$work/examples-inventory.shellf" <<EOF
 host web = {
