@@ -13,4 +13,9 @@ on target {
         grep -qxF -- 'K=https://x.test/a?b=1&c=2|d/e' /tmp/adv-file-replace/env.txt || exit 1
         grep -qxF -- 'OTHER=keep' /tmp/adv-file-replace/env.txt || exit 1
     }
+
+    # A path with a space, on top of the metacharacter value the case above already covers.
+    unsafe shell { printf 'K=one\n' > "/tmp/adv-file-replace/a b.env" }
+    file.replace("/tmp/adv-file-replace/a b.env", "K", "two")
+    shell { grep -qxF -- 'K=two' "/tmp/adv-file-replace/a b.env" || exit 1 }
 }

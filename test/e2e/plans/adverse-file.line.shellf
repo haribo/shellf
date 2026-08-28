@@ -7,4 +7,9 @@ on target {
     unsafe shell { printf 'appended-line-longer\n' > /tmp/adv-file-line/f.txt }
     file.line("/tmp/adv-file-line/f.txt", "appended-line")
     shell { grep -qxF -- 'appended-line' /tmp/adv-file-line/f.txt || exit 1 }
+
+    # A path with a space, and a line carrying characters grep would read as a pattern (#527).
+    unsafe shell { printf 'other\n' > "/tmp/adv-file-line/a b.txt" }
+    file.line("/tmp/adv-file-line/a b.txt", "a.b*c[d]")
+    shell { grep -qxF -- 'a.b*c[d]' "/tmp/adv-file-line/a b.txt" || exit 1 }
 }
