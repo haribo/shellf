@@ -421,24 +421,56 @@ say "8. the shipped examples run for real (#356)"
 # machines, and they are. Sharing a container makes `blog` fail to bind :80 because
 # `webserver` installed nginx there — an artefact of the test setup, not of the examples,
 # and papering over it in the plan would teach a port nobody chose.
+# Three targets: `web` and `app` for the two teaching examples, and `edge` for
+# `hosting.shellf` — the deployment that measured the language (docs/dogfood.md). That one
+# provisions a whole host, so it gets its own machine rather than colliding with the others
+# on ports 80/443.
 appname="$cname-app"
-docker run -d --name "$appname" \
-  --privileged --cgroupns=private --tmpfs /run --tmpfs /run/lock \
-  "$image_tag" >/dev/null
-trap 'docker rm -f "$cname" "$appname" >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
-for _ in $(seq 1 60); do
-  st="$(docker exec "$appname" systemctl is-system-running 2>/dev/null || true)"
-  case "$st" in running|degraded) break ;; esac
-  sleep 0.5
+edgename="$cname-edge"
+for c in "$appname" "$edgename"; do
+  docker run -d --name "$c" \
+    --privileged --cgroupns=private --tmpfs /run --tmpfs /run/lock \
+    "$image_tag" >/dev/null
 done
-docker cp "$work/id.pub" "$appname:/home/deploy/.ssh/authorized_keys"
-docker exec "$appname" sh -c '
-  chown -R deploy:deploy /home/deploy/.ssh
-  chmod 600 /home/deploy/.ssh/authorized_keys
-  systemctl restart ssh
-'
+trap 'docker rm -f "$cname" "$appname" "$edgename" >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
+for c in "$appname" "$edgename"; do
+  for _ in $(seq 1 60); do
+    st="$(docker exec "$c" systemctl is-system-running 2>/dev/null || true)"
+    case "$st" in running|degraded) break ;; esac
+    sleep 0.5
+  done
+  docker cp "$work/id.pub" "$c:/home/deploy/.ssh/authorized_keys"
+  docker exec "$c" sh -c '
+    chown -R deploy:deploy /home/deploy/.ssh
+    chmod 600 /home/deploy/.ssh/authorized_keys
+    systemctl restart ssh
+  '
+done
 appip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$appname")"
+edgeip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$edgename")"
 [ -n "$appip" ] || fail "could not read the app container IP"
+[ -n "$edgeip" ] || fail "could not read the edge container IP"
+
+# `hosting.shellf` deploys an application from a git repository. The URL is a per-host
+# inventory var precisely so it can be pointed somewhere real here — a bare repo the harness
+# builds on the spot, same trick as step 9's module. Without it the example would only ever
+# be parsed, and this project has shipped two defs whose `--dry-run` was green and whose
+# `apply` was wrong (#486, #487).
+appsrc="$work/app-repo"
+mkdir -p "$appsrc"
+( cd "$appsrc"
+  git init -q -b main .
+  git config user.email e@x && git config user.name e
+  # It must answer 200, not merely listen: the plan's health check is `curl -f`, which
+  # fails on the 404 an empty httpd would return.
+  printf 'ok\n' > index.html
+  printf 'FROM busybox\nCOPY index.html /www/index.html\nCMD ["httpd","-f","-p","8080","-h","/www"]\n' > Dockerfile
+  git add -A && git commit -qm init && git tag v1.0.0 )
+# Copied *into* the target: `git.sync` clones on the machine being provisioned, not on the
+# control host, so a path that exists here means nothing there. A real deployment points at
+# a remote URL; what this exercises — clone, resolve the tag, check it out detached — is the
+# same mechanism either way.
+docker cp "$appsrc" "$edgename:/srv/app-repo" >/dev/null
 
 cat > "$work/examples-inventory.shellf" <<EOF
 host web = {
@@ -449,12 +481,26 @@ host app = {
     address: "$appip", user: "deploy", key: "$work/id",
     domain: "blog.example.test"
 }
+host edge = {
+    address: "$edgeip", user: "deploy", key: "$work/id",
+    domain: "edge.example.test",
+    acme_email: "ops@example.test",
+    repo: "file:///srv/app-repo",
+    ref: "v1.0.0",
+    healthz: "http://127.0.0.1:8080/"
+}
 EOF
 printf 'examples-db-password' > "$work/dbpw"
+printf 'examples-dashboard-password' > "$work/dashpw"
 
+# `healthz` points at the app container's own port over plain HTTP: Traefik terminates TLS
+# with a certificate from Let's Encrypt, which needs a public domain and is the one thing in
+# that example this harness cannot exercise. What it does exercise is everything the plan
+# itself does — the config Traefik reads, the unit files, the credential, the checkout.
 example() {
   "$work/shellf" run --inventory "$work/examples-inventory.shellf" --insecure \
-    --secret-file db_password="$work/dbpw" "$@"
+    --secret-file db_password="$work/dbpw" \
+    --secret-file dashboard_password="$work/dashpw" "$@"
 }
 
 for plan in "$root"/examples/plans/*.shellf; do

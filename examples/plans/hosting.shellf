@@ -1,0 +1,174 @@
+# A single-host web deployment: Traefik with Let's Encrypt, one application built on the
+# host behind it, a nightly backup on a systemd timer, a firewall, a service account.
+#
+#   shellf run --inventory examples/inventories/inventory.shellf \
+#     --secret-file dashboard_password=./dashboard_password \
+#     --dry-run examples/plans/hosting.shellf
+#
+# This one is not written to show the language — `blog.shellf` does that. It is the
+# deployment that **measured** the language: `docs/dogfood.md` records writing it against a
+# real target and counting every place shellf had nothing to offer. There were six, and
+# each became an instruction (epic #498). Read this file as the answer to "what can shellf
+# actually deploy?", because that is the question it was written to answer.
+#
+# It carries **no `unsafe shell`**. That is the point, and it is the number to watch: a
+# later version of this file that needs one has found a gap worth an issue (ADR-0040 §3).
+
+on edge {
+    # ---- 1. base system -------------------------------------------------------------
+    # `apt.update` is action-shaped: it always refreshes, so a plan calls it when it means
+    # to (#488). Here, once, before anything is installed.
+    apt.update()
+    for pkg in ["curl", "ca-certificates", "gnupg", "rsync"] {
+        apt.install("${pkg}")
+    }
+
+    system.timezone("Europe/Paris")
+
+    # A reverse proxy raises the accept queue. Set live *and* persisted: a value written to
+    # /etc/sysctl.d and never applied does nothing until a reboot (#500).
+    sysctl.set("net.core.somaxconn", "1024")
+
+    # The account the container runs as, and which owns the secrets it reads — no home, no
+    # login, a UID from the system range. `system = true` is what makes it a service account
+    # rather than a user (#501).
+    #
+    # It owns its **data**, not the deployment tree. An earlier version of this plan ran
+    # `dir.owner("/opt/hosting", "app")`, and `dir.owner` is recursive (#480): on the second
+    # deploy it chowned the git checkout underneath, and git then refused to touch a
+    # repository owned by somebody else ("dubious ownership"). The first run was green. Only
+    # running it twice showed it.
+    user.ensure("app", "/usr/sbin/nologin", true)
+
+    # ---- 2. firewall ----------------------------------------------------------------
+    # **22 first, and the order is load-bearing.** Enabling a deny-inbound firewall without
+    # an SSH rule locks you out of the machine you are configuring — and every step would
+    # report green while doing it.
+    ufw.open("22", "tcp")
+    ufw.default("deny", "allow")
+    for port in ["80", "443"] {
+        ufw.open("${port}", "tcp")
+    }
+    ufw.enable()
+
+    # ---- 3. docker ------------------------------------------------------------------
+    docker.install()
+    docker.network("web")
+    # Takes effect for sessions started *after* this, not for the rest of this run — the
+    # agent keeps the session it connected with (#510). Hence `as root` further down.
+    user.group("deploy", "docker")
+
+    # ---- 4. layout ------------------------------------------------------------------
+    as root {
+        dir.ensure("/opt/hosting/traefik")
+        dir.ensure("/opt/hosting/app")
+        dir.ensure("/var/backups/app")
+        # `dir.mode`, not `file.mode`: the directory's own bits, and a call site that says
+        # so (#505). /var/backups holds database dumps.
+        dir.mode("/var/backups/app", "750")
+    }
+
+    # ---- 5. traefik -----------------------------------------------------------------
+    as root {
+        # `~{acme_email}` is rendered on the control host from this host's inventory var;
+        # the file's own `${…}` and `{{ … }}` pass through untouched (ADR-0049).
+        file.template(%"hosting/traefik.yml.tmpl", "/opt/hosting/traefik/traefik.yml")
+        file.copy(%"hosting/traefik-compose.yaml", "/opt/hosting/traefik/compose.yaml")
+
+        # The ACME store must exist at 0600 *before* traefik writes a key into it, and must
+        # not be truncated if it already holds one. `file.write(path, "")` + `file.mode`
+        # would be two steps with a window where the file carries the umask default — and
+        # by the time anyone notices, that window held a private key (#502).
+        file.ensure("/opt/hosting/traefik/acme.json", "600")
+
+        # The dashboard credential. Not a plan literal: it arrives with `--secret-file` and
+        # is masked as `***` everywhere shellf prints (ADR-0018). The def verifies the
+        # stored hash against the password rather than comparing hashes — `openssl passwd`
+        # salts randomly, so comparing would rewrite the file on every run (#503).
+        htpasswd.entry("/opt/hosting/traefik/users", "admin", dashboard_password)
+    }
+    docker.compose-up("/opt/hosting/traefik")
+
+    # ---- 6. the application ---------------------------------------------------------
+    # Built on the host from a pinned checkout, not pulled from a registry. `repo` and `ref`
+    # come from the inventory: a plan that hard-codes the repository it deploys can only ever
+    # deploy that one.
+    #
+    # `as root`: /opt/hosting belongs to the service account since the layout section, so the
+    # connecting user can no longer write there. Found by running this example rather than
+    # previewing it — `--dry-run` reported `would.synced` on a checkout that could not happen.
+    #
+    # And the checkout **stays** root-owned. Handing it to `app` looks tidier and breaks the
+    # next run: git refuses to operate on a repository owned by someone else ("dubious
+    # ownership"), so the second deploy dies asking for `safe.directory`. Nothing needs it —
+    # `docker build` reads the tree as root. Also found by running it twice, which is the
+    # only way this class of defect shows up.
+    as root { git.sync(repo, "/opt/hosting/app/src", ref) }
+
+    as root {
+        file.template(%"hosting/app-compose.yaml.tmpl", "/opt/hosting/app/compose.yaml")
+        file.template(%"hosting/app.env.tmpl", "/opt/hosting/app/.env")
+        file.mode("/opt/hosting/app/.env", "600")
+        file.owner("/opt/hosting/app/.env", "app")
+    }
+
+    app = docker.compose-up("/opt/hosting/app", true)
+
+    # Deploy, then verify. In `--dry-run` these answer `would` instead of failing: the
+    # service they ask about is the one the plan is about to start, so a `no` there is not
+    # knowable yet and must not halt the preview (ADR-0051). In a real run they are facts.
+    #
+    # `healthz` is a per-host inventory var. It repeats the domain because a per-host value
+    # cannot be composed into a string today — the language gap this deployment found and
+    # the one thing here still waiting on an instruction (#509).
+    http.wait-for(healthz, "60")
+    http.check(healthz, "200")
+
+    # ---- 7. nightly backup ----------------------------------------------------------
+    as root {
+        file.copy(%"hosting/app-backup.sh", "/usr/local/bin/app-backup.sh")
+        file.mode("/usr/local/bin/app-backup.sh", "755")
+
+        # A unit and its timer. `systemd.unit` refuses content `systemd-analyze verify`
+        # rejects *before* it reaches /etc, and reloads systemd when it changes — a unit
+        # written by hand and never reloaded is a green run over a stale daemon (#506).
+        # A timer is just a unit: its schedule lives in its `[Timer]` section.
+        systemd.unit("app-backup.service", """
+            [Unit]
+            Description=Nightly application backup
+
+            [Service]
+            Type=oneshot
+            ExecStart=/usr/local/bin/app-backup.sh
+            """)
+        systemd.unit("app-backup.timer", """
+            [Unit]
+            Description=Run the application backup nightly
+
+            [Timer]
+            OnCalendar=daily
+            Persistent=true
+
+            [Install]
+            WantedBy=timers.target
+            """)
+        service.ensure("app-backup.timer", true, true)
+
+        file.write("/etc/logrotate.d/app-backup", """
+            /var/log/app-backup.log {
+                weekly
+                rotate 8
+                compress
+                missingok
+            }
+            """)
+    }
+
+    # Old layers pile up after every rebuild. Action-shaped: pruning always acts, so the
+    # plan calls it where it wants it (#504).
+    as root { docker.prune() }
+
+    # A handler, gated on a real change — `compose-up` is action-shaped, and `.changed`
+    # tells a rebuild from a no-op.
+    if app.changed { shell { logger "shellf: app stack rebuilt" } }
+}
