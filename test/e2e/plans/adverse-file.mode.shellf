@@ -17,4 +17,11 @@ on target {
             [ "$(stat -c '%U' /tmp/adv-file-mode/f.txt)" = "covuser" ] || exit 1
         }
     }
+
+    # The same path shape as file.write's case: a space and a quote (#527).
+    as root {
+        unsafe shell { printf 'x\n' > "/tmp/adv-file-mode/a b'c.txt"; chmod 644 "/tmp/adv-file-mode/a b'c.txt" }
+        file.mode("/tmp/adv-file-mode/a b'c.txt", "640")
+        shell { [ "$(stat -c '%a' "/tmp/adv-file-mode/a b'c.txt")" = "640" ] || exit 1 }
+    }
 }

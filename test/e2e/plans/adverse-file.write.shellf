@@ -18,4 +18,14 @@ on target {
             [ "$(stat -c '%U' /tmp/adv-file-write/f.txt)" = "covuser" ] || exit 1
         }
     }
+
+    # A path with a space and a single quote. Nothing exotic — "Application Support",
+    # "Bob's data" — and the shape that finds a `$path` somebody forgot to quote. The
+    # staging file is derived from it (`"$path.shellf.$$"`), so the rename is exercised
+    # too (#527).
+    as root {
+        unsafe shell { printf 'old\n' > "/tmp/adv-file-write/a b'c.txt" }
+        file.write("/tmp/adv-file-write/a b'c.txt", "new content\n")
+        shell { grep -qx 'new content' "/tmp/adv-file-write/a b'c.txt" || exit 1 }
+    }
 }
