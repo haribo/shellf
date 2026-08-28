@@ -188,6 +188,21 @@ The detector is a heuristic and does not claim otherwise: `$CMD`, `eval`, `xargs
 `install -d` and `find -exec` go through it. It runs on plans and on your own defs; the
 standard library is exempt, since it is the layer that reaches the system.
 
+**What to do with one you have written.** The mark is a signal, and the two cases it
+covers are not the same:
+
+| the block does | what it means |
+|---|---|
+| an atomic lock, an `eval`, a genuine one-off | its purpose — it stays, and the mark is correct |
+| something **every** deployment would want | a missing instruction — worth an issue carrying the block it would replace |
+
+The difference is not how complex the shell is, it is whether the operation is one any
+plan would reach for. That distinction is the whole method behind
+[`docs/dogfood.md`](dogfood.md): write a real deployment, count what it forces you to write
+by hand, and let that count — not a wishlist — decide what the standard library grows next.
+Six blocks became six instructions that way, and `examples/plans/hosting.shellf` now carries
+none.
+
 ## Variables
 
 Immutable bindings, **no keyword** — same syntax in plans, vars files, and `def` bodies:

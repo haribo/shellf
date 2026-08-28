@@ -21,6 +21,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - An adverse-state e2e plan per def: each starts from a state that is wrong on purpose and asserts the machine rather than the verdict. The coverage sweep proves idempotence, which a def that is wrong *stably* passes — #486 converged on both runs while the package was absent (#489).
 - `test/e2e/vm.sh` runs the e2e harness inside a throwaway VM. The harness starts a `--privileged` container sharing the host kernel, which ended a developer's graphical session four times; the VM makes that cost nothing. CI is unchanged — a runner is already disposable (#529).
 - `examples/plans/hosting.shellf`: the deployment that measured the language, now shipped as an example — Traefik with Let's Encrypt, an app built on the host, a systemd-timer backup, ufw, a service account. **No `unsafe shell`**, and the e2e harness applies it twice (#490).
+- The README explains the escape hatch: shell an instruction already does does not parse, `unsafe shell` keeps it, and `grep -r 'unsafe shell'` lists every place the guarantees stop. `docs/language.md` says what to do with one you have written (#497).
 
 ### Changed
 

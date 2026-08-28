@@ -278,6 +278,34 @@ on server {
 - A block ends at its balanced `}`. A lone unbalanced `}` in a string ends it
   early — use a heredoc or the one-line form.
 
+### The escape hatch is explicit, and countable
+
+Shell that an instruction already does **does not parse**:
+
+```
+shell { mkdir -p /opt/app }
+→ mkdir here — dir.ensure(path) is idempotent and previewable.
+  Write `unsafe shell { … }` to keep the shell.
+```
+
+`unsafe shell { … }` keeps it, and runs exactly like `shell`. **`unsafe` does not
+mean dangerous** — it means shellf cannot vouch for what the block does. An atomic
+lock (`mkdir /var/lock/x || exit`) is irreproachable shell that no instruction
+replaces, and it is marked, correctly.
+
+That is what makes the hatch *countable*: `grep -r 'unsafe shell'` lists every place
+shellf's guarantees stop, imported modules included. Configuration tools lose on the
+moment you give up on the module and write shell; here that moment is visible.
+
+And it is a signal, not a verdict. An `unsafe shell` doing something **every**
+deployment would want is a missing instruction — worth an issue carrying the block it
+would replace. That is how the standard library grows: `examples/plans/hosting.shellf`
+is a real deployment written this way, and the six blocks it needed became six
+instructions. It now carries none.
+
+See [docs/language.md](docs/language.md) for the detector's rules and its limits, and
+[docs/dogfood.md](docs/dogfood.md) for the method.
+
 ## CLI
 
 ```
