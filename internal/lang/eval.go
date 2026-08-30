@@ -383,10 +383,21 @@ func (ev *evaluator) desiredState(def Def) map[string]string {
 	return d
 }
 
+// announce tells a PhaseAware executor which phase is starting (#516). Nothing else uses
+// it: the real ShellExecutor runs a script and does not care who asked. It exists so a test
+// fake can tell an observe from an apply without reading the script's text — which is how
+// three def fixes in one week broke tests in unrelated packages.
+func (ev *evaluator) announce(phase string) {
+	if pa, ok := ev.ex.(engine.PhaseAware); ok {
+		pa.Phase(phase)
+	}
+}
+
 // evalObserve runs an `observe` phase and returns its `state(...)` record as a
 // string map (field → observed value, trailing whitespace trimmed since shell
 // stdout carries a newline). Read-only by convention (ADR-0013).
 func (ev *evaluator) evalObserve(stmts []Stmt) map[string]string {
+	ev.announce("observe")
 	for _, s := range stmts {
 		switch st := s.(type) {
 		case LetStmt:
@@ -562,6 +573,7 @@ func (ev *evaluator) evalPreview(ph Phase) string {
 }
 
 func (ev *evaluator) evalPhase(ph Phase) *Outcome {
+	ev.announce(ph.Name)
 	for _, s := range ph.Stmts {
 		if o := ev.evalStmt(s); o != nil {
 			return o

@@ -42,3 +42,21 @@ type Executor interface {
 	// returns the receiver unchanged (the sh default). See ADR-0012.
 	Using(interp string) Executor
 }
+
+// PhaseAware is an optional interface an Executor may implement to be told which phase is
+// about to run (`check`, `observe`, `preview`, `apply`). The evaluator calls it before
+// evaluating each one; an executor that does not implement it is never asked.
+//
+// It exists for the fakes. A test fake has to tell an observe from an apply, and the only
+// thing crossing this boundary is a string — so every fake keyed on the *text* of a def's
+// shell, and three def fixes in one week broke tests in packages that had nothing to do
+// with them (#516). Worse, `ufw.open`'s observe came to *contain* the command its apply
+// runs, so a substring match silently read one as the other.
+//
+// Optional rather than a parameter on Shell: that signature has fourteen implementations,
+// thirteen of them fakes, and changing it would break every test to fix a problem about
+// breaking tests. The real ShellExecutor ignores this — it runs a script, and which phase
+// asked is not its business.
+type PhaseAware interface {
+	Phase(name string)
+}
