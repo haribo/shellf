@@ -23,6 +23,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `examples/plans/hosting.shellf`: the deployment that measured the language, now shipped as an example — Traefik with Let's Encrypt, an app built on the host, a systemd-timer backup, ufw, a service account. **No `unsafe shell`**, and the e2e harness applies it twice (#490).
 - The README explains the escape hatch: shell an instruction already does does not parse, `unsafe shell` keeps it, and `grep -r 'unsafe shell'` lists every place the guarantees stop. `docs/language.md` says what to do with one you have written (#497).
 - Four adverse cases pass a hostile *argument* rather than only a hostile starting state: a path carrying a space and a quote, and a line full of grep metacharacters. The stdlib holds — this is the first time anyone checked rather than assumed (#527).
+- ADR-0052: `${inventory.<field>}` interpolates a host's own values, resolved per host. Additive — `${plain}` stays global and parse-time. `--set` does not override it, and `key` is refused: it is the path to a private key (#536).
 
 ### Changed
 
