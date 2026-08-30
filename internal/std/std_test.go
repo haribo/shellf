@@ -34,14 +34,22 @@ type fakeExec struct {
 	// a test asks for on purpose.
 	stuck   bool
 	applied bool
+	phase   string // set by Phase (engine.PhaseAware), so the script's text is not the signal
 }
 
 func (f *fakeExec) As(string) engine.Executor    { return f }
 func (f *fakeExec) Using(string) engine.Executor { return f }
 
+// Phase is engine.PhaseAware (#516): the evaluator says which phase is starting, so this
+// fake no longer has to guess from the script's text. `applyMatch` stays for the cases that
+// assert *which* command ran, but it is no longer what tells an observe from an apply —
+// which is what silently broke when `ufw.open`'s observe came to contain the very command
+// its apply runs.
+func (f *fakeExec) Phase(name string) { f.phase = name }
+
 func (f *fakeExec) Shell(script string, _ engine.Env) engine.ShellResult {
 	f.calls = append(f.calls, script)
-	if f.applyMatch != "" && strings.Contains(script, f.applyMatch) {
+	if f.phase == "apply" || (f.phase == "" && f.applyMatch != "" && strings.Contains(script, f.applyMatch)) {
 		f.applied = true
 		return f.apply
 	}
@@ -432,4 +440,31 @@ func TestConfirm_RefusesASuccessTheStateDoesNotSupport(t *testing.T) {
 			t.Fatalf("got %s, want err.runtime", got)
 		}
 	})
+}
+
+// #516: a fake tells an observe from an apply by the phase the evaluator announces, not by
+// the text of the script.
+//
+// The proof is the absence of `applyMatch`. Before `engine.PhaseAware`, this test could not
+// be written: with no text to match, every shell looked like an observe and the apply's
+// result was never returned. Three def fixes in one week broke tests in other packages for
+// that reason — and `ufw.open` was worse than broken, since its observe came to contain the
+// command its apply runs, so a substring match read one as the other.
+func TestFake_TellsPhasesApartWithoutMatchingText(t *testing.T) {
+	f := &fakeExec{observe: drift, apply: converged} // no applyMatch at all
+	if got := eval(t, "apt.install", map[string]string{"pkg": "nginx"}, f, engine.Apply).String(); got != "ok.installed" {
+		t.Fatalf("the apply's result must be returned on its own phase, got %s", got)
+	}
+	if !f.applied {
+		t.Fatal("the apply phase was never recognised")
+	}
+
+	// And a converged observe still skips it — the phase is a signal, not an override.
+	f = &fakeExec{observe: converged, apply: converged}
+	if got := eval(t, "apt.install", map[string]string{"pkg": "nginx"}, f, engine.Apply).String(); got != "ok.already" {
+		t.Fatalf("got %s, want ok.already", got)
+	}
+	if f.applied {
+		t.Fatal("a converged def must not reach its apply")
+	}
 }
