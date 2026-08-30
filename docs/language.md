@@ -220,6 +220,22 @@ r = shell { usermod -aG docker "$owner" }
 dir.owner("/opt/hosting", "${owner}:${owner}")   // → "haribo:haribo"
 ```
 
+- **`${inventory.<field>}`** reads *this host's* value, resolved per host (ADR-0052):
+
+```
+http.check("https://${inventory.domain}/healthz", "200")
+file.write("/etc/hostname", "${inventory.name}")
+```
+
+| | |
+|---|---|
+| exposed | `name` (the alias in the inventory), `address`, `user`, `port`, and every free-form field |
+| refused | `key` — the path to a private key, rejected at parse with the reason |
+| `--set` | does **not** override it: writing the source is the point. Deploy other values by pointing at another inventory |
+| errors | the prefix is checked at parse (`${inventroy.domain}` fails there); an unknown *field* errors at orchestration, naming the host and the field |
+
+Reading **another** host's values (`${inventory.web.address}`) is not supported — see ADR-0052 for why it is excluded rather than missing.
+
 - **Triple-quoted strings are RAW** — `${…}` is left verbatim (it is shell/compose syntax the target resolves):
 
 ```
@@ -230,7 +246,7 @@ file.write("/app/compose.yaml", """
 ```
 
 - **Scope**: lexical, with lexical shadowing (a file may shadow a global, confined to that file — no dynamic scoping).
-- **Precedence**: `--vars` `<` plan binding `<` inventory (per-host) `<` CLI `--set`. A **bare-identifier** argument resolves **per host at orchestration time** (so a per-host inventory var can override a global); an undefined one errors at orchestration. `${name}` **interpolation is global** (resolved at parse) — a per-host var cannot be interpolated. Per-host vars are free-form fields in the inventory: `host web1 = { address: "…", owner: "alice" }`.
+- **Precedence**: `--vars` `<` plan binding `<` inventory (per-host) `<` CLI `--set`. A **bare-identifier** argument resolves **per host at orchestration time** (so a per-host inventory var can override a global); an undefined one errors at orchestration. `${name}` **interpolation is global** (resolved at parse). To put a host's own value inside a string, name its source: `${inventory.<field>}` (below). Per-host vars are free-form fields in the inventory: `host web1 = { address: "…", owner: "alice" }`.
 
 See [ADR-0003](adr/0003-variable-scoping.md).
 

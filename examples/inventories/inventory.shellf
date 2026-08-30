@@ -19,15 +19,14 @@ host app = {
     domain: "blog.example.com"
 }
 
-# The host `hosting.shellf` targets. `healthz` carries the whole URL rather than being built
-# from `domain`: a per-host variable cannot be composed into a string today, so the domain is
-# written twice — the language gap that deployment found (#509).
+# The host `hosting.shellf` targets. `healthz` used to sit here as a whole URL repeating
+# `domain`, because a per-host variable could not be composed into a string. The plan now
+# builds it with `${inventory.domain}`, so the domain is written once (#509, ADR-0052).
 host edge = {
     address: "10.0.0.30",
     user: "deploy",
     domain: "app.example.test",
     acme_email: "ops@example.test",
-    healthz: "https://app.example.test/healthz",
     repo: "https://git.example.test/app.git",
     ref: "v1.4.0"
 }

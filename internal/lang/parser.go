@@ -808,11 +808,12 @@ func (p *parser) call(name string) proto.Step {
 	type argv struct {
 		val, ref string
 		control  bool
+		deferred bool // carries a `${inventory.…}` for the orchestrator (ADR-0052)
 	}
 	var vals []argv
 	for p.tok.kind != tRParen {
-		v, r, ctl := p.callArg()
-		vals = append(vals, argv{v, r, ctl})
+		v, r, ctl, def := p.callArg()
+		vals = append(vals, argv{v, r, ctl, def})
 		if p.tok.kind == tComma {
 			p.adv()
 		} else {
@@ -836,6 +837,7 @@ func (p *parser) call(name string) proto.Step {
 	// defaulted) are filled by the def at eval (ADR-0013).
 	args := map[string]string{}
 	var refs map[string]string
+	var templates map[string]string
 	var control []string
 	for i := 0; i < len(vals); i++ {
 		n := params[i].Name
@@ -861,13 +863,22 @@ func (p *parser) call(name string) proto.Step {
 			if params[i].Type == "bool" && !isBoolValue(vals[i].val) {
 				p.fail("%s: %s expects a boolean, got %q — write true or false", name, n, vals[i].val)
 			}
-			args[n] = vals[i].val
+			if vals[i].deferred {
+				// Not an Arg: it still holds `${inventory.…}`, and an agent must never see
+				// one — the orchestrator expands it per host first (ADR-0052).
+				if templates == nil {
+					templates = map[string]string{}
+				}
+				templates[n] = vals[i].val
+			} else {
+				args[n] = vals[i].val
+			}
 			if vals[i].control {
 				control = append(control, n)
 			}
 		}
 	}
-	return proto.Step{Instruction: name, Args: args, Refs: refs, Control: control, Caught: caught, With: p.parseWith()}
+	return proto.Step{Instruction: name, Args: args, Refs: refs, Templates: templates, Control: control, Caught: caught, With: p.parseWith()}
 }
 
 // arg resolves a binding's value (plan top-level binding or --vars file entry)
@@ -906,7 +917,7 @@ func (p *parser) arg() string {
 // returned as a ref name (empty value), NOT resolved: bare-identifier arguments
 // are resolved per host at orchestration time (ADR-0003 §5). Strings are still
 // interpolated at parse time (interpolation is global-only).
-func (p *parser) callArg() (value, ref string, control bool) {
+func (p *parser) callArg() (value, ref string, control, deferred bool) {
 	switch {
 	case p.tok.kind == tPercent:
 		// `%"conf.j2"` — a path on the control host (ADR-0034 §1). The value travels as
@@ -916,28 +927,28 @@ func (p *parser) callArg() (value, ref string, control bool) {
 		if p.tok.kind != tString && p.tok.kind != tRawString {
 			p.fail("%% must be followed by a path string in an argument, got %q", p.tok.val)
 		}
-		v := p.interpolate(p.tok.val)
+		v, deferred := p.interpolateDeferring(p.tok.val)
 		p.adv()
-		return v, "", true
+		return v, "", true, deferred
 	case p.tok.kind == tString:
-		v := p.interpolate(p.tok.val)
+		v, deferred := p.interpolateDeferring(p.tok.val)
 		p.adv()
-		return v, "", false
+		return v, "", false, deferred
 	case p.tok.kind == tRawString:
 		v := p.tok.val
 		p.adv()
-		return v, "", false
+		return v, "", false, false
 	case p.tok.kind == tIdent && (p.tok.val == "true" || p.tok.val == "false"):
 		v := p.tok.val
 		p.adv()
-		return v, "", false
+		return v, "", false, false
 	case p.tok.kind == tIdent:
 		name := p.tok.val
 		p.adv()
-		return "", name, false
+		return "", name, false, false
 	default:
 		p.fail("expected a string, bool, or variable argument, got %q", p.tok.val)
-		return "", "", false // unreachable
+		return "", "", false, false // unreachable
 	}
 }
 
@@ -945,11 +956,18 @@ func (p *parser) callArg() (value, ref string, control bool) {
 // failing on an unterminated `${` or an undefined name. Raw triple-quoted
 // strings never reach here, so their `${VAR}` (shell/compose) stay verbatim.
 func (p *parser) interpolate(s string) string {
-	out, err := Interpolate(s, p.lookup)
+	out, _ := p.interpolateDeferring(s)
+	return out
+}
+
+// interpolateDeferring is interpolate, also reporting whether a `${inventory.…}` survived
+// for the orchestrator to expand per host (ADR-0052).
+func (p *parser) interpolateDeferring(s string) (string, bool) {
+	out, deferred, err := InterpolateDeferring(s, p.lookup)
 	if err != nil {
 		p.fail("%v", err)
 	}
-	return out
+	return out, deferred
 }
 
 // Template renders a template file (ADR-0049): `~{name}` is interpolated, and everything
@@ -1008,24 +1026,56 @@ func Template(s string, lookup func(string) (string, bool)) (string, error) {
 
 // Interpolate replaces every `${name}` in s with lookup(name), erroring on an
 // unterminated `${` or an undefined name. Used for the plan's string arguments.
+//
+// `${inventory.<field>}` is left **verbatim** and reported through `deferred`: it is
+// resolved per host at orchestration, like a bare reference. The prefix itself is checked
+// here — `${inventroy.domain}` is an undefined name and fails at parse — so only the field
+// name is late, which is already true of a bare reference (ADR-0003 §4).
 func Interpolate(s string, lookup func(string) (string, bool)) (string, error) {
+	out, _, err := interpolate(s, lookup)
+	return out, err
+}
+
+// InterpolateDeferring is Interpolate, reporting whether the result still carries a
+// `${inventory.…}` for the orchestrator to expand.
+func InterpolateDeferring(s string, lookup func(string) (string, bool)) (string, bool, error) {
+	return interpolate(s, lookup)
+}
+
+func interpolate(s string, lookup func(string) (string, bool)) (string, bool, error) {
 	var out strings.Builder
+	deferred := false
 	for {
 		i := strings.Index(s, "${")
 		if i < 0 {
 			out.WriteString(s)
-			return out.String(), nil
+			return out.String(), deferred, nil
 		}
 		out.WriteString(s[:i])
 		rest := s[i+2:]
 		end := strings.IndexByte(rest, '}')
 		if end < 0 {
-			return "", fmt.Errorf("unterminated ${...} interpolation")
+			return "", false, fmt.Errorf("unterminated ${...} interpolation")
 		}
 		name := rest[:end]
+		if field, ok := strings.CutPrefix(name, proto.InventoryPrefix); ok {
+			if field == "" {
+				return "", false, fmt.Errorf("${%s} names no field", name)
+			}
+			// A private key's path has no legitimate place in file content or an argument,
+			// and writing one into a rendered template is a mistake worth refusing here
+			// rather than discovering in a deployed file (ADR-0052 §3).
+			if field == "key" {
+				return "", false, fmt.Errorf("${inventory.key} is refused: it is the path to a private key")
+			}
+			out.WriteString("${" + name + "}")
+			deferred = true
+			s = rest[end+1:]
+			continue
+		}
 		v, ok := lookup(name)
 		if !ok {
-			return "", fmt.Errorf("undefined variable %q in interpolation", name)
+			return "", false, fmt.Errorf("undefined variable %q in interpolation", name)
 		}
 		out.WriteString(v)
 		s = rest[end+1:]

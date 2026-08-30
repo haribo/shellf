@@ -1,6 +1,9 @@
 package proto
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestResolveRefs(t *testing.T) {
 	steps := []Step{
@@ -121,5 +124,56 @@ func TestResolveRefs_KeepsControl(t *testing.T) {
 		if len(out[i].Control) != len(want) || (len(want) > 0 && out[i].Control[0] != want[0]) {
 			t.Errorf("step %d: control lost: got %v, want %v", i, out[i].Control, want)
 		}
+	}
+}
+
+// ADR-0052: a Template is an argument still carrying `${inventory.<field>}` when the plan
+// was read. It is expanded here, per host, in the same pass as a Ref — the difference being
+// that a Ref *is* a name while a Template is a string with names inside it.
+func TestResolveRefs_ExpandsInventoryTemplates(t *testing.T) {
+	env := map[string]string{
+		"domain":                    "global.example",
+		InventoryPrefix + "domain":  "app.example.test",
+		InventoryPrefix + "name":    "web",
+		InventoryPrefix + "address": "10.0.0.9",
+	}
+	steps := []Step{{
+		Instruction: "http.check",
+		Args:        map[string]string{"status": "200"},
+		Templates: map[string]string{
+			"url":   "https://${inventory.domain}/healthz",
+			"label": "${inventory.name}@${inventory.address}",
+		},
+	}}
+
+	out, err := ResolveRefs(steps, env, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out[0].Args["url"], "https://app.example.test/healthz"; got != want {
+		t.Fatalf("url: got %q, want %q", got, want)
+	}
+	// Two fields in one string, which a bare reference cannot express — the whole point.
+	if got, want := out[0].Args["label"], "web@10.0.0.9"; got != want {
+		t.Fatalf("label: got %q, want %q", got, want)
+	}
+	// A global of the same name is a different variable: the prefix names its source.
+	if out[0].Args["url"] == "https://global.example/healthz" {
+		t.Fatal("an inventory field must not fall back to a global of the same name")
+	}
+	if len(out[0].Templates) != 0 {
+		t.Fatalf("templates must be resolved away before the agent sees them: %v", out[0].Templates)
+	}
+}
+
+// An unknown field errors, naming it. The orchestrator adds which host.
+func TestResolveRefs_UnknownInventoryField(t *testing.T) {
+	steps := []Step{{
+		Instruction: "file.write",
+		Templates:   map[string]string{"content": "${inventory.nope}"},
+	}}
+	_, err := ResolveRefs(steps, map[string]string{}, "")
+	if err == nil || !strings.Contains(err.Error(), `"inventory.nope"`) {
+		t.Fatalf("want an error naming the field, got %v", err)
 	}
 }

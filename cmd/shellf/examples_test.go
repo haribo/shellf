@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"shellf/internal/orchestrator"
 	"shellf/internal/proto"
 )
 
@@ -51,7 +52,11 @@ func TestExamplesResolvePerHost(t *testing.T) {
 				}
 				for _, h := range hosts {
 					host, _ := inv.Resolve(h)
-					env := mergeVars(base, host.Vars, map[string]string{})
+					// The orchestrator's own layering, not a copy of it: this test asks
+					// whether an example resolves, and it must ask the same question the
+					// run asks. Rebuilding the env here is how it stopped seeing
+					// `${inventory.…}` the day that form was added (ADR-0052).
+					env := orchestrator.HostEnv(h, host, base, map[string]string{})
 					if _, err := proto.ResolveRefs(blk.Steps, env, host.Interpreter); err != nil {
 						t.Errorf("%s on %s: %v", filepath.Base(p), h, err)
 					}

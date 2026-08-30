@@ -11,6 +11,38 @@ import (
 	"shellf/internal/engine"
 )
 
+// InventoryPrefix marks an interpolation naming a field of the host a step will run on
+// (ADR-0052). It lives here rather than in `lang` because the orchestrator needs it too,
+// and ADR-0024 keeps `lang` out of `orchestrator` and `proto`.
+const InventoryPrefix = "inventory."
+
+// expandInventory substitutes every `${inventory.<field>}` in s from env, which the
+// orchestrator has already populated with this host's fields. An unknown field is an error
+// naming it — the caller adds the host.
+func expandInventory(s string, env map[string]string) (string, error) {
+	var out strings.Builder
+	for {
+		i := strings.Index(s, "${")
+		if i < 0 {
+			out.WriteString(s)
+			return out.String(), nil
+		}
+		out.WriteString(s[:i])
+		rest := s[i+2:]
+		end := strings.IndexByte(rest, '}')
+		if end < 0 { // the parser rejects this; belt and braces at the boundary
+			return "", fmt.Errorf("unterminated ${...} in %q", s)
+		}
+		name := rest[:end]
+		v, ok := env[name]
+		if !ok {
+			return "", fmt.Errorf("undefined variable %q", name)
+		}
+		out.WriteString(v)
+		s = rest[end+1:]
+	}
+}
+
 // ResolveRefs returns a copy of steps with every Ref resolved against env and
 // merged into Args (an unresolved ref is an error). Recurses into Parallel.
 // Called per host by the orchestrator, so the agent only ever sees Args.
@@ -64,6 +96,17 @@ func ResolveRefs(steps []Step, env map[string]string, interp string) ([]Step, er
 			}
 			args[argName] = v
 		}
+		// `${inventory.<field>}` left for this pass (ADR-0052). Expanded here rather than
+		// in `lang`: this package must not depend on the language to substitute a name it
+		// has already been handed, and what remains in a Template is only ever the deferred
+		// form — every global was substituted while the plan was read.
+		for argName, tmpl := range s.Templates {
+			v, err := expandInventory(tmpl, env)
+			if err != nil {
+				return nil, err
+			}
+			args[argName] = v
+		}
 		// Control must survive: it says which arguments the plan marked `%"…"`, and
 		// dropping it makes the agent read those paths on the target instead of the
 		// control host — silently, since a path is a path (#334).
@@ -94,10 +137,16 @@ func ResolveRefs(steps []Step, env map[string]string, interp string) ([]Step, er
 // block (Parallel set). Refs holds bare-identifier arguments not yet resolved
 // (argName → varName); the orchestrator resolves them per host into Args before
 // the Request is sent, so the agent never sees a Ref.
+//
+// Templates holds arguments carrying a `${inventory.<field>}` the control host could not
+// resolve while reading the plan, because the host was not known then (ADR-0052). Same
+// timing as Refs, and resolved in the same pass; the difference is that a Ref *is* a name
+// while a Template is a string with names inside it.
 type Step struct {
 	Instruction string            `json:"instruction,omitempty"`
 	Args        map[string]string `json:"args,omitempty"`
 	Refs        map[string]string `json:"refs,omitempty"`
+	Templates   map[string]string `json:"templates,omitempty"`
 	Bind        string            `json:"bind,omitempty"`   // capture this step's Result under this name
 	Caught      bool              `json:"caught,omitempty"` // `?` — an err here is handled, not an automatic halt (ADR-0009)
 	Become      string            `json:"become,omitempty"` // escalate this step's shells to this user (ADR-0011)
