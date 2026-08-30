@@ -14,6 +14,11 @@ on target {
     # One file each: `file.write` rewrites its whole content, so sharing a file with
     # `file.line` and `file.replace` would have the three undo each other every run and
     # none of them would ever converge.
+    # `${inventory.<field>}` — this host's own values, substituted per host at orchestration
+    # (ADR-0052). Exercised here rather than in an example: the shipped examples have no
+    # natural use for it, and forcing one would teach a shape nobody needs.
+    file.write("/tmp/cov/host.txt", "name=${inventory.name} addr=${inventory.address} role=${inventory.role}\n")
+
     file.write("/tmp/cov/written.txt", "one")
     file.mode("/tmp/cov/written.txt", "640")
     file.line("/tmp/cov/lined.txt", "appended-line")

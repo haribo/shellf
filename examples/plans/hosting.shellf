@@ -118,11 +118,11 @@ on edge {
     # service they ask about is the one the plan is about to start, so a `no` there is not
     # knowable yet and must not halt the preview (ADR-0051). In a real run they are facts.
     #
-    # `healthz` is a per-host inventory var. It repeats the domain because a per-host value
-    # cannot be composed into a string today — the language gap this deployment found and
-    # the one thing here still waiting on an instruction (#509).
-    http.wait-for(healthz, "60")
-    http.check(healthz, "200")
+    # Probed on the loopback, not through the public domain: a health check that needs DNS
+    # and a valid certificate is a health check that fails for reasons unrelated to the app.
+    # The container publishes 8080 there for exactly this (see app-compose.yaml.tmpl).
+    http.wait-for("http://127.0.0.1:8080/", "60")
+    http.check("http://127.0.0.1:8080/", "200")
 
     # ---- 7. nightly backup ----------------------------------------------------------
     as root {
