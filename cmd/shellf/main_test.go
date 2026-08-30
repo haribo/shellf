@@ -554,6 +554,30 @@ func TestRemovedFlag(t *testing.T) {
 // other call path. Its comment cited ADR-0022 for the precedence chain, which was wrong —
 // that chain is ADR-0003 §3; ADR-0022 is the `with { }` per-call override.
 
+// #311: a call cycle is refused when the defs are loaded, not when they run (ADR-0030
+// §6). The distinction is the whole issue: the evaluator's guard fires on the target,
+// after earlier steps of the plan have already acted, leaving a partially applied host.
+//
+// loadPlanPackage runs before anything is dialled, so a failure here *is* the "no host
+// was contacted" assertion — there is no transport in this call path to stub out.
+func TestLoadPlanPackage_RefusesACycleBeforeAnyTransport(t *testing.T) {
+	dir := project(t, t.TempDir())
+	writeFile(t, filepath.Join(dir, "plans"), "plan.shellf", `on web { c.a("/x") }`)
+	writeDef(t, dir, "c", "a.shellf", `def a(p: str) { apply { c.b(p) return ok.done } }`)
+	writeDef(t, dir, "c", "b.shellf", `def b(p: str) { apply { c.a(p) return ok.done } }`)
+	writeFile(t, filepath.Join(dir, "inventories"), "inventory.shellf", `host web = { address: "1.1.1.1", user: "u" }`)
+
+	_, _, err := loadPlanPackage(
+		filepath.Join(dir, "plans", "plan.shellf"), filepath.Join(dir, "inventories", "inventory.shellf"),
+		map[string]string{}, map[string]string{})
+	if err == nil {
+		t.Fatal("a cyclic package must not load")
+	}
+	if !strings.Contains(err.Error(), "call cycle: c.a -> c.b -> c.a") {
+		t.Fatalf("the error must name the chain, got %v", err)
+	}
+}
+
 // A cycle that only exists because a user def overrides a stdlib one and calls back into
 // the caller. This is why the check takes the run's own resolver rather than the package
 // map: seen from the user package alone, `file.write` is just a name that is not there.
