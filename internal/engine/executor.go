@@ -31,6 +31,18 @@ type Env map[string]string
 
 // Executor runs shell blocks. Injectable from commit 1: the real one talks to
 // /bin/sh, the fake one is a lookup table for deterministic tests.
+type Executor interface {
+	Shell(script string, env Env) ShellResult
+	// As returns an executor that runs shells escalated to `user` (via the
+	// configured method, sudo by default). An empty user returns the receiver
+	// unchanged (no escalation). See ADR-0011.
+	As(user string) Executor
+	// Using returns an executor that runs shells under `interp` (sh/bash/dash/nu/
+	// raw), which decides the binary and the injected prelude. An empty interp
+	// returns the receiver unchanged (the sh default). See ADR-0012.
+	Using(interp string) Executor
+}
+
 // PhaseAware is an optional interface an Executor may implement to be told which phase is
 // about to run (`check`, `observe`, `preview`, `apply`). The evaluator calls it before
 // evaluating each one; an executor that does not implement it is never asked.
@@ -47,16 +59,4 @@ type Env map[string]string
 // asked is not its business.
 type PhaseAware interface {
 	Phase(name string)
-}
-
-type Executor interface {
-	Shell(script string, env Env) ShellResult
-	// As returns an executor that runs shells escalated to `user` (via the
-	// configured method, sudo by default). An empty user returns the receiver
-	// unchanged (no escalation). See ADR-0011.
-	As(user string) Executor
-	// Using returns an executor that runs shells under `interp` (sh/bash/dash/nu/
-	// raw), which decides the binary and the injected prelude. An empty interp
-	// returns the receiver unchanged (the sh default). See ADR-0012.
-	Using(interp string) Executor
 }

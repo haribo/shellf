@@ -383,9 +383,6 @@ func (ev *evaluator) desiredState(def Def) map[string]string {
 	return d
 }
 
-// evalObserve runs an `observe` phase and returns its `state(...)` record as a
-// string map (field → observed value, trailing whitespace trimmed since shell
-// stdout carries a newline). Read-only by convention (ADR-0013).
 // announce tells a PhaseAware executor which phase is starting (#516). Nothing else uses
 // it: the real ShellExecutor runs a script and does not care who asked. It exists so a test
 // fake can tell an observe from an apply without reading the script's text — which is how
@@ -396,6 +393,9 @@ func (ev *evaluator) announce(phase string) {
 	}
 }
 
+// evalObserve runs an `observe` phase and returns its `state(...)` record as a
+// string map (field → observed value, trailing whitespace trimmed since shell
+// stdout carries a newline). Read-only by convention (ADR-0013).
 func (ev *evaluator) evalObserve(stmts []Stmt) map[string]string {
 	ev.announce("observe")
 	for _, s := range stmts {
