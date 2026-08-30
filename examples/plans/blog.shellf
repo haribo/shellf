@@ -75,7 +75,7 @@ on app {
         }
     }
 
-    # Render the .env per host (ADR-0019/0024/0049): `~{domain}` is the host's inventory
+    # Render the .env per host (ADR-0019/0024/0049): `~{inventory.domain}` is the host's inventory
     # var, `~{db_password}` is the secret passed via --secret-file (redacted in all
     # output, ADR-0018). Config files keep their own `${...}` untouched.
     # `as root`, because `blog.data-dir` created /opt/blog as root and the connecting

@@ -70,7 +70,7 @@ on edge {
 
     # ---- 5. traefik -----------------------------------------------------------------
     as root {
-        # `~{acme_email}` is rendered on the control host from this host's inventory var;
+        # `~{inventory.acme_email}` is rendered on the control host from this host's inventory var;
         # the file's own `${…}` and `{{ … }}` pass through untouched (ADR-0049).
         file.template(%"hosting/traefik.yml.tmpl", "/opt/hosting/traefik/traefik.yml")
         file.copy(%"hosting/traefik-compose.yaml", "/opt/hosting/traefik/compose.yaml")
@@ -103,7 +103,7 @@ on edge {
     # ownership"), so the second deploy dies asking for `safe.directory`. Nothing needs it —
     # `docker build` reads the tree as root. Also found by running it twice, which is the
     # only way this class of defect shows up.
-    as root { git.sync(repo, "/opt/hosting/app/src", ref) }
+    as root { git.sync("${inventory.repo}", "/opt/hosting/app/src", "${inventory.ref}") }
 
     as root {
         file.template(%"hosting/app-compose.yaml.tmpl", "/opt/hosting/app/compose.yaml")

@@ -2,7 +2,11 @@
 
 ## Status
 
-Active. **Extends [ADR-0003](0003-variable-scoping.md) §4**, which decided `${…}` is
+Active, **amended by [ADR-0053](0053-one-name-one-source.md)**: the prefix below is no
+longer one way among two to reach the inventory, it is the only one. The decision itself is
+unchanged and ADR-0053 depends on it.
+
+**Extends [ADR-0003](0003-variable-scoping.md) §4**, which decided `${…}` is
 resolved at parse and therefore global-only. That decision is unchanged: this ADR adds a
 second, explicitly named form rather than altering the first. ADR-0003 keeps its body and
 carries a link forward.
@@ -86,8 +90,13 @@ stay out.
 `mergeVars` overwrites silently — a plan binding loses to the inventory with no report —
 and this form removes the case rather than warning about it.
 
-That silence is a defect in its own right and stays one: it still applies to bare references
-and `${plain}`. It is tracked separately, and this ADR does not close it.
+That silence is a defect in its own right: it still applies to bare references and
+`${plain}`. This ADR does not close it — [ADR-0053](0053-one-name-one-source.md) does, by
+taking the inventory out of a bare reference's sources altogether.
+
+*(This paragraph originally claimed the defect was "tracked separately". It was not: no issue
+existed until #540. Corrected rather than removed — a doc that points at tracking which does
+not exist is worse than one that says nothing.)*
 
 ## Consequences
 

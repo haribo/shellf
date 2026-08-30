@@ -281,7 +281,11 @@ func hasUnannotatedShell(steps []proto.Step) bool {
 // plan resolves — `cmd/shellf`'s example test does — must ask the same question the
 // orchestrator asks. A second copy of this layering is a second answer.
 func HostEnv(alias string, host inventory.Host, base, set map[string]string) map[string]string {
-	env := mergeEnv(base, host.Vars, set)
+	// host.Vars is deliberately absent from the bare table (#540, ADR-0053). A bare
+	// reference and `${name}` are the same variable written two ways, and `${name}` is
+	// substituted at parse against the plan — so feeding the inventory into one and not the
+	// other gave a single name two values, decided by nothing but braces.
+	env := mergeEnv(base, set)
 	addInventoryFields(env, alias, host)
 	return env
 }
@@ -308,12 +312,13 @@ func addInventoryFields(env map[string]string, alias string, host inventory.Host
 	}
 }
 
-func mergeEnv(base, host, set map[string]string) map[string]string {
-	env := make(map[string]string, len(base)+len(host)+len(set))
+// mergeEnv layers the plan-side tables: `--vars` and plan bindings, then `--set`
+// (ADR-0003 §3, minus the inventory level ADR-0053 removed). It takes no host table on
+// purpose — the inventory reaches a plan through `${inventory.…}` and nowhere else, and a
+// parameter that does not exist cannot be passed by mistake.
+func mergeEnv(base, set map[string]string) map[string]string {
+	env := make(map[string]string, len(base)+len(set))
 	for k, v := range base {
-		env[k] = v
-	}
-	for k, v := range host {
 		env[k] = v
 	}
 	for k, v := range set {

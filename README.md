@@ -126,8 +126,8 @@ host web = { address: "10.0.0.1", pkg: "nginx", webroot: "/var/www/app" }
 ```
 ```
 on web {
-  apt.install(pkg)                 # `pkg` resolves per host
-  dir.ensure(webroot)
+  apt.install("${inventory.pkg}")           # a host's own field, named at the call site
+  dir.ensure("${inventory.webroot}")
 }
 ```
 

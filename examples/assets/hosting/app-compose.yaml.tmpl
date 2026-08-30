@@ -1,4 +1,4 @@
-# `~{domain}` is rendered from the inventory; the Traefik label's own backticks and the
+# `~{inventory.domain}` is rendered from the inventory; the Traefik label's own backticks and the
 # compose `${…}` syntax pass through untouched.
 services:
   app:
@@ -14,7 +14,7 @@ services:
       - web
     labels:
       - traefik.enable=true
-      - traefik.http.routers.app.rule=Host(`~{domain}`)
+      - traefik.http.routers.app.rule=Host(`~{inventory.domain}`)
       - traefik.http.routers.app.entrypoints=websecure
       - traefik.http.routers.app.tls.certresolver=le
       - traefik.http.services.app.loadbalancer.server.port=8080

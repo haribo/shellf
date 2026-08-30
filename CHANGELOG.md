@@ -29,6 +29,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **BREAKING** — a bare reference and `${name}` resolve the same variable against the plan; a host's fields are reached only through `${inventory.<field>}`. Before, `domain` read the inventory and `"${domain}"` read the plan, so braces alone changed which machine a plan deployed to. A bare per-host read now fails with `undefined variable` before anything is applied (#540, ADR-0053).
+- ADR-0053: a name resolves against one source. `--vars` `<` plan binding `<` `--set`, all plan-side; the inventory leaves the precedence chain and keeps the prefix ADR-0052 introduced (#540).
 - A read-only question that answers *no* in `--dry-run` reports `would` instead of an error, so a plan that deploys a service and then checks it can be previewed to the end. A *yes* still resolves (#508, ADR-0051 amending ADR-0004).
 
 ### Fixed

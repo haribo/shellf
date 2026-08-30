@@ -1,4 +1,4 @@
-# Traefik's static configuration. `~{acme_email}` is this host's inventory var, rendered on
+# Traefik's static configuration. `~{inventory.acme_email}` is this host's inventory var, rendered on
 # the control host; everything else is copied byte for byte (ADR-0049).
 entryPoints:
   web:
@@ -17,7 +17,7 @@ providers:
 certificatesResolvers:
   le:
     acme:
-      email: ~{acme_email}
+      email: ~{inventory.acme_email}
       storage: /acme/acme.json
       httpChallenge:
         entryPoint: web

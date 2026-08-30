@@ -15,15 +15,15 @@
 on web {
     # These defs declare `as root` themselves, so they escalate automatically
     # even when you SSH as a non-root user.
-    apt.install(pkg)
+    apt.install("${inventory.pkg}")
     service.ensure("nginx", "true", "true")
 
     # `dir.ensure` / `file.write` are generic (they might target a home dir or a
     # system path), so the caller escalates when the path needs root.
     as root {
-        dir.ensure(webroot)
+        dir.ensure("${inventory.webroot}")
         file.write("/opt/dogfood/index.html", "hello from shellf")
-        if dir.exists(webroot) { file.write("/opt/dogfood/ready", "ok") }
+        if dir.exists("${inventory.webroot}") { file.write("/opt/dogfood/ready", "ok") }
     }
 
     # Error handling: an optional package that may not exist. `?` catches its
