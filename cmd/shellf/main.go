@@ -285,7 +285,11 @@ func controlChannel(planPath string, plan []orchestrator.Block, inv inventory.In
 			return nil
 		}
 		host, _ := inv.Resolve(alias)
-		env := mergeVars(baseVars, host.Vars, setVars)
+		// The same table the target's own steps resolve against (#540, ADR-0053): plan-side
+		// values bare, the host's own under `inventory.`. A template rendered here used to
+		// see host fields bare, which is the divergence this issue removes — `~{domain}` and
+		// `domain` must not disagree either.
+		env := orchestrator.HostEnv(alias, host, baseVars, setVars)
 		allow := orchestrator.NewAllowed(assetsDir, declared)
 		allow.Render = func(content string, scope map[string]string) (string, error) {
 			// The call site wins over the host environment: that is what `with { }`
@@ -306,18 +310,6 @@ func controlChannel(planPath string, plan []orchestrator.Block, inv inventory.In
 			return orchestrator.Serve(c, allow)
 		}
 	}
-}
-
-// mergeVars layers the variable tables the way the orchestrator does: globals, then the
-// host's own, then --set (ADR-0022 precedence).
-func mergeVars(base, host, set map[string]string) map[string]string {
-	out := map[string]string{}
-	for _, m := range []map[string]string{base, host, set} {
-		for k, v := range m {
-			out[k] = v
-		}
-	}
-	return out
 }
 
 // removedFlag reports what to type instead of a flag ADR-0035 removed, or "" when none

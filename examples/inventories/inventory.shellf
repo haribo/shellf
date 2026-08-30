@@ -3,7 +3,9 @@
 #
 # The plans escalate with `as root`, so a non-root user works as long as it can
 # sudo (passwordless sudo is the common setup); use `root` directly if you SSH as
-# root. `pkg`/`webroot`/`domain` are free-form per-host variables the plans read.
+# root. `pkg`/`webroot`/`domain` are free-form per-host variables; a plan reads them
+# as `${inventory.pkg}`, never as a bare `pkg` — the prefix is the only way in, so a
+# name never means two things at once (#540, ADR-0053).
 
 host web = {
     address: "10.0.0.10",

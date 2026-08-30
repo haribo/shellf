@@ -246,9 +246,21 @@ file.write("/app/compose.yaml", """
 ```
 
 - **Scope**: lexical, with lexical shadowing (a file may shadow a global, confined to that file — no dynamic scoping).
-- **Precedence**: `--vars` `<` plan binding `<` inventory (per-host) `<` CLI `--set`. A **bare-identifier** argument resolves **per host at orchestration time** (so a per-host inventory var can override a global); an undefined one errors at orchestration. `${name}` **interpolation is global** (resolved at parse). To put a host's own value inside a string, name its source: `${inventory.<field>}` (below). Per-host vars are free-form fields in the inventory: `host web1 = { address: "…", owner: "alice" }`.
+- **One name, one source** (ADR-0053). `owner` and `"${owner}"` are the same variable written two ways and always agree; the inventory is reached only through the prefix:
 
-See [ADR-0003](adr/0003-variable-scoping.md).
+| written | source | when |
+|---|---|---|
+| `owner` (bare argument) | the plan — `--vars`, plan bindings, loop variables, `--set` | at orchestration, against a table that does not vary by host |
+| `"${owner}"` (in a string) | the same, exactly | substituted at parse |
+| `"${inventory.owner}"` | this host's inventory entry, and nothing else | per host, at orchestration |
+
+The two moments differ, the two values cannot: the bare form's table is the same for every
+host, so it always agrees with what parse substituted.
+
+- **Precedence**: `--vars` `<` plan binding `<` CLI `--set`, all plan-side. A bare identifier the plan never binds is an error (`undefined variable "owner"`), reported before anything is applied.
+- A host's free-form fields are **not** readable bare: `host web1 = { address: "…", owner: "alice" }` is reached as `${inventory.owner}`. Writing `owner` there reads the plan's `owner`, or errors if the plan has none — it never silently picks up the host's.
+
+See [ADR-0003](adr/0003-variable-scoping.md) (§3 and §5 superseded) and [ADR-0053](adr/0053-one-name-one-source.md).
 
 ## Control flow — `if` / `else`
 
@@ -349,7 +361,8 @@ on host {
   before anything runs — `--dry-run` and `status` show each iteration. There is no
   runtime loop and no list value.
 - `${var}` works anywhere a string does, including inside one (`/opt/${svc}/run`).
-  A **bare** `var` would be a per-host ref, not the loop item — always use `${var}`.
+  A **bare** `var` is the same variable as `${var}` since ADR-0053, so both read the loop
+  item; `${var}` stays the clearer spelling inside a string.
 - The body is a normal block (instructions, `if`, `shell`, nested `for`). It is
   captured as raw balanced braces, so — like a `shell {…}` block — a lone
   unbalanced `}` in a string ends it early. The loop var does **not** interpolate
@@ -518,7 +531,7 @@ on host {
 - The bindings do **not** leak beyond the call.
 - Values are strings, interpolated with the global variables (`${var}`) at parse.
 - A `with` binding wins over a same-named global (and, for a def, over the passed
-  argument): it is the most local scope. Precedence: `with` > per-host > global.
+  argument): it is the most local scope. Precedence: `with` > plan variable.
 - It reaches a def's / `shell`'s body as an environment variable (`$k`) and a
   template's render scope (`~{k}`).
 
@@ -528,11 +541,15 @@ A template is an ordinary file rendered on the control host. Its shellf placehol
 written `~{name}`; **everything else is copied byte for byte**:
 
 ```
-DOMAIN=~{domain}                    → the value
+DOMAIN=~{inventory.domain}          → this host's inventory field
+DB_PASSWORD=~{db_password}          → a plan variable or a secret
 VIRTUAL_HOST=${DOMAIN}              → untouched, compose reads it
 rule: "Host(`{{ .Domain }}`)"       → untouched, Traefik reads it
-admin@~{domain}                     → admin@example.com
 ```
+
+A template reads the same names as the rest of the plan (ADR-0053): `~{name}` is a plan
+variable or a secret, `~{inventory.<field>}` is this host's own value. A host field is not
+readable bare here either — one name, one source, in every file.
 
 That is the point of the sigil being neither `$` nor `{{`: the files worth templating are
 exactly the ones that use those for their own tool.
@@ -556,8 +573,8 @@ name in it is looked up. It is how a template documents the placeholders it carr
 ### Template render scope (ADR-0024)
 
 A `file.template(src, dst)` file is rendered **per host**, over that host's full
-variable scope — `--vars`, plan bindings, **per-host inventory vars**, `--set`,
-secrets — plus the call's `with { }`. `dst` may be a bare per-host ref
+variable scope — `--vars`, plan bindings, `--set`, secrets, and this host's own
+values under `inventory.` (ADR-0053) — plus the call's `with { }`. `dst` may be a bare ref
 (`file.template(%"nginx.conf", conf_path)`); `src` is always a literal control-host
 path. A `for` loop variable is **not** in that scope, so to use the loop item
 inside a template's content, pass it with `with { }`:
