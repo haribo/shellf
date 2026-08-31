@@ -437,13 +437,20 @@ say "8. the shipped examples run for real (#356)"
 # on ports 80/443.
 appname="$cname-app"
 edgename="$cname-edge"
-for c in "$appname" "$edgename"; do
+# `fleet.shellf` is the two-host example: a database here, the service reading it on
+# `$appname`. It needs a machine of its own for the same reason the others do, and for one
+# more — the point of that example is that two *distinct* hosts cooperate (#542).
+dbname="$cname-db"
+# And the service half of that example, on a machine of its own: `$appname` already runs
+# the blog stack on :80.
+svcname="$cname-svc"
+for c in "$appname" "$edgename" "$dbname" "$svcname"; do
   docker run -d --name "$c" \
     --privileged --cgroupns=private --tmpfs /run --tmpfs /run/lock \
     "$image_tag" >/dev/null
 done
-trap 'docker rm -f "$cname" "$appname" "$edgename" >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
-for c in "$appname" "$edgename"; do
+trap 'docker rm -f "$cname" "$appname" "$edgename" "$dbname" "$svcname" >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
+for c in "$appname" "$edgename" "$dbname" "$svcname"; do
   for _ in $(seq 1 60); do
     st="$(docker exec "$c" systemctl is-system-running 2>/dev/null || true)"
     case "$st" in running|degraded) break ;; esac
@@ -458,8 +465,12 @@ for c in "$appname" "$edgename"; do
 done
 appip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$appname")"
 edgeip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$edgename")"
+dbip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$dbname")"
 [ -n "$appip" ] || fail "could not read the app container IP"
 [ -n "$edgeip" ] || fail "could not read the edge container IP"
+svcip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$svcname")"
+[ -n "$dbip" ] || fail "could not read the db container IP"
+[ -n "$svcip" ] || fail "could not read the svc container IP"
 
 # `hosting.shellf` deploys an application from a git repository. The URL is a per-host
 # inventory var precisely so it can be pointed somewhere real here — a bare repo the harness
@@ -495,6 +506,16 @@ host web = {
 host app = {
     address: "$appip", user: "deploy", key: "$work/id",
     domain: "blog.example.test"
+}
+host svc = {
+    address: "$svcip", user: "deploy", key: "$work/id",
+    # The other host's address, copied. A plan cannot read another host's entry
+    # (ADR-0052), so this is written twice and can drift — the finding fleet.shellf
+    # exists to measure (#542).
+    db_address: "$dbip"
+}
+host db = {
+    address: "$dbip", user: "deploy", key: "$work/id"
 }
 host edge = {
     address: "$edgeip", user: "deploy", key: "$work/id",
@@ -532,6 +553,19 @@ for plan in "$root"/examples/plans/*.shellf; do
   printf '%s\n' "$out"
   [ "$rc" -eq 0 ] || fail "example $name failed on its second run (exit $rc)"
 done
+
+# The two-host example is asserted across *both* machines: the point of `fleet.shellf` is
+# that `app` reaches the database on `db`, and nothing in the report proves that happened.
+# The timer publishes on its own schedule, so the unit is triggered here rather than waiting
+# for it — what is being checked is the connection, not systemd's clock.
+docker exec "$svcname" systemctl start db-status.service \
+  || fail "the db-status unit did not run on the svc host"
+docker exec "$svcname" grep -q 'database=up' /var/www/status/db.txt \
+  || fail "the svc host could not reach the database on the db host"
+# And it reached the *right* machine: the address rendered into the unit's environment is
+# the db container's, not a leftover or a default.
+docker exec "$svcname" grep -q "host=$dbip" /var/www/status/db.txt \
+  || fail "the svc host talked to the wrong address"
 
 # Artefacts asserted on the target, not in the report.
 docker exec "$cname" test -f /opt/dogfood/index.html || fail "the webserver example delivered nothing"

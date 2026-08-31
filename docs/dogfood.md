@@ -27,6 +27,102 @@ want.
 
 ---
 
+## 2026-08 — a two-host deployment
+
+Debian 13, two machines. PostgreSQL on one, a service reading it on the other, each with
+its own firewall. The smallest deployment that cannot be written as one host.
+
+113 lines of plan, applied twice against two containers, second run converged.
+
+**Result: 1 `unsafe shell` block, 1 bug, 1 language gap confirmed — and 3 mistakes of my
+own that were not shellf's.**
+
+### The honest count first
+
+Three of the four times this plan stopped, the plan was wrong, not shellf:
+
+| stopped at | cause |
+| --- | --- |
+| `dir.ensure` — permission denied | no `as root` around a generic def |
+| `file.mode(…, "0640")` | **a real bug** — #543 |
+| `systemd.unit("db-status", …)` | the name must carry its extension; the def says so |
+| `nginx` fails to start | the plan reused the machine another example already runs :80 on |
+
+Worth recording as a result rather than as noise. A first-time author of a plan makes these
+mistakes, and what the three non-bugs demonstrate is that **each was refused before anything
+was applied**, with a message naming the fix. A tool that half-applied and then reported a
+problem would have left two machines in an unknown state.
+
+It also means the finding count is one, not four. A dogfood that counts its author's
+mistakes as product gaps measures nothing.
+
+### The bug
+
+**`file.mode(path, "0640")` never converged** (#543). `stat -c '%a'` strips a leading zero,
+so the def applied the mode correctly and then reported `err.unconfirmed` — every run,
+since the def shipped. `chmod` accepts both spellings and `0640` is the canonical one.
+
+Every mode written anywhere in this repository was three digits, so nothing had ever
+exercised it. The adverse cases (#489) vary the starting state; the hostile arguments
+(#527) vary the path. **Neither varies the spelling of a value.**
+
+Only visible because of ADR-0050, merged the same morning: without re-observing after an
+acting apply, the def answered `ok.changed` and was wrong in silence.
+
+### Missing instructions
+
+| # | The shell that had to be written | Issue |
+| - | -------------------------------- | ----- |
+| 1 | `psql -tAc "SELECT 1 FROM pg_roles WHERE rolname=…"` then `CREATE ROLE` / `createdb` | #545 |
+
+One block, and it is the one every stateful deployment needs. The shape is always the same:
+a login role with a password, a database owned by it, both idempotent. The observe is a
+`SELECT`; the apply is a `CREATE`.
+
+It carries the same hazard as #503 did: the password must not reach `psql` through argv,
+where `ps` shows it to every user on the machine. A def owns that; a shell block in an
+example teaches whatever it happens to show.
+
+### Near-misses — a def exists and does not fit
+
+- **`file.replace` cannot find PostgreSQL's config** (#546). The path carries the major
+  version — `/etc/postgresql/17/main/postgresql.conf` — so the plan hardcodes `17` and
+  breaks on the next Debian. Not a gap in `file.replace`, which did its job; a gap in there
+  being nothing that answers "where does this host keep its postgres configuration".
+
+### The language gap, now measured rather than predicted
+
+**A plan cannot read another host's inventory entry.** `${inventory.db.address}` was left
+out of scope by ADR-0052, recorded as excluded pending "a real deployment that needs it".
+
+This is that deployment, and the answer is not the one the exclusion assumed. The address
+is written twice — once as `db`'s own `address`, once as `svc`'s `db_address`:
+
+```
+host svc = { address: "…", db_address: "10.0.0.40" }
+host db  = { address: "10.0.0.40" }
+```
+
+Two hosts is where it is merely untidy. The shape of the problem is that **the duplication
+grows with the number of consumers, not with the number of databases**: ten services
+reading one database means the address is written eleven times, and nothing detects the one
+that was not updated. There is no error, no drift report — the wrong service simply talks
+to the wrong machine, or to nothing.
+
+Recorded as #547. Not decided here: ADR-0052 listed real questions this raises (resolution
+order between hosts, hosts outside the `on` block), and a measured cost does not by itself
+answer them.
+
+### What deliberately stays raw
+
+- **`su - postgres -c …`** as the way to reach the database as its owner. Any `postgres.*`
+  def would do this internally; the point is that the *escalation idiom* is not a gap.
+- **Waiting for a service on another machine to accept connections.** The plan does not do
+  it, and it did not need to: `on db` completes before `on svc` starts, which is the
+  ordering shellf already guarantees. A `tcp.wait-for` would be inventing a need this
+  deployment did not have.
+
+
 ## 2026-08 — a single-host web deployment
 
 Debian 13. Traefik as the shared reverse proxy with Let's Encrypt, one application built on

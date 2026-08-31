@@ -1,0 +1,113 @@
+# A two-host deployment: a database on one machine, the service that reads it on another.
+#
+#   shellf run --inventory examples/inventories/inventory.shellf \
+#     --secret-file db_password=./db_password \
+#     --dry-run examples/plans/fleet.shellf
+#
+# `hosting.shellf` measured the language on **one** machine. This one measures what only
+# appears with two: a host that must know another host's address, an ordering constraint
+# between blocks, and a service whose readiness depends on a machine it does not run on.
+#
+# Read `docs/dogfood.md` for what it found. As with `hosting.shellf`, the number to watch
+# is the `unsafe shell` count — every block below that carries one is a missing
+# instruction, not a stylistic choice (ADR-0040 §3).
+
+# ---- the database host ---------------------------------------------------------------
+on db {
+    apt.update()
+    apt.install("postgresql")
+
+    # Listen beyond localhost: the point of this deployment is that another machine
+    # connects. Debian ships `listen_addresses = 'localhost'` commented differently across
+    # versions, so this is a `key = value` replace rather than a line append.
+    #
+    # FINDING: the path carries the major version (`/etc/postgresql/17/main`). A plan
+    # cannot ask "where does this host keep its postgres config" — it hardcodes 17 and
+    # breaks on 18. A `postgres.config(key, value)` def would own that lookup.
+    # `file.replace` / `file.line` are generic — they might target a home dir or a system
+    # path — so the caller escalates when the path needs root (same rule as hosting.shellf).
+    as root {
+        file.replace("/etc/postgresql/17/main/postgresql.conf", "listen_addresses", "'*'")
+
+        # Let the app host authenticate. `file.line` is append-if-absent, which is what an
+        # hba rule wants.
+        file.line("/etc/postgresql/17/main/pg_hba.conf", "host appdb appuser 0.0.0.0/0 scram-sha-256")
+    }
+
+    service.ensure("postgresql", "true", "true")
+    service.restart("postgresql")
+
+    # FINDING: no def creates a database role. Every stateful deployment needs one, and
+    # the shape is always the same — a role with a password, a database owned by it, both
+    # idempotent. `psql -tc "SELECT 1 FROM pg_roles WHERE rolname='x'"` is the observe;
+    # CREATE ROLE / CREATE DATABASE is the apply.
+    #
+    # The password reaches psql through the environment, never argv: an argument is
+    # visible in `ps` to every user on the machine (the same rule htpasswd.entry follows).
+    as root { unsafe shell {
+        as_pg() { su - postgres -c "$1"; }
+        if ! as_pg "psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname='appuser'\"" | grep -q 1; then
+            PGPASSWORD="$db_password" as_pg "psql -v ON_ERROR_STOP=1 -c \"CREATE ROLE appuser LOGIN PASSWORD '$db_password'\""
+        fi
+        if ! as_pg "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='appdb'\"" | grep -q 1; then
+            as_pg "createdb -O appuser appdb"
+        fi
+    } }
+
+    ufw.default("deny", "allow")
+    ufw.open("22", "tcp")
+    ufw.open("5432", "tcp")
+    ufw.enable()
+}
+
+# ---- the application host --------------------------------------------------------------
+# Its own machine, not the one `blog.shellf` provisions: both bind :80, and an example that
+# collides with another example is testing the harness rather than the language.
+on svc {
+    apt.update()
+    apt.install("postgresql-client")
+    apt.install("nginx")
+
+    as root { dir.ensure("/var/www/status") }
+
+    # The connection details, rendered on the control host so the password never lands in
+    # the plan or in a shell argument (ADR-0018/0024).
+    #
+    # FINDING: `~{inventory.db_address}` is this host's copy of the *other* host's address.
+    # ADR-0052 left `${inventory.db.address}` out of scope pending a real deployment that
+    # needs it. This is that deployment: the address is now written twice — once as `db`'s
+    # own `address`, once as `app`'s `db_address` — and the two can drift.
+    as root {
+        file.template(%"fleet/app.env.tmpl", "/etc/appdb.env")
+        file.mode("/etc/appdb.env", "0640")
+
+        file.copy(%"fleet/db-status.sh", "/usr/local/bin/db-status")
+        file.mode("/usr/local/bin/db-status", "0755")
+    }
+
+    # A timer that republishes the database's reachability as a static file nginx serves.
+    systemd.unit("db-status.service", """
+        [Unit]
+        Description=Publish database reachability
+
+        [Service]
+        Type=oneshot
+        EnvironmentFile=/etc/appdb.env
+        ExecStart=/usr/local/bin/db-status
+        """)
+
+    systemd.unit("db-status.timer", """
+        [Unit]
+        Description=Run the database check every minute
+
+        [Timer]
+        OnBootSec=10s
+        OnUnitActiveSec=1min
+
+        [Install]
+        WantedBy=timers.target
+        """)
+
+    service.ensure("db-status.timer", "true", "true")
+    service.ensure("nginx", "true", "true")
+}
