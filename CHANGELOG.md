@@ -8,6 +8,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `examples/plans/fleet.shellf`: a two-host deployment — PostgreSQL on one machine, the service reading it on another. The e2e harness applies it twice across two containers and asserts the connection actually crossed, not just that the report was green (#542).
+- `docs/dogfood.md` records the two-host report: 1 `unsafe shell`, 1 bug (#543), and the cross-host variable gap ADR-0052 left open, now measured rather than predicted (#542).
 - `dir.mode(path, mode)` sets a directory's own permission bits. `file.mode` chmods a directory perfectly well, so this adds no capability — it adds a call site that does not lie, next to `dir.ensure` / `dir.owner` / `dir.copy` / `dir.sync`. Not recursive (#505).
 - `htpasswd.entry(path, user, password)` writes a basic-auth credential once. `openssl passwd` salts randomly, so a def comparing hashes rewrites the file on every run; this one verifies the stored hash against the password using its own salt. The password reaches openssl on stdin, never argv (#503).
 - `systemd.unit(name, content)` installs a unit file, refusing one `systemd-analyze verify` rejects before it reaches /etc, and reloading systemd when the content changes. A timer is a unit: its schedule lives in its `[Timer]` section (#506).
