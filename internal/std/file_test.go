@@ -335,3 +335,55 @@ func mustRead(t *testing.T, path string) []byte {
 	}
 	return b
 }
+
+// #543: `chmod` accepts `0640` and `640` for the same mode, and `stat -c '%a'` answers
+// `640` for both — it strips a leading zero. Comparing its output to the argument verbatim
+// made the def apply the mode correctly and then judge itself to have failed, every run:
+//
+//	file.mode(mode=0640, …) err.unconfirmed
+//	  ! the apply ran and the state did not follow — mode: observed "640", desired "0640"
+//
+// Found by the two-host dogfood (#542) against a real target. No existing plan wrote a
+// leading zero — every mode across the e2e and example plans is three digits — so the
+// adverse cases (#489) and the hostile arguments (#527) both missed it: they vary the path
+// and the starting state, never the *spelling* of the value.
+//
+// Run against a real shell and a real file, like the archive tests. A fake executor cannot
+// prove this one: the defect lives in the observe's script, and a fake answers whatever the
+// test hands it — it would pass on the broken def just as readily.
+func TestMode_ConvergesOnALeadingZero(t *testing.T) {
+	for _, tc := range []struct{ name, mode, want string }{
+		{"leading zero", "0640", "640"},
+		{"three digits", "640", "640"},
+		{"setuid keeps four digits", "4755", "4755"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "f.txt")
+			if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			def, ok := Lookup("file.mode")
+			if !ok {
+				t.Fatal("file.mode not found")
+			}
+			run := func() engine.Result {
+				res, err := lang.EvalDefFull(def, map[string]string{"path": path, "mode": tc.mode},
+					nil, nil, engine.ShellExecutor{}, engine.Apply, nil, nil, nil, nil, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return res
+			}
+
+			if got := run().String(); got != "ok.changed" {
+				t.Fatalf("first apply of %q: got %s", tc.mode, got)
+			}
+			// The second run is the assertion this issue is about: the mode is already
+			// right, so the def must say so instead of acting and disowning its own work.
+			// It also proves the mode landed — `ok.already` is the observe reading it back.
+			if got := run().String(); got != "ok.already" {
+				t.Fatalf("second apply of %q: got %s, want ok.already", tc.mode, got)
+			}
+		})
+	}
+}
