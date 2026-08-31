@@ -35,6 +35,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `file.mode`, `dir.mode` and `file.ensure` converge on a mode written `0640` rather than `640`. `stat -c '%a'` strips the leading zero, so the def applied the mode correctly and then reported `err.unconfirmed` on every run. Every plan in the repo used three digits, which is why nothing caught it (#543).
 - `systemd.unit` judges a unit by what `systemd-analyze verify` reports, not by its exit code — which is backwards in both directions: it fails a well-formed unit whose `ExecStart` is not on disk yet, and succeeds on a malformed one. A problem in the file carries a line number; an environment one does not (#525).
 - A def that declares an `observe` re-reads it after acting: an apply whose effect did not land now reports `err.unconfirmed`, naming the field that did not move, instead of the success its shell's exit code claimed. Action-shaped defs and converged runs are untouched (#495, ADR-0050).
 - The `ufw` defs converge while the firewall is down. `ufw.open` and `ufw.default` observed `ufw status`, which reports nothing until ufw is enabled — and every plan opens SSH and sets its policies *before* enabling, so both acted on every run of a first deployment (#515).

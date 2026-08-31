@@ -71,7 +71,17 @@ def owner(path: str, owner: str) as root {
 # `dir.mode` means; a recursive variant would be a different operation, and it would need an
 # observe that walks. If it is ever wanted it arrives as a parameter, with that observe.
 def mode(path: str, mode: str) {
-    observe { return state(mode: shell { stat -c '%a' "$path" 2>/dev/null }.stdout) }
+    observe {
+        # `stat` strips a leading zero, so it answers `750` whether the directory was
+        # chmod'd `750` or `0750` — both of which chmod accepts for the same mode, `0750`
+        # being the canonical spelling. Comparing its output to the argument verbatim therefore made
+        # the def apply correctly and then report failure, on every run (#543).
+        #
+        # awk compares the two numerically and echoes back the *caller's* spelling when they
+        # match, so a converged mode is equal as a string. When they differ it prints what
+        # was actually observed, so the diagnostic still names the real value.
+        return state(mode: shell { stat -c '%a' "$path" 2>/dev/null | awk -v want="$mode" '{ if ($1 + 0 == want + 0) print want; else print $1 }' }.stdout)
+    }
     apply {
         r = shell { chmod "$mode" "$path" }
         if !r { return err.runtime(r) }

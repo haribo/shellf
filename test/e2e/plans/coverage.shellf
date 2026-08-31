@@ -21,6 +21,11 @@ on target {
 
     file.write("/tmp/cov/written.txt", "one")
     file.mode("/tmp/cov/written.txt", "640")
+    # The same mode spelled the way chmod documents it. `stat -c '%a'` answers `640` for
+    # both, so this line reported err.unconfirmed on every run until #543 — and no plan
+    # anywhere wrote a leading zero, which is why nothing caught it. Kept as the case that
+    # varies the *spelling* of an argument rather than its value.
+    file.mode("/tmp/cov/written.txt", "0640")
     file.line("/tmp/cov/lined.txt", "appended-line")
     file.replace("/tmp/cov/env.txt", "KEY", "value")
     # #487: a value carrying sed metacharacters. The benign `"value"` above is what let the
@@ -29,6 +34,7 @@ on target {
     file.replace("/tmp/cov/env.txt", "URL", "https://x.test/a?b=1&c=2|d/e")
     # `file.ensure`: created with its mode in one step, and never truncated afterwards.
     file.ensure("/tmp/cov/acme.json", "600")
+    file.ensure("/tmp/cov/acme.json", "0600")   # same mode, canonical spelling (#543)
     file.copy(%"tree/hello.txt", "/tmp/cov/copied.txt")
     file.delete("/tmp/cov/gone.txt")
 
@@ -43,6 +49,7 @@ on target {
     # away the connecting user's access to everything else this plan puts there.
     dir.ensure("/tmp/cov/modes")
     dir.mode("/tmp/cov/modes", "750")
+    dir.mode("/tmp/cov/modes", "0750")          # same mode, canonical spelling (#543)
 
     dir.ensure("/tmp/cov/owned")
     dir.owner("/tmp/cov/owned", "covuser")
