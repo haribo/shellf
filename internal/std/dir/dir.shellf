@@ -72,9 +72,9 @@ def owner(path: str, owner: str) as root {
 # observe that walks. If it is ever wanted it arrives as a parameter, with that observe.
 def mode(path: str, mode: str) {
     observe {
-        # `stat` strips a leading zero, so it answers `640` whether the file was chmod'd
-        # `640` or `0640` — both of which chmod accepts for the same mode, `0640` being the
-        # canonical spelling. Comparing its output to the argument verbatim therefore made
+        # `stat` strips a leading zero, so it answers `750` whether the directory was
+        # chmod'd `750` or `0750` — both of which chmod accepts for the same mode, `0750`
+        # being the canonical spelling. Comparing its output to the argument verbatim therefore made
         # the def apply correctly and then report failure, on every run (#543).
         #
         # awk compares the two numerically and echoes back the *caller's* spelling when they
