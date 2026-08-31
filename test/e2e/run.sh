@@ -437,12 +437,11 @@ say "8. the shipped examples run for real (#356)"
 # on ports 80/443.
 appname="$cname-app"
 edgename="$cname-edge"
-# `fleet.shellf` is the two-host example: a database here, the service reading it on
-# `$appname`. It needs a machine of its own for the same reason the others do, and for one
-# more — the point of that example is that two *distinct* hosts cooperate (#542).
+# The two halves of `fleet.shellf`: the database, and the service that reads it. Two
+# machines and not one, because that example exists to show two *distinct* hosts cooperating
+# — running both roles on one container would test nothing it is written to test (#542).
+# Neither can be `$appname`, which already runs the blog stack on :80.
 dbname="$cname-db"
-# And the service half of that example, on a machine of its own: `$appname` already runs
-# the blog stack on :80.
 svcname="$cname-svc"
 for c in "$appname" "$edgename" "$dbname" "$svcname"; do
   docker run -d --name "$c" \
@@ -466,9 +465,9 @@ done
 appip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$appname")"
 edgeip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$edgename")"
 dbip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$dbname")"
+svcip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$svcname")"
 [ -n "$appip" ] || fail "could not read the app container IP"
 [ -n "$edgeip" ] || fail "could not read the edge container IP"
-svcip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$svcname")"
 [ -n "$dbip" ] || fail "could not read the db container IP"
 [ -n "$svcip" ] || fail "could not read the svc container IP"
 
@@ -555,7 +554,7 @@ for plan in "$root"/examples/plans/*.shellf; do
 done
 
 # The two-host example is asserted across *both* machines: the point of `fleet.shellf` is
-# that `app` reaches the database on `db`, and nothing in the report proves that happened.
+# that `svc` reaches the database on `db`, and nothing in the report proves that happened.
 # The timer publishes on its own schedule, so the unit is triggered here rather than waiting
 # for it — what is being checked is the connection, not systemd's clock.
 docker exec "$svcname" systemctl start db-status.service \
