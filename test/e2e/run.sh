@@ -1319,6 +1319,54 @@ printf '%s' "$out" | grep -qE 'ufw\.open.*ok\.already' \
 printf '%s' "$out" | grep -qE 'ufw\.default.*ok\.already' \
   || fail "ufw.default stopped converging on an active firewall (#515)"
 
+say "26b. ufw.open converges on a rule somebody else wrote (#553)"
+# #515 moved the observe to `ufw show added`, which replays a rule **as the command that
+# created it**. Matching that text asks "was this rule written the way I would have written
+# it?" when the def's contract is "is this port open?" — so a port opened as `ufw allow ssh`
+# read as absent and was re-opened on every run, for ever, on a correct firewall.
+#
+# Every other plan here creates its rules with shellf, so `show added` always replayed the
+# exact string the def looked for. The uncovered case is the rule that was already there,
+# which is what a first adoption always looks at.
+#
+# A step and not an adverse plan, for the same reason #515 is: an adverse plan runs **once**
+# and is green when nothing errors. Nothing errors here — the def acts and reports success.
+# What is wrong is the verdict, so the verdict is what must be read.
+#
+# Ports chosen to collide with nothing: 90/9090 belong to step 15, 2222 to step 26.
+docker exec "$cname" sh -c '
+  ufw allow ftp                          >/dev/null 2>&1 || exit 1
+  ufw allow 8181                         >/dev/null 2>&1 || exit 1
+  ufw allow 9191/tcp comment "by hand"   >/dev/null 2>&1 || exit 1
+' || fail "could not add the hand-written rules, the case proves nothing"
+
+cat > "$work/ufw/plans/spelling.shellf" <<'EOF'
+on target {
+    # `ftp` is 21/tcp in /etc/services: the service name has to be resolved, not compared.
+    ufw.open("21", "tcp")
+    # A bare port opens both protocols, so it satisfies either.
+    ufw.open("8181", "tcp")
+    ufw.open("8181", "udp")
+    # A trailing comment changes the replayed line and nothing else.
+    ufw.open("9191", "tcp")
+}
+EOF
+# The **first** run is the assertion: every rule is already on the machine, so a correct
+# observe converges without acting. A second run would pass even on the broken def.
+out="$("$work/shellf" run --inventory "$work/ufw/inventories/inv.shellf" --insecure \
+  "$work/ufw/plans/spelling.shellf" 2>&1)" || fail "the spelling run failed"
+printf '%s\n' "$out"
+printf '%s' "$out" | grep -qE 'ufw\.open\(port=21.*ok\.already' \
+  || fail "ufw.open did not resolve a service-name rule (#553)"
+printf '%s' "$out" | grep -qE 'ufw\.open\(port=8181, proto=tcp\).*ok\.already' \
+  || fail "ufw.open did not accept a bare-port rule for tcp (#553)"
+printf '%s' "$out" | grep -qE 'ufw\.open\(port=8181, proto=udp\).*ok\.already' \
+  || fail "ufw.open did not accept a bare-port rule for udp (#553)"
+printf '%s' "$out" | grep -qE 'ufw\.open\(port=9191.*ok\.already' \
+  || fail "ufw.open did not accept a rule carrying a comment (#553)"
+printf '%s' "$out" | grep -q 'ok\.opened' \
+  && fail "ufw.open acted on a port that was already open (#553)"
+
 say "27. a malformed unit is refused and never written (#525)"
 # The other half of the systemd.unit contract, and it needs its own step because an `err`
 # halts a plan: what matters is that **nothing reached /etc/systemd/system**, which cannot

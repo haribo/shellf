@@ -8,6 +8,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `ufw.open` converges on a rule it did not write. #515 moved its observe to `ufw show added`, which replays a rule as the command that created it, so `ufw allow ssh` or a trailing comment read as absent and the port was re-opened every run — on exactly the host a first adoption targets (#553).
 - The 0.9.0 notes say the `inventory.` prefix applies to templates too. They named plan syntax only, so an operator migrating their plans hit `undefined variable` in a `~{…}` on the next deploy — four plans of ten on a real host (#555).
 
 ## [0.9.0] - 2026-09-01
