@@ -551,6 +551,11 @@ A template reads the same names as the rest of the plan (ADR-0053): `~{name}` is
 variable or a secret, `~{inventory.<field>}` is this host's own value. A host field is not
 readable bare here either — one name, one source, in every file.
 
+Migrating from 0.8.x: `~{operator}` becomes `~{inventory.operator}` when `operator` is a
+host field. A template left unmigrated halts the run with `undefined variable "<name>" in
+template`, before anything is applied — the run fails rather than delivering a file with a
+hole in it (#555).
+
 That is the point of the sigil being neither `$` nor `{{`: the files worth templating are
 exactly the ones that use those for their own tool.
 
