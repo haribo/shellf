@@ -6,7 +6,33 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- The 0.9.0 notes say the `inventory.` prefix applies to templates too. They named plan syntax only, so an operator migrating their plans hit `undefined variable` in a `~{…}` on the next deploy — four plans of ten on a real host (#555).
+
 ## [0.9.0] - 2026-09-01
+
+### Migration
+
+The `inventory.` prefix is required wherever a host's own value is read — in a plan **and**
+in a delivered file. The breaking entry below names plan syntax only; the same rule governs
+`~{…}` in a template.
+
+| | before | after |
+| --- | --- | --- |
+| plan, bare argument | `apt.install(pkg)` | `apt.install("${inventory.pkg}")` |
+| plan, in a string | `"${domain}"` | `"${inventory.domain}"` |
+| template | `~{operator}` | `~{inventory.operator}` |
+
+A template left unmigrated halts the run before anything is applied:
+
+```
+file.template(dst=…, src=…) err.agent
+    ! file.render: undefined variable "le_email" in template
+```
+
+A `~{name}` that is a plan variable, a `with { }` binding or a secret is unchanged — only a
+host's own fields moved (#555).
 
 ### Added
 
