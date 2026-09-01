@@ -37,6 +37,10 @@ its own firewall. The smallest deployment that cannot be written as one host.
 **Result: 1 `unsafe shell` block, 1 bug, 1 language gap confirmed — and 3 mistakes of my
 own that were not shellf's.**
 
+*(The block became `postgres.role` / `postgres.database` in #545, so the plan now carries
+none. The finding stands as it was measured — this line records what happened to it, which
+is what the count is for.)*
+
 ### The honest count first
 
 Three of the four times this plan stopped, the plan was wrong, not shellf:

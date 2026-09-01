@@ -15,6 +15,10 @@ ENV DEBIAN_FRONTEND=noninteractive
 # skipped; ufw for the firewall defs; the rest is what the stdlib shells out to (git,
 # curl, tar, sudo, sha256sum via coreutils).
 #
+# postgresql for `postgres.role` / `postgres.database` (#545). Preinstalled rather than
+# apt-installed by the coverage plan, for the same reason docker is: it is slow, every run
+# would pay it, and the image is built once per change to this file.
+#
 # `docker.io` is the daemon only on Debian — the `docker` client lives in `docker-cli`,
 # which is why it is named explicitly. Verified rather than assumed: the first build of
 # this file installed docker.io alone and left no `/usr/bin/docker` at all.
@@ -24,6 +28,7 @@ RUN apt-get update -qq \
       openssh-server sudo \
       docker.io docker-cli docker-compose \
       ufw iptables \
+      postgresql postgresql-client \
       git curl ca-certificates tar xz-utils coreutils
 
 # The package lists are kept, deliberately. Removing them is the usual way to shrink an

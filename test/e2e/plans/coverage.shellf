@@ -179,6 +179,20 @@ on target {
     # Action-shaped: it always acts, and reclaiming nothing is a normal outcome here.
     docker.prune()
 
+    # --- postgres -------------------------------------------------------------------
+    # `postgres.role` verifies its password by connecting with it, so `pg_hba` has to admit
+    # the role *before* the role exists (#545). That ordering is not incidental — it is the
+    # constraint the def's doc warns about, and exercising it here is what proves the
+    # warning is followable rather than merely written.
+    as root {
+        file.line("/etc/postgresql/17/main/pg_hba.conf", "host all covrole 127.0.0.1/32 scram-sha-256")
+    }
+    service.ensure("postgresql", "true", "true")
+    service.restart("postgresql")
+
+    postgres.role("covrole", "cov-secret-pw")
+    postgres.database("covdb", "covrole")
+
     # --- firewall -------------------------------------------------------------------
     # Order matters and is the point: opening 22 before denying inbound is what keeps the
     # harness's own SSH alive. A plan that enables a firewall before opening its own way
