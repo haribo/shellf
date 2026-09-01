@@ -1,8 +1,28 @@
 # Set ufw's default policies (the core of hardening; ufw.open only adds allows).
-# Converged when the `ufw status verbose` default line already matches.
+#
+# Observed in `/etc/default/ufw` and not in `ufw status verbose`, for the reason `ufw.open`
+# reads `show added`: while ufw is down, `status verbose` prints `Status: inactive` and no
+# `Default:` line at all, so this def never converged on the first deployment — which is
+# exactly when it runs, since the policies are set before the firewall is enabled (#515).
+#
+# The file holds the policy in iptables' vocabulary while the def speaks ufw's, so the
+# mapping is written out rather than assumed: `deny` is `DROP`, `allow` is `ACCEPT`,
+# `reject` is `REJECT`. An unmapped word yields no match, which reads as drift and reruns
+# `ufw default` — the harmless direction, and `ufw` itself rejects the bad word.
 def default(incoming: str, outgoing: str) as root {
     observe {
-        return state(set: shell { ufw status verbose | grep -qi "^Default: $incoming (incoming), $outgoing (outgoing)" }.exit == 0)
+        return state(set: shell {
+            policy() {
+                case "$1" in
+                    deny)   printf 'DROP'   ;;
+                    allow)  printf 'ACCEPT' ;;
+                    reject) printf 'REJECT' ;;
+                    *)      printf '%s' "$1" ;;
+                esac
+            }
+            grep -qxF "DEFAULT_INPUT_POLICY=\"$(policy "$incoming")\"" /etc/default/ufw &&
+            grep -qxF "DEFAULT_OUTPUT_POLICY=\"$(policy "$outgoing")\"" /etc/default/ufw
+        }.exit == 0)
     }
     apply {
         r = shell { ufw default "$incoming" incoming && ufw default "$outgoing" outgoing }

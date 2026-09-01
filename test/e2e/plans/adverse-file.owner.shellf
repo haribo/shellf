@@ -1,0 +1,20 @@
+# `file.owner` owns the owner, and nothing else.
+#
+# The mirror of file.mode. `chown` does not touch permission bits, so this passing is the
+# expected outcome — the case is here so that a future rewrite reaching for `install -o`,
+# or a `chmod` "while we are at it", is caught the day it lands.
+on target {
+    dir.ensure("/tmp/adv-file-owner")
+    as root {
+        unsafe shell {
+            printf 'x\n' > /tmp/adv-file-owner/f.txt
+            chmod 600 /tmp/adv-file-owner/f.txt
+            chown root /tmp/adv-file-owner/f.txt
+        }
+        file.owner("/tmp/adv-file-owner/f.txt", "covuser")
+        shell {
+            [ "$(stat -c '%U' /tmp/adv-file-owner/f.txt)" = "covuser" ] || exit 1
+            [ "$(stat -c '%a' /tmp/adv-file-owner/f.txt)" = "600" ] || exit 1
+        }
+    }
+}

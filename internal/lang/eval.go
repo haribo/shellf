@@ -115,6 +115,17 @@ func EvalDefFull(def Def, args, with map[string]string, control []string, ex eng
 		return ev.statusResult(def, desired), nil
 	}
 
+	// A question — whole body a `check`, nothing to observe or apply — is **not evaluated**
+	// in check mode (ADR-0051). Its body interrogates state, and in `--dry-run` the plan has
+	// applied nothing, so any state the plan itself produces is not there yet: it fails for
+	// a reason that will not exist at apply time, and that `err` halts the preview.
+	//
+	// Measured on the #490 dogfood: a plan that brought a stack up and then waited for it
+	// spent the full 60s timeout, reported `err.timeout`, and hid every step that followed.
+	// Deploy-then-verify is the most ordinary plan shape there is.
+	//
+	// `would` is also what makes an `if` on a question honest: the agent already treats a
+	// `WOULD` condition as undetermined and previews the branch rather than claiming it runs.
 	// Pass 1: read-only decision phases. A `check` outcome wins (err →
 	// halt, or a question's ok/err). An `observe` phase reports current state;
 	// convergence (state == desired) is the derived skip (ADR-0013).
@@ -122,7 +133,7 @@ func EvalDefFull(def Def, args, with map[string]string, control []string, ex eng
 		switch ph.Name {
 		case "check":
 			if o := ev.evalPhase(ph); o != nil {
-				return ev.toResult(*o), nil
+				return ev.questionInCheck(def, mode, ev.toResult(*o)), nil
 			}
 		case "observe":
 			if converged(ev.evalObserve(ph.Stmts), desired) {
@@ -166,15 +177,101 @@ func EvalDefFull(def Def, args, with map[string]string, control []string, ex eng
 
 	// Pass 2: effectful phases. A trailing `return` in apply is the nominal
 	// outcome (evalPhase reaches it); running to the end with no return yields
-	// an implicit tag-less `ok` (ADR-0007).
+	// an implicit tag-less `ok` (ADR-0007) — and either way the verdict is a proposal
+	// until `confirm` has looked (ADR-0050).
 	for _, ph := range def.Phases {
 		if ph.Name == "apply" {
 			if o := ev.evalPhase(ph); o != nil {
-				return ev.changedIfActed(ev.toResult(*o)), nil
+				return ev.confirm(def, desired, ev.changedIfActed(ev.toResult(*o))), nil
 			}
 		}
 	}
-	return ev.changedIfActed(engine.Ok("")), nil
+	return ev.confirm(def, desired, ev.changedIfActed(engine.Ok(""))), nil
+}
+
+// confirm re-reads the def's `observe` after an apply that acted, and refuses a success the
+// state does not support (ADR-0050).
+//
+// An apply used to establish its own verdict from its shell's exit code: every command
+// exited 0, so the def reported success, and nothing ever checked that the effect landed.
+// Six defects had that shape before this existed — #390, #411, #418, #480, #486, #507 —
+// each fixed by sharpening one `observe`, none of them addressing why a wrong verdict could
+// be printed at all. The case that named the cause is `service.ensure`: its observe was
+// *correct*, it saw drift, the apply ran `start` then `enable`, both exited 0, and the unit
+// was stopped by the time the def returned. `ok.converged`, over a stopped service.
+//
+// The gates below are the whole cost control. Re-observing costs one round trip, and only
+// where it can mean something:
+//
+//   - an err is left alone: the failure is already reported, and re-reading state would
+//     replace a precise message with a vague one
+//   - `ev.acted` false means nothing happened, so there is nothing to confirm
+//   - a def with no `observe` is action-shaped (ADR-0029): a restart restarting is the
+//     point, and it has no state to disagree with
+//
+// A converged run — the common case for a plan that has run before — never reaches here,
+// because pass 1 returned `already` long before.
+func (ev *evaluator) confirm(def Def, desired map[string]string, r engine.Result) engine.Result {
+	if r.Category != engine.OK || !ev.acted {
+		return r
+	}
+	var obs *Phase
+	for i := range def.Phases {
+		if def.Phases[i].Name == "observe" {
+			obs = &def.Phases[i]
+		}
+	}
+	if obs == nil {
+		return r
+	}
+	observed := ev.evalObserve(obs.Stmts)
+	if converged(observed, desired) {
+		return r
+	}
+	// Name the fields that did not move. "The apply did not take effect" sends the reader
+	// nowhere; the same rule as #470, which reports the command that failed rather than a
+	// summary of it.
+	var missed []string
+	for _, f := range diffFields(observed, desired) {
+		if !f.Converged {
+			missed = append(missed, fmt.Sprintf("%s: observed %q, desired %q", f.Name, f.Current, f.Desired))
+		}
+	}
+	out := engine.Err("unconfirmed")
+	out.Shell = &engine.ShellResult{
+		Stderr: "the apply ran and the state did not follow — " + strings.Join(missed, "; "),
+	}
+	return out
+}
+
+// questionInCheck softens a *failing* question in check mode, and only there (ADR-0051).
+//
+// A question — whole body a `check`, nothing to observe or apply — reads the world. In
+// `--dry-run` the plan has applied nothing, so a question about state the plan itself
+// produces fails for a reason that will not exist at apply time. That `err` halts the
+// preview: a plan that brings a stack up and then waits for it spent the full 60s timeout,
+// reported `err.timeout`, and hid every step after it (#508).
+//
+// Only the failure is softened, and the asymmetry is the whole point:
+//
+//   - `ok` in check stays `ok`. The state is already there, and the plan does not destroy
+//     it, so the answer holds at apply time. `if dir.exists("/opt/legacy") { migrate() }`
+//     must still resolve — an operator previewing it wants to know which branch runs.
+//   - `err` in check becomes `would.<tag>`. It is exactly the case where the plan may be
+//     about to create what was asked about, so the answer is not knowable yet.
+//
+// `would` is also what makes the conditional honest: the agent already treats a `WOULD`
+// condition as undetermined and previews the branch rather than claiming it runs.
+func (ev *evaluator) questionInCheck(def Def, mode engine.Mode, r engine.Result) engine.Result {
+	if mode != engine.Check || r.Category != engine.ERR {
+		return r
+	}
+	if !isQuestion(def) {
+		return r
+	}
+	// No tag: `would.present` over an absent path reads as a claim, and the point is that
+	// nothing is being claimed. A bare `would` says "not knowable yet", which is the answer.
+	return engine.Would("")
 }
 
 // changedIfActed marks a Result Changed when a run apply did something and did not
@@ -286,10 +383,21 @@ func (ev *evaluator) desiredState(def Def) map[string]string {
 	return d
 }
 
+// announce tells a PhaseAware executor which phase is starting (#516). Nothing else uses
+// it: the real ShellExecutor runs a script and does not care who asked. It exists so a test
+// fake can tell an observe from an apply without reading the script's text — which is how
+// three def fixes in one week broke tests in unrelated packages.
+func (ev *evaluator) announce(phase string) {
+	if pa, ok := ev.ex.(engine.PhaseAware); ok {
+		pa.Phase(phase)
+	}
+}
+
 // evalObserve runs an `observe` phase and returns its `state(...)` record as a
 // string map (field → observed value, trailing whitespace trimmed since shell
 // stdout carries a newline). Read-only by convention (ADR-0013).
 func (ev *evaluator) evalObserve(stmts []Stmt) map[string]string {
+	ev.announce("observe")
 	for _, s := range stmts {
 		switch st := s.(type) {
 		case LetStmt:
@@ -465,6 +573,7 @@ func (ev *evaluator) evalPreview(ph Phase) string {
 }
 
 func (ev *evaluator) evalPhase(ph Phase) *Outcome {
+	ev.announce(ph.Name)
 	for _, s := range ph.Stmts {
 		if o := ev.evalStmt(s); o != nil {
 			return o

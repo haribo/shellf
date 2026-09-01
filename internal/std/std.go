@@ -21,9 +21,13 @@ import (
 	"shellf/internal/lang"
 )
 
-//go:embed apt/*.shellf archive/*.shellf dir/*.shellf docker/*.shellf file/*.shellf
-//go:embed git/*.shellf http/*.shellf service/*.shellf systemd/*.shellf ufw/*.shellf
-//go:embed sshd/*.shellf sudo/*.shellf user/*.shellf
+// `*/*.shellf` and not a list of packages: the list was one line per directory, so a new
+// package was **silently absent** from the binary until someone noticed its defs did not
+// resolve. Measured while adding `sysctl/` — the def parsed, its file was on disk, and
+// `Lookup` returned nothing. Every subdirectory here is a package by the layout rule above,
+// so the glob states that rule instead of restating its members.
+//
+//go:embed */*.shellf
 var files embed.FS
 
 var (

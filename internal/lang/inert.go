@@ -93,3 +93,18 @@ func inertExpr(e Expr) bool {
 		return false
 	}
 }
+
+// isQuestion reports whether the def is a *question* (ADR-0013): its whole body is a
+// `check` phase — no `observe`, no `apply`, nothing to converge and nothing to act on.
+// `http.check`, `http.wait-for`, `dir.exists` and `file.exists` are the stdlib's four.
+func isQuestion(def Def) bool {
+	seenCheck := false
+	for _, ph := range def.Phases {
+		if ph.Name != "check" {
+			// `observe`, `apply`, `preview` — any of them makes this something else.
+			return false
+		}
+		seenCheck = true
+	}
+	return seenCheck && def.Delegate == nil
+}

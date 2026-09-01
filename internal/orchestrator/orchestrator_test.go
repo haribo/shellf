@@ -71,17 +71,17 @@ func TestRun_ResolveErrorTyped(t *testing.T) {
 	}
 }
 
+// The chain is plan-side only since #540: `--vars` < plan binding < `--set` (ADR-0003 §3
+// as amended by ADR-0053). A third assertion stood here — "host should win over base" —
+// and went with the level ADR-0053 removed; the host's own values are asserted by
+// TestHostEnv_BareReferenceDoesNotReadTheInventory instead.
 func TestMergeEnvPrecedence(t *testing.T) {
 	base := map[string]string{"owner": "base", "keep": "1"}
-	host := map[string]string{"owner": "host"}
 	set := map[string]string{"owner": "set"}
-	if got := mergeEnv(base, host, set)["owner"]; got != "set" {
+	if got := mergeEnv(base, set)["owner"]; got != "set" {
 		t.Fatalf("--set should win: %q", got)
 	}
-	if got := mergeEnv(base, host, nil)["owner"]; got != "host" {
-		t.Fatalf("host should win over base: %q", got)
-	}
-	if got := mergeEnv(base, nil, nil)["keep"]; got != "1" {
+	if got := mergeEnv(base, nil)["keep"]; got != "1" {
 		t.Fatalf("base value lost: %q", got)
 	}
 }
@@ -100,6 +100,10 @@ func (c captureTr) Run(_ string, req []byte) ([]byte, error) {
 	return json.Marshal(proto.Response{})
 }
 
+// Per-host resolution: web1 gets alice, web2 gets bob, from one plan. #540 changed how it
+// is written, not whether it works — the step used to carry a bare `Refs` entry, which no
+// longer reads the inventory (ADR-0053). `${inventory.owner}` is what the parser emits for
+// the prefixed form, so this now exercises the path a plan actually takes.
 func TestRun_ResolvesVarsPerHost(t *testing.T) {
 	inv := inventory.Inventory{
 		Hosts: map[string]inventory.Host{
@@ -113,7 +117,7 @@ func TestRun_ResolvesVarsPerHost(t *testing.T) {
 	dial := func(alias string) transport.Transport { return captureTr{alias: alias, reqs: reqs, mu: &mu} }
 
 	plan := Plan{{Target: "web", Steps: []proto.Step{
-		{Instruction: "dir.owner", Args: map[string]string{"path": "/opt"}, Refs: map[string]string{"owner": "owner"}},
+		{Instruction: "dir.owner", Args: map[string]string{"path": "/opt"}, Templates: map[string]string{"owner": "${inventory.owner}"}},
 	}}}
 	Run(plan, inv, "/bin/agent", "apply", dial, map[string]string{}, nil, nil, Options{})
 
@@ -317,5 +321,29 @@ func TestRun_LimitAcceptsAGroup(t *testing.T) {
 
 	if len(dialled) != 1 || dialled[0] != "h2" {
 		t.Fatalf("a group limit must expand like any target, got %v", dialled)
+	}
+}
+
+// #540: a bare reference and `${name}` are the same variable, so they must resolve to the
+// same value. They did not: the bare form read the inventory, the braced form read the
+// plan, and adding braces silently changed which machine a plan deployed to.
+//
+// Reproduces the table measured on the built binary (ADR-0053): a plan binding
+// `domain = "FROM-PLAN"` against a host declaring `domain: "FROM-INVENTORY"`.
+//
+// The braced form is substituted at parse and never reaches HostEnv, so what is asserted
+// here is the half that was wrong — a bare `domain` must now carry the plan's value, and
+// the host's own value must be reachable only under the `inventory.` prefix.
+func TestHostEnv_BareReferenceDoesNotReadTheInventory(t *testing.T) {
+	planBinding := map[string]string{"domain": "FROM-PLAN"}
+	host := inventory.Host{Address: "10.0.0.1", Vars: map[string]string{"domain": "FROM-INVENTORY"}}
+
+	env := HostEnv("box", host, planBinding, nil)
+
+	if got := env["domain"]; got != "FROM-PLAN" {
+		t.Errorf("a bare reference must resolve against the plan, got %q", got)
+	}
+	if got := env[proto.InventoryPrefix+"domain"]; got != "FROM-INVENTORY" {
+		t.Errorf("the host's own value must stay reachable under the prefix, got %q", got)
 	}
 }

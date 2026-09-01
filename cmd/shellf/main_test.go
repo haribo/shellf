@@ -548,19 +548,11 @@ func TestRemovedFlag(t *testing.T) {
 // channel. A render now names a declared template (#392, ADR-0042), so a non-empty
 // allow-list is the only condition left and `usesRender` went with the case.
 
-func TestMergeVars(t *testing.T) {
-	// ADR-0022 precedence: --set wins over the host, the host wins over globals.
-	got := mergeVars(
-		map[string]string{"a": "global", "b": "global"},
-		map[string]string{"b": "host", "c": "host"},
-		map[string]string{"c": "set"},
-	)
-	for k, want := range map[string]string{"a": "global", "b": "host", "c": "set"} {
-		if got[k] != want {
-			t.Errorf("%s: got %q, want %q", k, got[k], want)
-		}
-	}
-}
+// TestMergeVars stood here. It asserted "the host wins over globals" against a mergeVars
+// helper that no longer exists: #540 took the inventory out of a bare reference's sources
+// (ADR-0053), and the control-host render scope now uses orchestrator.HostEnv like every
+// other call path. Its comment cited ADR-0022 for the precedence chain, which was wrong —
+// that chain is ADR-0003 §3; ADR-0022 is the `with { }` per-call override.
 
 // #311: a call cycle is refused when the defs are loaded, not when they run (ADR-0030
 // §6). The distinction is the whole issue: the evaluator's guard fires on the target,

@@ -2,7 +2,16 @@
 
 ## Status
 
-Active
+Active, except §3 and §5.
+
+- **§3 (precedence) and §5 (resolution split by kind) are superseded by
+  [ADR-0053](0053-one-name-one-source.md)**: a bare reference and `${name}` resolved against
+  different sources, so one name held two values. The inventory leaves the chain and is
+  reached through the `inventory.` prefix instead.
+- **§4 is extended by [ADR-0052](0052-per-host-interpolation.md)**, which adds
+  `${inventory.<field>}` beside the two reference forms.
+
+§1, §2 and §4 stand as written.
 
 ## Context
 

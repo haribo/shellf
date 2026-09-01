@@ -14,7 +14,7 @@ import (
 // routes through the embedded stdlib def (std/apt.shellf), not a Go builtin.
 
 const (
-	dpkgScript = `dpkg -s "$pkg" >/dev/null 2>&1` // apt.install's observe shell (ADR-0013)
+	dpkgScript = `dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q '^install ok installed'` // apt.install's observe shell (ADR-0013)
 	aptScript  = `apt-get install -y "$pkg"`
 )
 

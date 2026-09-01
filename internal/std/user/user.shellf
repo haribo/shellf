@@ -1,11 +1,30 @@
-# Ensure a user exists with a given login shell (create with a home if absent,
-# then set the shell). Group membership is a separate concern — compose with
-# `user.group(name, group)`. Converged when the login shell already matches.
-def ensure(name: str, shell: str) as root {
+# Ensure a user exists with a given login shell. Group membership is a separate concern —
+# compose with `user.group(name, group)`. Converged when the login shell already matches.
+#
+# `system = true` makes a **service account**: no home, a UID from the system range, and no
+# login. That account — the one that owns service files and never logs in — could not be
+# expressed at all, since the def always ran `useradd -m`; the first dogfood fell back on
+# `unsafe shell { useradd --system … }` for it (#501).
+#
+# A parameter rather than a second def: the two differ by `useradd` flags, not by intent,
+# and the default keeps every existing call reading exactly as it did.
+#
+# The observe stays the login shell in both cases. It is what the def promises, and it is
+# the field that tells a service account (`/usr/sbin/nologin`) from a human one — but note
+# what it does **not** cover: an account that exists with the right shell and no home reads
+# as converged. `--create-home` is applied at creation and never reconciled afterwards,
+# which is the honest scope of a def that owns the shell.
+def ensure(name: str, shell: str, system: bool = false) as root {
     observe { return state(shell: shell { getent passwd "$name" | cut -d: -f7 }.stdout) }
     apply {
         r = shell {
-            id "$name" >/dev/null 2>&1 || useradd -m "$name"
+            if ! id "$name" >/dev/null 2>&1; then
+                if [ "$system" = true ]; then
+                    useradd --system --no-create-home --shell "$shell" "$name"
+                else
+                    useradd -m "$name"
+                fi
+            fi
             chsh -s "$shell" "$name"
         }
         if !r { return err.runtime(r) }

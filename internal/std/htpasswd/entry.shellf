@@ -1,0 +1,59 @@
+# Ensure a basic-auth credential in an htpasswd file, without rewriting it every run.
+#
+# The first dogfood wrote this by hand for a Traefik dashboard, and it was **not
+# idempotent** — which nothing said (#503):
+#
+#     printf 'admin:%s\n' "$(openssl passwd -apr1 "$pw")" > .../users
+#
+# `openssl passwd` salts randomly, so two hashes of the same password differ. The file
+# changed on every run, `ok.ran` both times, and anything gated on that change — a
+# `service.reload`, a container restart — fired forever.
+#
+# So the observe cannot compare hashes. It **verifies** the stored one: pull the salt out of
+# the existing line, recompute with that salt, and compare. Same password, same salt, same
+# hash — a different password gives a different one. That is the only question answerable
+# without rewriting the file.
+#
+# The password is a secret (ADR-0018) and reaches openssl on **stdin**, never in argv: an
+# argument is visible in `ps` to every user on the target for as long as the command runs.
+def entry(path: str, user: str, password: str) as root {
+    check {
+        # `user` goes into a grep pattern and an awk prefix; a colon would also split the
+        # line the file is made of. Refused rather than escaped, since a login carrying one
+        # cannot be written to an htpasswd file at all.
+        u = shell { printf '%s' "$user" | grep -qE '^[A-Za-z0-9_.-]+$' }
+        if !u { return err.badUser(u) }
+    }
+    observe {
+        return state(valid: shell {
+            line=$(grep "^$user:" "$path" 2>/dev/null | head -1)
+            [ -n "$line" ] || exit 1
+            hash=${line#*:}
+            # $apr1$<salt>$<digest> — the salt is the third field.
+            salt=$(printf '%s' "$hash" | cut -d'$' -f3)
+            [ -n "$salt" ] || exit 1
+            [ "$(printf '%s' "$password" | openssl passwd -apr1 -stdin -salt "$salt")" = "$hash" ]
+        }.exit == 0)
+    }
+    apply {
+        r = shell {
+            staged="$path.shellf.$$"
+            trap 'rm -f "$staged"' EXIT
+            h=$(printf '%s' "$password" | openssl passwd -apr1 -stdin)
+            src="$path"
+            if [ -f "$path" ]; then cp -p "$path" "$staged"; else src=/dev/null; fi
+            # This user's line is replaced; every other line is kept, so one file can hold
+            # several credentials. awk reads the login through ENVIRON, so nothing the
+            # caller passes is parsed as syntax (#487).
+            awk -v h="$h" 'BEGIN { p = ENVIRON["user"] ":"; n = length(p) }
+                 substr($0, 1, n) == p { next }
+                 { print }
+                 END { print p h }' "$src" > "$staged"
+            mv -f "$staged" "$path"
+            # A credentials file readable by anyone is the credential leaked.
+            chmod 600 "$path"
+        }
+        if !r { return err.runtime(r) }
+        return ok.set
+    }
+}

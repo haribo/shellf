@@ -188,6 +188,21 @@ The detector is a heuristic and does not claim otherwise: `$CMD`, `eval`, `xargs
 `install -d` and `find -exec` go through it. It runs on plans and on your own defs; the
 standard library is exempt, since it is the layer that reaches the system.
 
+**What to do with one you have written.** The mark is a signal, and the two cases it
+covers are not the same:
+
+| the block does | what it means |
+|---|---|
+| an atomic lock, an `eval`, a genuine one-off | its purpose — it stays, and the mark is correct |
+| something **every** deployment would want | a missing instruction — worth an issue carrying the block it would replace |
+
+The difference is not how complex the shell is, it is whether the operation is one any
+plan would reach for. That distinction is the whole method behind
+[`docs/dogfood.md`](dogfood.md): write a real deployment, count what it forces you to write
+by hand, and let that count — not a wishlist — decide what the standard library grows next.
+Six blocks became six instructions that way, and `examples/plans/hosting.shellf` now carries
+none.
+
 ## Variables
 
 Immutable bindings, **no keyword** — same syntax in plans, vars files, and `def` bodies:
@@ -205,6 +220,22 @@ r = shell { usermod -aG docker "$owner" }
 dir.owner("/opt/hosting", "${owner}:${owner}")   // → "haribo:haribo"
 ```
 
+- **`${inventory.<field>}`** reads *this host's* value, resolved per host (ADR-0052):
+
+```
+http.check("https://${inventory.domain}/healthz", "200")
+file.write("/etc/hostname", "${inventory.name}")
+```
+
+| | |
+|---|---|
+| exposed | `name` (the alias in the inventory), `address`, `user`, `port`, and every free-form field |
+| refused | `key` — the path to a private key, rejected at parse with the reason |
+| `--set` | does **not** override it: writing the source is the point. Deploy other values by pointing at another inventory |
+| errors | the prefix is checked at parse (`${inventroy.domain}` fails there); an unknown *field* errors at orchestration, naming the host and the field |
+
+Reading **another** host's values (`${inventory.web.address}`) is not supported — see ADR-0052 for why it is excluded rather than missing.
+
 - **Triple-quoted strings are RAW** — `${…}` is left verbatim (it is shell/compose syntax the target resolves):
 
 ```
@@ -215,9 +246,21 @@ file.write("/app/compose.yaml", """
 ```
 
 - **Scope**: lexical, with lexical shadowing (a file may shadow a global, confined to that file — no dynamic scoping).
-- **Precedence**: `--vars` `<` plan binding `<` inventory (per-host) `<` CLI `--set`. A **bare-identifier** argument resolves **per host at orchestration time** (so a per-host inventory var can override a global); an undefined one errors at orchestration. `${name}` **interpolation is global** (resolved at parse) — a per-host var cannot be interpolated. Per-host vars are free-form fields in the inventory: `host web1 = { address: "…", owner: "alice" }`.
+- **One name, one source** (ADR-0053). `owner` and `"${owner}"` are the same variable written two ways and always agree; the inventory is reached only through the prefix:
 
-See [ADR-0003](adr/0003-variable-scoping.md).
+| written | source | when |
+|---|---|---|
+| `owner` (bare argument) | the plan — `--vars`, plan bindings, loop variables, `--set` | at orchestration, against a table that does not vary by host |
+| `"${owner}"` (in a string) | the same, exactly | substituted at parse |
+| `"${inventory.owner}"` | this host's inventory entry, and nothing else | per host, at orchestration |
+
+The two moments differ, the two values cannot: the bare form's table is the same for every
+host, so it always agrees with what parse substituted.
+
+- **Precedence**: `--vars` `<` plan binding `<` CLI `--set`, all plan-side. A bare identifier the plan never binds is an error (`undefined variable "owner"`), reported before anything is applied.
+- A host's free-form fields are **not** readable bare: `host web1 = { address: "…", owner: "alice" }` is reached as `${inventory.owner}`. Writing `owner` there reads the plan's `owner`, or errors if the plan has none — it never silently picks up the host's.
+
+See [ADR-0003](adr/0003-variable-scoping.md) (§3 and §5 superseded) and [ADR-0053](adr/0053-one-name-one-source.md).
 
 ## Control flow — `if` / `else`
 
@@ -281,7 +324,18 @@ See [ADR-0009](adr/0009-error-handling.md).
 
 ### Read-only questions
 
-`dir.exists` / `file.exists` are **questions**: read-only defs with **no `apply` phase**, so they resolve in pass 1 and are **deterministic in check** (never `undetermined`), unlike an effectful instruction.
+`dir.exists` / `file.exists` are **questions**: read-only defs with **no `apply` phase**, so they resolve in pass 1, unlike an effectful instruction.
+
+In `--dry-run` the resolution is **asymmetric** (ADR-0051, amending ADR-0004):
+
+| the question answers | in check | why |
+|---|---|---|
+| yes | `ok.<tag>` — resolved | the state is there, and the plan does not remove it |
+| no | `would` — not knowable yet | a `no` is often exactly what the plan is about to create |
+
+So `if dir.exists("/opt/legacy") { … }` still resolves on a host where the directory exists, while a plan that creates a directory and then asks about it previews the branch as `undetermined` instead of taking the `else`. Without this, a plan that verifies its own deployment could not be previewed at all: the check ran for real, failed because nothing had been applied, and halted the preview.
+
+**A `check` phase must not depend on state the plan itself produces.** That is a rule for writing defs, not something the model can enforce: `systemd.unit` shipped validating its content with `systemd-analyze verify`, which refuses a unit whose `ExecStart` is not yet on disk — so a plan delivering a script and the unit calling it could not be previewed. The fix belonged in the def.
 
 ```
 if dir.exists("/opt/app") {   // present → then, absent → else — deterministic even in --dry-run
@@ -307,7 +361,8 @@ on host {
   before anything runs — `--dry-run` and `status` show each iteration. There is no
   runtime loop and no list value.
 - `${var}` works anywhere a string does, including inside one (`/opt/${svc}/run`).
-  A **bare** `var` would be a per-host ref, not the loop item — always use `${var}`.
+  A **bare** `var` is the same variable as `${var}` since ADR-0053, so both read the loop
+  item; `${var}` stays the clearer spelling inside a string.
 - The body is a normal block (instructions, `if`, `shell`, nested `for`). It is
   captured as raw balanced braces, so — like a `shell {…}` block — a lone
   unbalanced `}` in a string ends it early. The loop var does **not** interpolate
@@ -476,7 +531,7 @@ on host {
 - The bindings do **not** leak beyond the call.
 - Values are strings, interpolated with the global variables (`${var}`) at parse.
 - A `with` binding wins over a same-named global (and, for a def, over the passed
-  argument): it is the most local scope. Precedence: `with` > per-host > global.
+  argument): it is the most local scope. Precedence: `with` > plan variable.
 - It reaches a def's / `shell`'s body as an environment variable (`$k`) and a
   template's render scope (`~{k}`).
 
@@ -486,11 +541,15 @@ A template is an ordinary file rendered on the control host. Its shellf placehol
 written `~{name}`; **everything else is copied byte for byte**:
 
 ```
-DOMAIN=~{domain}                    → the value
+DOMAIN=~{inventory.domain}          → this host's inventory field
+DB_PASSWORD=~{db_password}          → a plan variable or a secret
 VIRTUAL_HOST=${DOMAIN}              → untouched, compose reads it
 rule: "Host(`{{ .Domain }}`)"       → untouched, Traefik reads it
-admin@~{domain}                     → admin@example.com
 ```
+
+A template reads the same names as the rest of the plan (ADR-0053): `~{name}` is a plan
+variable or a secret, `~{inventory.<field>}` is this host's own value. A host field is not
+readable bare here either — one name, one source, in every file.
 
 That is the point of the sigil being neither `$` nor `{{`: the files worth templating are
 exactly the ones that use those for their own tool.
@@ -514,8 +573,8 @@ name in it is looked up. It is how a template documents the placeholders it carr
 ### Template render scope (ADR-0024)
 
 A `file.template(src, dst)` file is rendered **per host**, over that host's full
-variable scope — `--vars`, plan bindings, **per-host inventory vars**, `--set`,
-secrets — plus the call's `with { }`. `dst` may be a bare per-host ref
+variable scope — `--vars`, plan bindings, `--set`, secrets, and this host's own
+values under `inventory.` (ADR-0053) — plus the call's `with { }`. `dst` may be a bare ref
 (`file.template(%"nginx.conf", conf_path)`); `src` is always a literal control-host
 path. A `for` loop variable is **not** in that scope, so to use the loop item
 inside a template's content, pass it with `with { }`:

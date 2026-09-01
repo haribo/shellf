@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"shellf/internal/orchestrator"
 	"shellf/internal/proto"
 )
 
@@ -31,7 +32,17 @@ func TestExamplesResolvePerHost(t *testing.T) {
 
 	for _, p := range plans {
 		t.Run(filepath.Base(p), func(t *testing.T) {
-			base := map[string]string{}
+			// Secrets an example passes as an instruction argument (ADR-0018): the plan
+			// cannot resolve without them, and an inventory is deliberately not where a
+			// secret lives. Placeholders only — this test resolves references, it runs
+			// nothing. An example introducing a new secret adds it here.
+			base := map[string]string{
+				"dashboard_password": "placeholder",
+				// `fleet.shellf` passes it to `postgres.role` as an argument, so it is a
+				// ref resolved at orchestration — unlike blog.shellf's `~{db_password}`,
+				// which is a template placeholder and never reaches this table (#545).
+				"db_password": "placeholder",
+			}
 			plan, _, err := loadPlanPackage(p, invs[0], base, map[string]string{})
 			if err != nil {
 				t.Fatalf("load: %v", err)
@@ -47,7 +58,11 @@ func TestExamplesResolvePerHost(t *testing.T) {
 				}
 				for _, h := range hosts {
 					host, _ := inv.Resolve(h)
-					env := mergeVars(base, host.Vars, map[string]string{})
+					// The orchestrator's own layering, not a copy of it: this test asks
+					// whether an example resolves, and it must ask the same question the
+					// run asks. Rebuilding the env here is how it stopped seeing
+					// `${inventory.…}` the day that form was added (ADR-0052).
+					env := orchestrator.HostEnv(h, host, base, map[string]string{})
 					if _, err := proto.ResolveRefs(blk.Steps, env, host.Interpreter); err != nil {
 						t.Errorf("%s on %s: %v", filepath.Base(p), h, err)
 					}

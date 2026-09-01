@@ -49,3 +49,62 @@ func TestInterpolationInBinding(t *testing.T) {
 		t.Fatalf("ref: %+v", plan[0].Steps[0])
 	}
 }
+
+// ADR-0052: `${inventory.<field>}` names a field of the host a step will run on, and that
+// host is unknown while the plan is read — so the interpolation is left for the
+// orchestrator instead of failing.
+//
+// The prefix is still checked here, which is what keeps a typo cheap: `${inventroy.domain}`
+// is an undefined name and fails at parse. Only the *field* is late, and that is already
+// true of a bare reference (ADR-0003 §4).
+func TestInterpolate_DefersInventoryFields(t *testing.T) {
+	globals := func(n string) (string, bool) {
+		v, ok := map[string]string{"owner": "haribo"}[n]
+		return v, ok
+	}
+
+	for name, tc := range map[string]struct {
+		in       string
+		want     string
+		deferred bool
+		err      string
+	}{
+		"a global still resolves at parse": {
+			in: "${owner}:${owner}", want: "haribo:haribo",
+		},
+		"an inventory field is left verbatim": {
+			in: "https://${inventory.domain}/healthz", want: "https://${inventory.domain}/healthz", deferred: true,
+		},
+		"globals and inventory fields mix": {
+			in: "${owner}@${inventory.domain}", want: "haribo@${inventory.domain}", deferred: true,
+		},
+		"a typo in the prefix is a plain undefined name": {
+			in: "${inventroy.domain}", err: `undefined variable "inventroy.domain"`,
+		},
+		"the private key path is refused": {
+			in: "${inventory.key}", err: "path to a private key",
+		},
+		"the prefix alone names no field": {
+			in: "${inventory.}", err: "names no field",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, deferred, err := InterpolateDeferring(tc.in, globals)
+			if tc.err != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.err) {
+					t.Fatalf("want an error containing %q, got %v", tc.err, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+			if deferred != tc.deferred {
+				t.Fatalf("deferred: got %v, want %v", deferred, tc.deferred)
+			}
+		})
+	}
+}

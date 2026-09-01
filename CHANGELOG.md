@@ -6,6 +6,50 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-01
+
+### Added
+
+- `postgres.role(name, password)` and `postgres.database(name, owner)`. The role verifies its password by connecting with it, not by checking the role exists — so `pg_hba` must admit it first, which the def's doc states. The two-host example loses its last `unsafe shell` (#545).
+- `examples/plans/fleet.shellf`: a two-host deployment — PostgreSQL on one machine, the service reading it on another. The e2e harness applies it twice across two containers and asserts the connection actually crossed, not just that the report was green (#542).
+- `docs/dogfood.md` records the two-host report: 1 `unsafe shell`, 1 bug (#543), and the cross-host variable gap ADR-0052 left open, now measured rather than predicted (#542).
+- `dir.mode(path, mode)` sets a directory's own permission bits. `file.mode` chmods a directory perfectly well, so this adds no capability — it adds a call site that does not lie, next to `dir.ensure` / `dir.owner` / `dir.copy` / `dir.sync`. Not recursive (#505).
+- `htpasswd.entry(path, user, password)` writes a basic-auth credential once. `openssl passwd` salts randomly, so a def comparing hashes rewrites the file on every run; this one verifies the stored hash against the password using its own salt. The password reaches openssl on stdin, never argv (#503).
+- `systemd.unit(name, content)` installs a unit file, refusing one `systemd-analyze verify` rejects before it reaches /etc, and reloading systemd when the content changes. A timer is a unit: its schedule lives in its `[Timer]` section (#506).
+- `system.timezone(zone)` sets the host timezone by writing `/etc/localtime` and `/etc/timezone`. Not `timedatectl`, which needs a system dbus a container has no — so the def stays exercisable against a real target (#499).
+- `user.ensure` takes `system` (default false): a service account with no home, no login and a UID from the system range, which the def could not express since it always ran `useradd -m` (#501).
+- `file.ensure(path, mode)` creates a file with an exact mode if it is absent, and never touches the content of one that exists. `file.write` always owns the content, so it could not express it (#502).
+- `sysctl.set(key, value)` sets a kernel parameter live and across reboots, observing the running kernel rather than the file — a value persisted but not applied does not take effect until a reboot (#500).
+- `docker.prune(until)` reclaims disk from unused images. Action-shaped: pruning always acts. `docker system prune` is deliberately not covered — it removes volumes (#504).
+- ADR-0050: a verdict is observed, not asserted. A def that declares an `observe` re-reads it after acting, so an apply whose effect never landed reports `err.unconfirmed` instead of success — the cause behind #390, #411, #418, #480, #486 and #507 (#495).
+- `docs/dogfood.md` records what a real deployment could not express in shellf. The first report — Debian 13, Traefik, an app built on the host, a systemd-timer backup — needed 6 `unsafe shell` blocks and surfaced 2 bugs and a language gap (#490).
+- An adverse-state e2e plan per def: each starts from a state that is wrong on purpose and asserts the machine rather than the verdict. The coverage sweep proves idempotence, which a def that is wrong *stably* passes — #486 converged on both runs while the package was absent (#489).
+- `test/e2e/vm.sh` runs the e2e harness inside a throwaway VM. The harness starts a `--privileged` container sharing the host kernel, which ended a developer's graphical session four times; the VM makes that cost nothing. CI is unchanged — a runner is already disposable (#529).
+- `examples/plans/hosting.shellf`: the deployment that measured the language, now shipped as an example — Traefik with Let's Encrypt, an app built on the host, a systemd-timer backup, ufw, a service account. **No `unsafe shell`**, and the e2e harness applies it twice (#490).
+- The README explains the escape hatch: shell an instruction already does does not parse, `unsafe shell` keeps it, and `grep -r 'unsafe shell'` lists every place the guarantees stop. `docs/language.md` says what to do with one you have written (#497).
+- Four adverse cases pass a hostile *argument* rather than only a hostile starting state: a path carrying a space and a quote, and a line full of grep metacharacters. The stdlib holds — this is the first time anyone checked rather than assumed (#527).
+- ADR-0052: `${inventory.<field>}` interpolates a host's own values, resolved per host. Additive — `${plain}` stays global and parse-time. `--set` does not override it, and `key` is refused: it is the path to a private key (#536).
+- `${inventory.<field>}` interpolates a host's own values inside a string, resolved per host — the domain in `hosting.shellf`'s inventory is no longer written twice. `${plain}` stays global and parse-time; `key` is refused (#509, ADR-0052).
+- `engine.PhaseAware`: an executor can be told which phase is starting, so a test fake tells an observe from an apply without matching the text of a def's shell. Three def fixes in one week broke tests in unrelated packages for want of it (#516).
+
+### Changed
+
+- **BREAKING** — a bare reference and `${name}` resolve the same variable against the plan; a host's fields are reached only through `${inventory.<field>}`. Before, `domain` read the inventory and `"${domain}"` read the plan, so braces alone changed which machine a plan deployed to. A bare per-host read now fails with `undefined variable` before anything is applied (#540, ADR-0053).
+- ADR-0053: a name resolves against one source. `--vars` `<` plan binding `<` `--set`, all plan-side; the inventory leaves the precedence chain and keeps the prefix ADR-0052 introduced (#540).
+- A read-only question that answers *no* in `--dry-run` reports `would` instead of an error, so a plan that deploys a service and then checks it can be previewed to the end. A *yes* still resolves (#508, ADR-0051 amending ADR-0004).
+
+### Fixed
+
+- `file.mode`, `dir.mode` and `file.ensure` converge on a mode written `0640` rather than `640`. `stat -c '%a'` strips the leading zero, so the def applied the mode correctly and then reported `err.unconfirmed` on every run. Every plan in the repo used three digits, which is why nothing caught it (#543).
+- `systemd.unit` judges a unit by what `systemd-analyze verify` reports, not by its exit code — which is backwards in both directions: it fails a well-formed unit whose `ExecStart` is not on disk yet, and succeeds on a malformed one. A problem in the file carries a line number; an environment one does not (#525).
+- A def that declares an `observe` re-reads it after acting: an apply whose effect did not land now reports `err.unconfirmed`, naming the field that did not move, instead of the success its shell's exit code claimed. Action-shaped defs and converged runs are untouched (#495, ADR-0050).
+- The `ufw` defs converge while the firewall is down. `ufw.open` and `ufw.default` observed `ufw status`, which reports nothing until ufw is enabled — and every plan opens SSH and sets its policies *before* enabling, so both acted on every run of a first deployment (#515).
+- `apt.update` is action-shaped: it always refreshes and says so. Its observe read a mtime that records when the repository last published, not when this host refreshed, so it could essentially never converge and acted on every run while reporting otherwise. Gate it like a handler (#488).
+- The e2e convergence sweep matches column-aligned verdicts. It required a single space before `ok.`, so every def rendering short — `apt.update()`, `ufw.enable()` — escaped the guard that fails a def observing state yet acting on a converged target (#518).
+- `dir.owner` no longer reports a path that does not exist as correctly owned. It read convergence from `find` printing nothing, and a missing path — or a subdirectory it cannot read — prints nothing (#507).
+- `file.replace` writes its value instead of interpreting it. It built a sed expression from its own arguments, so `&` spliced the matched line back in and `|` failed the run: an URL with a query string landed corrupted, and the def then rewrote it on every run (#487).
+- `apt.install` observes whether a package is installed, not whether dpkg still holds a record of it. `dpkg -s` exits 0 for a package removed without `--purge`, so the def reported `already` on a host whose binaries were gone — stably, on every run (#486).
+
 ## [0.8.0] - 2026-08-21
 
 ### Added
@@ -233,7 +277,8 @@ agent that evaluates on the host — "raw shell, but idempotent, previewable, fa
   per-user agent/workdir scoping.
 - Commands: `run`, `status`, `clean`, and `version`.
 
-[Unreleased]: https://github.com/haribo/shellf/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/haribo/shellf/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/haribo/shellf/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/haribo/shellf/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/haribo/shellf/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/haribo/shellf/compare/v0.5.0...v0.6.0

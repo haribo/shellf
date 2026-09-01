@@ -1,10 +1,23 @@
-# Refresh the apt package cache. Idempotent-ish: converged when the cache was
-# refreshed in the last hour, so a run doesn't hit the network every time. Run
-# before apt.install on a fresh machine or after adding a repo.
+# Refresh the apt package cache. **Action-shaped** (ADR-0029): it always acts, and says so.
+#
+# It used to claim convergence when an `*Release` file under /var/lib/apt/lists had been
+# modified in the last hour. That question cannot be answered from a mtime: apt sends a
+# conditional request and, on `304 Not Modified`, leaves the file alone; when it does
+# refetch, it preserves the repository's `Last-Modified`. The timestamp therefore records
+# **when Debian last published**, not when this host last refreshed. Measured minutes apart
+# on a live target: `apt-get update`, and the mtime stayed at 12:57 while the clock said
+# 14:02. (`-name '*Release'` did not match `…_InRelease` either — two independent reasons
+# for the same permanent non-convergence.)
+#
+# So the observe was not merely imprecise, it could essentially never be satisfied: the def
+# acted on every run while reporting a convergence it had never reached. Rather than make
+# the window configurable — which would only expose a timestamp that does not mean what it
+# appears to mean — the def stops pretending to have a desired state (#488).
+#
+# Gate it the way handlers are gated: `if repo.changed { apt.update() }`, the pattern
+# `service.restart` already uses. A cache refresh is an action, and the plan is the only
+# thing that knows whether it is wanted.
 def update() as root {
-    observe {
-        return state(fresh: shell { test -n "$(find /var/lib/apt/lists -maxdepth 1 -name '*Release' -mmin -60 2>/dev/null)" }.exit == 0)
-    }
     apply {
         r = shell { apt-get update }
         if !r { return err.runtime(r) }

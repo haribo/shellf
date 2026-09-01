@@ -138,7 +138,7 @@ func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.D
 		block := block // capture for the closure
 		reqFor := func(alias string) ([]byte, error) {
 			host, _ := inv.Resolve(alias)
-			env := mergeEnv(baseVars, host.Vars, setVars)
+			env := HostEnv(alias, host, baseVars, setVars)
 			// Templates are no longer rewritten here: `file.template` is a def, and
 			// `~file.render` substitutes on the control host over this host's env,
 			// through the channel (ADR-0024 preserved, #334).
@@ -274,12 +274,51 @@ func hasUnannotatedShell(steps []proto.Step) bool {
 
 // mergeEnv layers the variable tables by increasing precedence: base (--vars +
 // plan bindings) < per-host inventory vars < --set.
-func mergeEnv(base, host, set map[string]string) map[string]string {
-	env := make(map[string]string, len(base)+len(host)+len(set))
-	for k, v := range base {
-		env[k] = v
+// HostEnv is the variable table a step is resolved against on one host: the layered
+// globals, then this host's own values under the `inventory.` prefix.
+//
+// Exported because it is the *definition* of per-host resolution, and anything checking a
+// plan resolves — `cmd/shellf`'s example test does — must ask the same question the
+// orchestrator asks. A second copy of this layering is a second answer.
+func HostEnv(alias string, host inventory.Host, base, set map[string]string) map[string]string {
+	// host.Vars is deliberately absent from the bare table (#540, ADR-0053). A bare
+	// reference and `${name}` are the same variable written two ways, and `${name}` is
+	// substituted at parse against the plan — so feeding the inventory into one and not the
+	// other gave a single name two values, decided by nothing but braces.
+	env := mergeEnv(base, set)
+	addInventoryFields(env, alias, host)
+	return env
+}
+
+// addInventoryFields exposes this host's own values under the `inventory.` prefix, for the
+// `${inventory.<field>}` a plan could not resolve while it was being read (ADR-0052).
+//
+// Added **after** mergeEnv on purpose: these names are the host's, and `--set` does not
+// override them. That is the point of writing the source at the call site — a flag that
+// silently redirected `${inventory.domain}` would put back the ambiguity the prefix removes.
+//
+// `key` is absent, and is refused by the parser rather than merely missing here: it is the
+// path to a private key, and a plan asking for it should be told why, not told it is
+// undefined.
+func addInventoryFields(env map[string]string, alias string, host inventory.Host) {
+	env[proto.InventoryPrefix+"name"] = alias
+	env[proto.InventoryPrefix+"address"] = host.Address
+	env[proto.InventoryPrefix+"user"] = host.User
+	env[proto.InventoryPrefix+"port"] = host.Port
+	// Free-form fields last: `host web = { domain: "…" }` is what the prefix is mostly for,
+	// and a host naming a field `address` means that field.
+	for k, v := range host.Vars {
+		env[proto.InventoryPrefix+k] = v
 	}
-	for k, v := range host {
+}
+
+// mergeEnv layers the plan-side tables: `--vars` and plan bindings, then `--set`
+// (ADR-0003 §3, minus the inventory level ADR-0053 removed). It takes no host table on
+// purpose — the inventory reaches a plan through `${inventory.…}` and nowhere else, and a
+// parameter that does not exist cannot be passed by mistake.
+func mergeEnv(base, set map[string]string) map[string]string {
+	env := make(map[string]string, len(base)+len(set))
+	for k, v := range base {
 		env[k] = v
 	}
 	for k, v := range set {
