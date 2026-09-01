@@ -6,12 +6,77 @@
 # a deny-inbound firewall first locks the operator out, so acting on an inactive ufw is not
 # an edge case (#515).
 #
-# `show added` lists what is stored, in both states, as the command that created it —
-# `ufw allow 22/tcp`. The whole line is matched, never a substring: `22/tcp` is a substring
-# of `122/tcp`, and a port believed open that is not is the dangerous direction for a
-# firewall to be wrong in (#388).
+# `show added` replays each rule **as the command that created it**, which is the trap
+# #553 fell into: matching that text asks "was this rule written the way I would have
+# written it?" when the def's contract is "is this port open?". `ufw allow ssh`,
+# `ufw allow OpenSSH` and `ufw allow 80/tcp comment 'web'` open the ports a plan asked for
+# and printed lines the def did not recognise, so it re-opened them for ever — on exactly
+# the machine a first adoption runs against, whose rules predate shellf.
+#
+# So each stored rule is normalised to what it *opens* before comparing. Never a substring:
+# `22/tcp` is a substring of `122/tcp`, and a port believed open that is not is the
+# dangerous direction for a firewall to be wrong in (#388).
 def open(port: str, proto: str) as root {
-    observe { return state(allowed: shell { ufw show added | grep -qxF -- "ufw allow $port/$proto" }.exit == 0) }
+    observe {
+        return state(allowed: shell {
+            want="$port/$proto"
+
+            # The running firewall resolves every spelling to a port, so it settles the
+            # question outright — when it is up. It is a fast path, not the source (#515).
+            if ufw status 2>/dev/null | awk -v p="$want" '$1 == p { f = 1 } END { exit !f }'; then
+                exit 0
+            fi
+
+            # Every spelling that opens this exact port, resolved once. A stored rule is
+            # accepted when it names one of them.
+            accepted="$want
+$port"
+            svc=$(getent services "$port/$proto" 2>/dev/null | awk '{ print $1 }')
+            [ -n "$svc" ] && accepted="$accepted
+$svc"
+
+            # Application profiles (`ufw allow OpenSSH`). A profile name may carry a space
+            # — `Nginx Full` — so it is read a line at a time, never word-split.
+            apps=$(mktemp)
+            trap 'rm -f "$apps" "$rules"' EXIT
+            ufw app list 2>/dev/null | tail -n +2 | sed 's/^[[:space:]]*//' | grep -v '^$' > "$apps"
+            while IFS= read -r app; do
+                if ufw app info "$app" 2>/dev/null | grep -qxF -- "$want"; then
+                    accepted="$accepted
+$app"
+                fi
+            done < "$apps"
+
+            # Redirected from a file, not piped: a `while read` on the right of a pipe runs
+            # in a subshell, where the exit below would decide nothing.
+            #
+            # awk drops the two leading words rather than a string prefix, so this observe
+            # never contains the text of its own apply — which is what made a fake, and then
+            # an assertion, read one phase as the other (#516).
+            rules=$(mktemp)
+            ufw show added 2>/dev/null \
+              | sed -e "s/[[:space:]]*comment[[:space:]].*$//" \
+              | awk '$1 == "ufw" && $2 == "allow" { $1 = ""; $2 = ""; sub(/^ +/, ""); print }' \
+              > "$rules"
+            while IFS= read -r spec; do
+                spec=$(printf '%s' "$spec" | tr -d "'\"")
+                [ -n "$spec" ] || continue
+
+                # `from 10.0.0.0/8 to any port 5432 proto tcp` names its port instead of
+                # being it. An absent `proto` opens both, so it satisfies either.
+                case "$spec" in
+                    *" port "*)
+                        p=$(printf '%s' "$spec" | awk '{ for (i = 1; i < NF; i++) if ($i == "port") print $(i+1) }')
+                        pr=$(printf '%s' "$spec" | awk '{ for (i = 1; i < NF; i++) if ($i == "proto") print $(i+1) }')
+                        if [ "$p" = "$port" ] && { [ -z "$pr" ] || [ "$pr" = "$proto" ]; }; then exit 0; fi
+                        continue ;;
+                esac
+
+                printf '%s\n' "$accepted" | grep -qxF -- "$spec" && exit 0
+            done < "$rules"
+            exit 1
+        }.exit == 0)
+    }
     apply {
         r = shell { ufw allow "$port/$proto" }
         if !r { return err.runtime(r) }
