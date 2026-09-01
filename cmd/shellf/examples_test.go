@@ -36,7 +36,13 @@ func TestExamplesResolvePerHost(t *testing.T) {
 			// cannot resolve without them, and an inventory is deliberately not where a
 			// secret lives. Placeholders only — this test resolves references, it runs
 			// nothing. An example introducing a new secret adds it here.
-			base := map[string]string{"dashboard_password": "placeholder"}
+			base := map[string]string{
+				"dashboard_password": "placeholder",
+				// `fleet.shellf` passes it to `postgres.role` as an argument, so it is a
+				// ref resolved at orchestration — unlike blog.shellf's `~{db_password}`,
+				// which is a template placeholder and never reaches this table (#545).
+				"db_password": "placeholder",
+			}
 			plan, _, err := loadPlanPackage(p, invs[0], base, map[string]string{})
 			if err != nil {
 				t.Fatalf("load: %v", err)

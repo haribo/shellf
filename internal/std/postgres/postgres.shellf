@@ -1,0 +1,76 @@
+# PostgreSQL roles and databases.
+#
+# Only these two. The two-host dogfood (#542) needed exactly this and nothing else —
+# `pg_hba` and `postgresql.conf` were handled by `file.line` and `file.replace`, which
+# converged. A `postgres.config` would also inherit the versioned-path problem (#546),
+# unresolved; these two go through `psql` and never name a config path, so they dodge it.
+# More postgres defs arrive when a deployment shows it needs them, not before.
+
+# `postgres.role` verifies the password by connecting with it, the way `htpasswd.entry`
+# verifies against its stored hash rather than trusting that a line exists. PostgreSQL keeps
+# a SCRAM-SHA-256 verifier, which cannot be recomputed in shell without redoing PBKDF2 — so
+# the check is a real connection.
+#
+# **This means `pg_hba.conf` must already let this role connect**, before the role is
+# created. A plan that creates the role first will see the observe fail on every run; the
+# def then acts every run and ADR-0050 reports `err.unconfirmed` rather than a false
+# success. Loud, not silent — but the ordering is the caller's to get right, so it is
+# written here.
+#
+# The connection is made to the `postgres` maintenance database, which every role may enter
+# by default. An hba rule restricted to one application database is therefore not enough:
+# `host all <role> …` is what this def needs.
+def role(name: str, password: str) as root {
+    check {
+        # The name is interpolated into SQL. A plain identifier is required and anything
+        # else is refused rather than quoted — a role name carrying a quote or a backslash
+        # is a mistake worth stopping, not a case worth supporting.
+        n = shell { printf '%s' "$name" | grep -qE '^[A-Za-z_][A-Za-z0-9_]*$' }
+        if !n { return err.badName(n) }
+    }
+    observe {
+        # The password reaches psql through the environment, never argv — an argument is
+        # visible in `ps` to every user on the machine (the rule `htpasswd.entry` follows).
+        return state(valid: shell {
+            PGPASSWORD="$password" psql -U "$name" -h 127.0.0.1 -d postgres -tAc 'SELECT 1' >/dev/null 2>&1
+        }.exit == 0)
+    }
+    apply {
+        r = shell {
+            # The statement carries the password, so it goes to psql on **stdin**: a here-doc
+            # or `-c` would put it in the process table. `''` is how SQL escapes a quote.
+            esc=$(printf '%s' "$password" | sed "s/'/''/g")
+            exists=$(su - postgres -c "psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname='$name'\"" 2>/dev/null)
+            if [ "$exists" = "1" ]; then
+                printf "ALTER ROLE \"%s\" LOGIN PASSWORD '%s';\n" "$name" "$esc" \
+                    | su - postgres -c "psql -v ON_ERROR_STOP=1 -q -f -"
+            else
+                printf "CREATE ROLE \"%s\" LOGIN PASSWORD '%s';\n" "$name" "$esc" \
+                    | su - postgres -c "psql -v ON_ERROR_STOP=1 -q -f -"
+            fi
+        }
+        if !r { return err.runtime(r) }
+        return ok.set
+    }
+}
+
+# `owner` must be an existing role: `createdb -O` fails otherwise, which is the honest
+# outcome — a database owned by nobody is not a state worth reaching.
+def database(name: str, owner: str) as root {
+    check {
+        n = shell { printf '%s' "$name" | grep -qE '^[A-Za-z_][A-Za-z0-9_]*$' }
+        if !n { return err.badName(n) }
+        o = shell { printf '%s' "$owner" | grep -qE '^[A-Za-z_][A-Za-z0-9_]*$' }
+        if !o { return err.badOwner(o) }
+    }
+    observe {
+        return state(present: shell {
+            su - postgres -c "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='$name'\"" | grep -q 1
+        }.exit == 0)
+    }
+    apply {
+        r = shell { su - postgres -c "createdb -O '$owner' '$name'" }
+        if !r { return err.runtime(r) }
+        return ok.created
+    }
+}
