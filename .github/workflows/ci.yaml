@@ -74,7 +74,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-qemu-action@v4
         with:
           platforms: arm64
       - run: SHELLF_E2E=1 bash test/e2e/cross-arch.sh
