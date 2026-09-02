@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Releases publish `SHA256SUMS` beside the binaries. shellf refuses a download it cannot verify — `file.download` takes the hash as a required argument — yet installing shellf was the one unverifiable step of a shellf-managed setup. Applies from the next tag (#554).
+
 ## [0.9.1] - 2026-09-02
 
 ### Fixed
