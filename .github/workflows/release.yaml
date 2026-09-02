@@ -56,4 +56,18 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" shellf-linux-amd64 shellf-linux-arm64 --notes-file RELEASE_NOTES.md --title "$GITHUB_REF_NAME"
+        # shellf refuses a download it cannot verify — `file.download(url, dst, sha256)`
+        # takes the hash as a required argument and fails the run on a mismatch. Publishing
+        # its own binaries without one made installing shellf the single unverifiable step
+        # of a shellf-managed setup (#554).
+        #
+        # `sha256sum` writes `<hash>  <name>` with the bare filename, which is what
+        # `sha256sum -c SHA256SUMS` expects when run beside the downloaded files. Printed to
+        # the log as well, so the published hashes exist somewhere that is not the release
+        # page they describe.
+        run: |
+          sha256sum shellf-linux-amd64 shellf-linux-arm64 > SHA256SUMS
+          cat SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" \
+            shellf-linux-amd64 shellf-linux-arm64 SHA256SUMS \
+            --notes-file RELEASE_NOTES.md --title "$GITHUB_REF_NAME"
