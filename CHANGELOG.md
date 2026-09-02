@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-02
+
 ### Fixed
 
 - `ufw.open` converges on a rule it did not write. #515 moved its observe to `ufw show added`, which replays a rule as the command that created it, so `ufw allow ssh` or a trailing comment read as absent and the port was re-opened every run — on exactly the host a first adoption targets (#553).
@@ -304,7 +306,8 @@ agent that evaluates on the host — "raw shell, but idempotent, previewable, fa
   per-user agent/workdir scoping.
 - Commands: `run`, `status`, `clean`, and `version`.
 
-[Unreleased]: https://github.com/haribo/shellf/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/haribo/shellf/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/haribo/shellf/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/haribo/shellf/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/haribo/shellf/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/haribo/shellf/compare/v0.6.0...v0.7.0
