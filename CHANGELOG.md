@@ -6,7 +6,36 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-02
+
+### Fixed
+
+- `ufw.open` converges on a rule it did not write. #515 moved its observe to `ufw show added`, which replays a rule as the command that created it, so `ufw allow ssh` or a trailing comment read as absent and the port was re-opened every run — on exactly the host a first adoption targets (#553).
+- The 0.9.0 notes say the `inventory.` prefix applies to templates too. They named plan syntax only, so an operator migrating their plans hit `undefined variable` in a `~{…}` on the next deploy — four plans of ten on a real host (#555).
+
 ## [0.9.0] - 2026-09-01
+
+### Migration
+
+The `inventory.` prefix is required wherever a host's own value is read — in a plan **and**
+in a delivered file. The breaking entry below names plan syntax only; the same rule governs
+`~{…}` in a template.
+
+| | before | after |
+| --- | --- | --- |
+| plan, bare argument | `apt.install(pkg)` | `apt.install("${inventory.pkg}")` |
+| plan, in a string | `"${domain}"` | `"${inventory.domain}"` |
+| template | `~{operator}` | `~{inventory.operator}` |
+
+A template left unmigrated halts the run before anything is applied:
+
+```
+file.template(dst=…, src=…) err.agent
+    ! file.render: undefined variable "le_email" in template
+```
+
+A `~{name}` that is a plan variable, a `with { }` binding or a secret is unchanged — only a
+host's own fields moved (#555).
 
 ### Added
 
@@ -277,7 +306,8 @@ agent that evaluates on the host — "raw shell, but idempotent, previewable, fa
   per-user agent/workdir scoping.
 - Commands: `run`, `status`, `clean`, and `version`.
 
-[Unreleased]: https://github.com/haribo/shellf/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/haribo/shellf/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/haribo/shellf/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/haribo/shellf/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/haribo/shellf/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/haribo/shellf/compare/v0.6.0...v0.7.0
