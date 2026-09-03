@@ -184,9 +184,10 @@ on target {
     # the role *before* the role exists (#545). That ordering is not incidental — it is the
     # constraint the def's doc warns about, and exercising it here is what proves the
     # warning is followable rather than merely written.
-    as root {
-        file.line("/etc/postgresql/17/main/pg_hba.conf", "host all covrole 127.0.0.1/32 scram-sha-256")
-    }
+    # `postgres.hba` asks postgres where its file is, so no major version is written here
+    # (#546). `postgresql.conf` still carries one — see #567 for why a companion def was
+    # measured and dropped rather than shipped.
+    postgres.hba("host all covrole 127.0.0.1/32 scram-sha-256")
     service.ensure("postgresql", "true", "true")
     service.restart("postgresql")
 

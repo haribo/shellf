@@ -8,6 +8,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `postgres.hba(rule)` asks postgres where its hba file is, so a plan stops writing `/etc/postgresql/17/…` for it and breaking on the next Debian. It answers while the server is down, which is when a first deployment configures it (#546).
 - The README shows how to download a release and verify it against `SHA256SUMS`. Publishing the file without saying how to use it closed half the gap — the first release carrying one is v0.10.0 (#554).
 
 ## [0.10.0] - 2026-09-03
