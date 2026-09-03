@@ -23,17 +23,16 @@ host app = {
 
 # The service half of `fleet.shellf`. A machine of its own: `app` already runs the blog
 # stack on :80, and two examples fighting over a port test nothing about shellf.
+#
+# It carries no copy of the database's address: the plan reads `${inventory.db.address}`
+# from `db`'s own entry (ADR-0054). That duplication is what the two-host dogfood measured,
+# and removing it is what the ADR was written for.
 host svc = {
     address: "10.0.0.50",
-    user: "deploy",
-    # Where the database lives. It repeats `db`'s own `address` below, because a plan cannot
-    # read another host's entry (ADR-0052, out of scope). The duplication is the finding,
-    # not an oversight — see docs/dogfood.md.
-    db_address: "10.0.0.40"
+    user: "deploy"
 }
 
-# The database `fleet.shellf` deploys. Its address is written twice: here, and again as
-# `app`'s `db_address`.
+# The database `fleet.shellf` deploys. Its address is declared here and nowhere else.
 host db = {
     address: "10.0.0.40",
     user: "deploy"

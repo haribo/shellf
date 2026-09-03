@@ -338,7 +338,9 @@ func TestHostEnv_BareReferenceDoesNotReadTheInventory(t *testing.T) {
 	planBinding := map[string]string{"domain": "FROM-PLAN"}
 	host := inventory.Host{Address: "10.0.0.1", Vars: map[string]string{"domain": "FROM-INVENTORY"}}
 
-	env := HostEnv("box", host, planBinding, nil)
+	// An empty inventory: this test is about the one-segment form, not the cross-host
+	// reads ADR-0054 added — those have their own case.
+	env := HostEnv("box", host, inventory.Inventory{}, planBinding, nil)
 
 	if got := env["domain"]; got != "FROM-PLAN" {
 		t.Errorf("a bare reference must resolve against the plan, got %q", got)
@@ -346,4 +348,58 @@ func TestHostEnv_BareReferenceDoesNotReadTheInventory(t *testing.T) {
 	if got := env[proto.InventoryPrefix+"domain"]; got != "FROM-INVENTORY" {
 		t.Errorf("the host's own value must stay reachable under the prefix, got %q", got)
 	}
+}
+
+// #547, ADR-0054: a plan reads another host's declared values, so an address that exists
+// once in reality is written once in the inventory.
+//
+// The case that made this necessary: a service on one machine reaching a database on
+// another. Before, `db`'s address had to be copied into `svc`'s entry — two copies of one
+// fact, with nothing keeping them equal.
+func TestHostEnv_ReadsAnotherHostsValues(t *testing.T) {
+	inv := inventory.Inventory{
+		// `defaults` are merged before the table is built, so a field means the same thing
+		// whether a host reads it or its neighbour does (ADR-0054 §2).
+		Defaults: inventory.Host{User: "deploy", Vars: map[string]string{"tier": "prod"}},
+		Hosts: map[string]inventory.Host{
+			"db":  {Address: "10.0.0.40", Key: "/secret/id_db", Vars: map[string]string{"engine": "postgres"}},
+			"svc": {Address: "10.0.0.50"},
+		},
+		Groups: map[string][]string{"web": {"svc"}},
+	}
+	env := HostEnv("svc", mustResolve(t, inv, "svc"), inv, nil, nil)
+
+	for name, want := range map[string]string{
+		"inventory.address":     "10.0.0.50", // one segment still means *this* host
+		"inventory.db.address":  "10.0.0.40",
+		"inventory.db.name":     "db",
+		"inventory.db.engine":   "postgres",
+		"inventory.db.user":     "deploy", // from defaults, not db's literal block
+		"inventory.db.tier":     "prod",
+		"inventory.svc.address": "10.0.0.50",
+	} {
+		if got := env[name]; got != want {
+			t.Errorf("${%s}: got %q, want %q", name, got, want)
+		}
+	}
+
+	// `key` is refused at parse and absent from the table too, so a private key's path is
+	// never one lookup away from a rendered file (ADR-0054 §3).
+	if _, ok := env["inventory.db.key"]; ok {
+		t.Error("a host's key must not be readable from another host")
+	}
+
+	// A group has no single address, so it is not a host and must not answer as one.
+	if _, ok := env["inventory.web.address"]; ok {
+		t.Error("a group name must not resolve as a host")
+	}
+}
+
+func mustResolve(t *testing.T, inv inventory.Inventory, alias string) inventory.Host {
+	t.Helper()
+	h, ok := inv.Resolve(alias)
+	if !ok {
+		t.Fatalf("%s does not resolve", alias)
+	}
+	return h
 }

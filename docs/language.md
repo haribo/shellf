@@ -234,7 +234,19 @@ file.write("/etc/hostname", "${inventory.name}")
 | `--set` | does **not** override it: writing the source is the point. Deploy other values by pointing at another inventory |
 | errors | the prefix is checked at parse (`${inventroy.domain}` fails there); an unknown *field* errors at orchestration, naming the host and the field |
 
-Reading **another** host's values (`${inventory.web.address}`) is not supported — see ADR-0052 for why it is excluded rather than missing.
+- **`${inventory.<host>.<field>}`** reads *another* host's declared values, so an address that exists once is written once (ADR-0054):
+
+```
+http.check("http://${inventory.db.address}:8080/", "200")
+file.template(%"app.env.tmpl", "/etc/app.env")   # PGHOST=~{inventory.db.address}
+```
+
+| | |
+|---|---|
+| reads | the host **after** its `defaults` are merged, so a field means the same thing whoever asks |
+| refused | `key`, on either form — a plan asking for the key of a machine it is not deploying is the same mistake, wider |
+| a group | is not a host: `${inventory.web.address}` where `web` is a group errors, rather than silently picking a member |
+| errors | `undefined host "bd"` and `host "db" declares no field "port"` are different mistakes and say so, at orchestration |
 
 - **Triple-quoted strings are RAW** — `${…}` is left verbatim (it is shell/compose syntax the target resolves):
 
