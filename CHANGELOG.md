@@ -6,10 +6,16 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-03
+
 ### Added
 
 - `${inventory.<host>.<field>}` reads another host's declared values, so an address that exists once in reality is written once in the inventory. `fleet.shellf` stops copying the database's address onto the service host. A group is not a host, and `key` stays refused (#547, ADR-0054).
 - Releases publish `SHA256SUMS` beside the binaries. shellf refuses a download it cannot verify — `file.download` takes the hash as a required argument — yet installing shellf was the one unverifiable step of a shellf-managed setup. Applies from the next tag (#554).
+
+### Security
+
+- `golang.org/x/crypto` to v0.56.0, closing GO-2026-6354 and GO-2026-6355. The vulnerable functions are not called by shellf, but that module carries its SSH transport (#563).
 
 ## [0.9.1] - 2026-09-02
 
@@ -311,7 +317,8 @@ agent that evaluates on the host — "raw shell, but idempotent, previewable, fa
   per-user agent/workdir scoping.
 - Commands: `run`, `status`, `clean`, and `version`.
 
-[Unreleased]: https://github.com/haribo/shellf/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/haribo/shellf/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/haribo/shellf/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/haribo/shellf/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/haribo/shellf/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/haribo/shellf/compare/v0.7.0...v0.8.0
