@@ -19,21 +19,22 @@ on db {
     apt.install("postgresql")
 
     # Listen beyond localhost: the point of this deployment is that another machine
-    # connects. Debian ships `listen_addresses = 'localhost'` commented differently across
-    # versions, so this is a `key = value` replace rather than a line append.
+    # connects.
     #
-    # FINDING: the path carries the major version (`/etc/postgresql/17/main`). A plan
-    # cannot ask "where does this host keep its postgres config" — it hardcodes 17 and
-    # breaks on 18. A `postgres.config(key, value)` def would own that lookup.
-    # `file.replace` / `file.line` are generic — they might target a home dir or a system
-    # path — so the caller escalates when the path needs root (same rule as hosting.shellf).
+    # `postgres.hba` asks postgres where its hba file is, so no major version is written
+    # for it — and it answers while the server is **down**, which is when a first deployment
+    # configures it (#546).
+    #
+    # `postgresql.conf` still carries the version. A `postgres.config` def was written and
+    # dropped: the tool it would call writes `127.0.0.1` unquoted and PostgreSQL then
+    # refuses to start (#567). A hardcoded path that works beats a def that breaks a
+    # database.
     as root {
         file.replace("/etc/postgresql/17/main/postgresql.conf", "listen_addresses", "'*'")
-
-        # Let the app host authenticate. `file.line` is append-if-absent, which is what an
-        # hba rule wants.
-        file.line("/etc/postgresql/17/main/pg_hba.conf", "host all appuser 0.0.0.0/0 scram-sha-256")
     }
+
+    # Let the app host authenticate. Append-if-absent, matched on the whole line.
+    postgres.hba("host all appuser 0.0.0.0/0 scram-sha-256")
 
     service.ensure("postgresql", "true", "true")
     service.restart("postgresql")

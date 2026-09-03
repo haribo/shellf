@@ -74,3 +74,43 @@ def database(name: str, owner: str) as root {
         return ok.created
     }
 }
+
+# `postgres.hba` exists for one reason: a plan should not write the major version into a
+# path. `/etc/postgresql/17/main/pg_hba.conf` breaks on the next Debian, and it breaks by
+# writing to a file that is not there (#546).
+#
+# No generic "find a versioned config path" mechanism was built, deliberately. The search
+# for a second instance turned up none — PostgreSQL is the only service in this repo whose
+# config path carries a version, and **no stdlib def names an `/etc` path at all**. A rule
+# built from one case is a guess.
+#
+# A companion `postgres.config` was written, measured, and **dropped**: `pg_conftool set`
+# quotes a value only when it contains `*` or a space, so an ordinary `127.0.0.1` is written
+# bare and PostgreSQL then refuses to start with `syntax error … near token ".0"`. ADR-0050
+# does not catch it either — the observe reads the same value back and converges while the
+# database is down. `postgresql.conf` therefore keeps `file.replace` and its hardcoded
+# version, which is ugly and works. Tracked as #567.
+
+# An hba rule is not `key = value`, so `pg_conftool` cannot write one. The path still has to
+# be found, and `pg_lsclusters` answers with the server **down** — measured, because
+# `psql -tAc "SHOW hba_file"` also answers and needs a connection, which is the trap above.
+#
+# Append-if-absent, matched on the whole line: a rule is a whole line, and a substring match
+# would let `host all app 0.0.0.0/0 trust` satisfy a request for a narrower one (#388).
+def hba(rule: str) as root {
+    observe {
+        return state(present: shell {
+            f=$(pg_lsclusters --no-header 2>/dev/null | awk 'NR==1 { print "/etc/postgresql/" $1 "/" $2 "/pg_hba.conf" }')
+            [ -n "$f" ] && grep -qxF -- "$rule" "$f"
+        }.exit == 0)
+    }
+    apply {
+        r = shell {
+            f=$(pg_lsclusters --no-header 2>/dev/null | awk 'NR==1 { print "/etc/postgresql/" $1 "/" $2 "/pg_hba.conf" }')
+            [ -n "$f" ] || { echo "no postgres cluster found" >&2; exit 1; }
+            printf '%s\n' "$rule" >> "$f"
+        }
+        if !r { return err.runtime(r) }
+        return ok.added
+    }
+}
