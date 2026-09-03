@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- The README shows how to download a release and verify it against `SHA256SUMS`. Publishing the file without saying how to use it closed half the gap — the first release carrying one is v0.10.0 (#554).
+
 ## [0.10.0] - 2026-09-03
 
 ### Added
