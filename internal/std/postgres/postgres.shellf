@@ -92,8 +92,11 @@ def database(name: str, owner: str) as root {
 # version, which is ugly and works. Tracked as #567.
 
 # An hba rule is not `key = value`, so `pg_conftool` cannot write one. The path still has to
-# be found, and `pg_lsclusters` answers with the server **down** — measured, because
-# `psql -tAc "SHOW hba_file"` also answers and needs a connection, which is the trap above.
+# be found, and `pg_lsclusters` answers with the server **down** — which matters, because a
+# plan configures `pg_hba` *before* starting postgres. `psql -tAc "SHOW hba_file"` answers
+# the same path and needs a connection, so an observe built on it would act on every first
+# deployment and converge only on the second: that is #515, and it was measured here (exit 2
+# with the cluster down) rather than assumed.
 #
 # Append-if-absent, matched on the whole line: a rule is a whole line, and a substring match
 # would let `host all app 0.0.0.0/0 trust` satisfy a request for a narrower one (#388).
