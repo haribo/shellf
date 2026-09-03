@@ -184,10 +184,11 @@ on target {
     # the role *before* the role exists (#545). That ordering is not incidental — it is the
     # constraint the def's doc warns about, and exercising it here is what proves the
     # warning is followable rather than merely written.
-    # `postgres.hba` asks postgres where its file is, so no major version is written here
-    # (#546). `postgresql.conf` still carries one — see #567 for why a companion def was
-    # measured and dropped rather than shipped.
+    # Neither def writes `/etc/postgresql/17/…`: both ask postgres where its files are
+    # (#546, #567). `127.0.0.1` is the value that broke the first attempt — written bare, it
+    # stopped the server from starting — so it is the one exercised here.
     postgres.hba("host all covrole 127.0.0.1/32 scram-sha-256")
+    postgres.config("listen_addresses", "127.0.0.1")
     service.ensure("postgresql", "true", "true")
     service.restart("postgresql")
 
