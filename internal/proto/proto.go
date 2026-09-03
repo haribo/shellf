@@ -36,11 +36,38 @@ func expandInventory(s string, env map[string]string) (string, error) {
 		name := rest[:end]
 		v, ok := env[name]
 		if !ok {
-			return "", fmt.Errorf("undefined variable %q", name)
+			return "", missingInventory(name, env)
 		}
 		out.WriteString(v)
 		s = rest[end+1:]
 	}
+}
+
+// missingInventory names what is actually wrong with an unresolved `${inventory.…}`.
+//
+// A cross-host read has two ways to be misspelled and they are different mistakes: the host
+// or the field (ADR-0054 §4). "undefined variable inventory.bd.address" makes the reader
+// check both; naming which one moved is the whole value of the message.
+//
+// The host is judged by whether *any* field of it is in the table, not by asking the
+// inventory: this package must not grow a dependency on it to explain a lookup it was
+// handed (the same constraint ADR-0052 met).
+func missingInventory(name string, env map[string]string) error {
+	field, ok := strings.CutPrefix(name, InventoryPrefix)
+	if !ok {
+		return fmt.Errorf("undefined variable %q", name)
+	}
+	host, f, cross := strings.Cut(field, ".")
+	if !cross {
+		return fmt.Errorf("this host declares no field %q, read as ${%s}", field, name)
+	}
+	prefix := InventoryPrefix + host + "."
+	for k := range env {
+		if strings.HasPrefix(k, prefix) {
+			return fmt.Errorf("host %q declares no field %q, read as ${%s}", host, f, name)
+		}
+	}
+	return fmt.Errorf("undefined host %q, read as ${%s}", host, name)
 }
 
 // ResolveRefs returns a copy of steps with every Ref resolved against env and

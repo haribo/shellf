@@ -120,6 +120,12 @@ questions this ADR does not answer: resolution order between hosts, hosts outsid
 block, and what a plan means when it depends on a machine it is not deploying. Recorded as
 excluded rather than forgotten; it comes back with its own ADR if a real deployment needs it.
 
+> **Superseded by [ADR-0054](0054-cross-host-inventory-reads.md).** A real deployment needed
+> it (#542), and the three questions above turned out to rest on an assumption that does not
+> hold: an inventory holds no expressions — this ADR's own rejection of derived fields is what
+> guarantees it — so a cross-host read evaluates nothing and cannot cycle. The exclusion was
+> right against a dynamic reading and has no content against static data.
+
 ## Rejected alternatives
 
 ### Make `${…}` resolve per host when the name is unknown at parse

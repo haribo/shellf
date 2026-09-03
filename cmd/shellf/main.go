@@ -289,7 +289,7 @@ func controlChannel(planPath string, plan []orchestrator.Block, inv inventory.In
 		// values bare, the host's own under `inventory.`. A template rendered here used to
 		// see host fields bare, which is the divergence this issue removes — `~{domain}` and
 		// `domain` must not disagree either.
-		env := orchestrator.HostEnv(alias, host, baseVars, setVars)
+		env := orchestrator.HostEnv(alias, host, inv, baseVars, setVars)
 		allow := orchestrator.NewAllowed(assetsDir, declared)
 		allow.Render = func(content string, scope map[string]string) (string, error) {
 			// The call site wins over the host environment: that is what `with { }`
