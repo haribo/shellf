@@ -507,12 +507,10 @@ host app = {
     domain: "blog.example.test"
 }
 host svc = {
-    address: "$svcip", user: "deploy", key: "$work/id",
-    # The other host's address, copied. A plan cannot read another host's entry
-    # (ADR-0052), so this is written twice and can drift — the finding fleet.shellf
-    # exists to measure (#542).
-    db_address: "$dbip"
+    address: "$svcip", user: "deploy", key: "$work/id"
 }
+# The database address is declared once, here. `fleet.shellf` reads it as
+# `${inventory.db.address}` (ADR-0054) rather than carrying a copy on `svc`.
 host db = {
     address: "$dbip", user: "deploy", key: "$work/id"
 }

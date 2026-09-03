@@ -62,7 +62,7 @@ func TestExamplesResolvePerHost(t *testing.T) {
 					// whether an example resolves, and it must ask the same question the
 					// run asks. Rebuilding the env here is how it stopped seeing
 					// `${inventory.…}` the day that form was added (ADR-0052).
-					env := orchestrator.HostEnv(h, host, base, map[string]string{})
+					env := orchestrator.HostEnv(h, host, inv, base, map[string]string{})
 					if _, err := proto.ResolveRefs(blk.Steps, env, host.Interpreter); err != nil {
 						t.Errorf("%s on %s: %v", filepath.Base(p), h, err)
 					}

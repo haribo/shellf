@@ -1062,11 +1062,27 @@ func interpolate(s string, lookup func(string) (string, bool)) (string, bool, er
 			if field == "" {
 				return "", false, fmt.Errorf("${%s} names no field", name)
 			}
+			// One segment is this host's field, two name another host's (ADR-0054). Three is
+			// not a shape the inventory has — refused here rather than deferred to a lookup
+			// that would report it as a missing field of a host nobody wrote.
+			seg := strings.Split(field, ".")
+			if len(seg) > 2 {
+				return "", false, fmt.Errorf("${%s}: expected inventory.<field> or inventory.<host>.<field>", name)
+			}
+			for _, part := range seg {
+				if part == "" {
+					return "", false, fmt.Errorf("${%s} names no field", name)
+				}
+			}
 			// A private key's path has no legitimate place in file content or an argument,
 			// and writing one into a rendered template is a mistake worth refusing here
 			// rather than discovering in a deployed file (ADR-0052 §3).
-			if field == "key" {
-				return "", false, fmt.Errorf("${inventory.key} is refused: it is the path to a private key")
+			//
+			// Checked on the **last** segment, so `${inventory.db.key}` is refused too — a
+			// plan asking for the key of a machine it is not even deploying is the same
+			// mistake with a wider blast radius (ADR-0054 §3).
+			if seg[len(seg)-1] == "key" {
+				return "", false, fmt.Errorf("${%s} is refused: it is the path to a private key", name)
 			}
 			out.WriteString("${" + name + "}")
 			deferred = true

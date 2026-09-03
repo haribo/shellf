@@ -64,10 +64,10 @@ on svc {
     # The connection details, rendered on the control host so the password never lands in
     # the plan or in a shell argument (ADR-0018/0024).
     #
-    # FINDING: `~{inventory.db_address}` is this host's copy of the *other* host's address.
-    # ADR-0052 left `${inventory.db.address}` out of scope pending a real deployment that
-    # needs it. This is that deployment: the address is now written twice — once as `db`'s
-    # own `address`, once as `app`'s `db_address` — and the two can drift.
+    # The template reads `~{inventory.db.address}` — the database host's own entry, not a
+    # copy carried here. ADR-0052 had left that form out of scope pending a real deployment
+    # that needed it; this was that deployment, and ADR-0054 is what it produced. The
+    # address now exists once in the inventory.
     as root {
         file.template(%"fleet/app.env.tmpl", "/etc/appdb.env")
         file.mode("/etc/appdb.env", "0640")

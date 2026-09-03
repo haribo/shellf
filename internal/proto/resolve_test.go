@@ -166,14 +166,38 @@ func TestResolveRefs_ExpandsInventoryTemplates(t *testing.T) {
 	}
 }
 
-// An unknown field errors, naming it. The orchestrator adds which host.
+// An unknown field errors, naming it.
+//
+// The host used to be added by the orchestrator; since ADR-0054 this package says it
+// itself, because a cross-host read has two ways to be misspelled and they are different
+// mistakes — see TestResolveRefs_NamesWhatIsMissing.
 func TestResolveRefs_UnknownInventoryField(t *testing.T) {
 	steps := []Step{{
 		Instruction: "file.write",
 		Templates:   map[string]string{"content": "${inventory.nope}"},
 	}}
 	_, err := ResolveRefs(steps, map[string]string{}, "")
-	if err == nil || !strings.Contains(err.Error(), `"inventory.nope"`) {
+	if err == nil || !strings.Contains(err.Error(), `"nope"`) {
 		t.Fatalf("want an error naming the field, got %v", err)
+	}
+}
+
+// #547, ADR-0054 §4: a cross-host read can name a host that does not exist or a field that
+// host does not have. "undefined variable inventory.bd.address" makes the reader check
+// both; saying which one moved is the whole value of the message.
+func TestResolveRefs_NamesWhatIsMissing(t *testing.T) {
+	env := map[string]string{"inventory.db.address": "10.0.0.40"}
+	for _, tc := range []struct{ name, tmpl, want string }{
+		{"unknown host", "${inventory.bd.address}", `undefined host "bd"`},
+		{"unknown field of a known host", "${inventory.db.port}", `host "db" declares no field "port"`},
+		{"unknown field of this host", "${inventory.nope}", `this host declares no field "nope"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			steps := []Step{{Instruction: "file.write", Templates: map[string]string{"content": tc.tmpl}}}
+			_, err := ResolveRefs(steps, env, "")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %v, want it to contain %q", err, tc.want)
+			}
+		})
 	}
 }

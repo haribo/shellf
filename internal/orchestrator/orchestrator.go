@@ -138,7 +138,7 @@ func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.D
 		block := block // capture for the closure
 		reqFor := func(alias string) ([]byte, error) {
 			host, _ := inv.Resolve(alias)
-			env := HostEnv(alias, host, baseVars, setVars)
+			env := HostEnv(alias, host, inv, baseVars, setVars)
 			// Templates are no longer rewritten here: `file.template` is a def, and
 			// `~file.render` substitutes on the control host over this host's env,
 			// through the channel (ADR-0024 preserved, #334).
@@ -280,14 +280,51 @@ func hasUnannotatedShell(steps []proto.Step) bool {
 // Exported because it is the *definition* of per-host resolution, and anything checking a
 // plan resolves — `cmd/shellf`'s example test does — must ask the same question the
 // orchestrator asks. A second copy of this layering is a second answer.
-func HostEnv(alias string, host inventory.Host, base, set map[string]string) map[string]string {
+func HostEnv(alias string, host inventory.Host, inv inventory.Inventory, base, set map[string]string) map[string]string {
 	// host.Vars is deliberately absent from the bare table (#540, ADR-0053). A bare
 	// reference and `${name}` are the same variable written two ways, and `${name}` is
 	// substituted at parse against the plan — so feeding the inventory into one and not the
 	// other gave a single name two values, decided by nothing but braces.
 	env := mergeEnv(base, set)
 	addInventoryFields(env, alias, host)
+	addCrossHostFields(env, inv)
 	return env
+}
+
+// addCrossHostFields exposes every declared host under `inventory.<alias>.<field>`, so a
+// plan can read an address that exists once instead of copying it into the entry of every
+// machine that needs it (ADR-0054).
+//
+// A plain table and no resolution step: an inventory holds no expressions — ADR-0052
+// rejected derived fields, which is what guarantees it — so this is a lookup and cannot
+// cycle. That is the assumption ADR-0052's exclusion rested on being false.
+//
+// Resolved hosts, not the literal blocks: `defaults` are merged first, so a field means the
+// same thing whether the host reads it or its neighbour does (ADR-0054 §2).
+//
+// Groups are absent on purpose. `${inventory.web.address}` where `web` names a group has no
+// single answer, and picking its first member silently is the kind of helpfulness that ships
+// a deployment pointed at the wrong machine.
+func addCrossHostFields(env map[string]string, inv inventory.Inventory) {
+	for alias := range inv.Hosts {
+		host, ok := inv.Resolve(alias)
+		if !ok {
+			continue
+		}
+		p := proto.InventoryPrefix + alias + "."
+		env[p+"name"] = alias
+		env[p+"address"] = host.Address
+		env[p+"user"] = host.User
+		env[p+"port"] = host.Port
+		for k, v := range host.Vars {
+			// `key` is refused at parse; leaving it out of the table too means a path to a
+			// private key is never one lookup away from a rendered file.
+			if k == "key" {
+				continue
+			}
+			env[p+k] = v
+		}
+	}
 }
 
 // addInventoryFields exposes this host's own values under the `inventory.` prefix, for the
