@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- `user.group` documents that the membership does not apply to later steps of the same run: groups are fixed when a session starts and the agent keeps its own (ADR-0005). The next step fails on a permission error that looks like the def not working (#510).
+
 ## [0.11.0] - 2026-09-04
 
 ### Added
