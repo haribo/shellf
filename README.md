@@ -33,11 +33,27 @@ workdir and its own binary and exits, leaving nothing behind.
 
 ## Install
 
+Download a release and **check what you got**:
+
+```sh
+gh release download v0.10.0 --repo haribo/shellf
+sha256sum -c SHA256SUMS      # shellf-linux-amd64: OK
+chmod +x shellf-linux-amd64
+```
+
+`SHA256SUMS` covers both `shellf-linux-amd64` and `shellf-linux-arm64`, and is published
+from v0.10.0 onward. The verification is the point rather than a formality: shellf refuses a
+download it cannot verify — `file.download(url, dst, sha256)` takes the hash as a required
+argument — so installing it any other way would be the one unchecked step of a
+shellf-managed setup.
+
+Or build it:
+
 ```
 CGO_ENABLED=0 go build -o shellf ./cmd/shellf
 ```
 
-A static binary. The same binary is what gets pushed to targets as the agent.
+A static binary either way. The same binary is what gets pushed to targets as the agent.
 
 ## Quickstart
 

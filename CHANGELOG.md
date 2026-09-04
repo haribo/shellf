@@ -6,6 +6,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-04
+
+### Added
+
+- `postgres.config(key, value)` sets a `postgresql.conf` value without naming the major version, and quotes it — `pg_conftool` leaves `127.0.0.1` bare, which stops the server from starting. The value is passed unquoted; a quoted one is refused rather than doubled (#567).
+- `postgres.hba(rule)` asks postgres where its hba file is, so a plan stops writing `/etc/postgresql/17/…` for it and breaking on the next Debian. It answers while the server is down, which is when a first deployment configures it (#546).
+- The README shows how to download a release and verify it against `SHA256SUMS`. Publishing the file without saying how to use it closed half the gap — the first release carrying one is v0.10.0 (#554).
+
 ## [0.10.0] - 2026-09-03
 
 ### Added
@@ -317,7 +325,8 @@ agent that evaluates on the host — "raw shell, but idempotent, previewable, fa
   per-user agent/workdir scoping.
 - Commands: `run`, `status`, `clean`, and `version`.
 
-[Unreleased]: https://github.com/haribo/shellf/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/haribo/shellf/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/haribo/shellf/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/haribo/shellf/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/haribo/shellf/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/haribo/shellf/compare/v0.8.0...v0.9.0

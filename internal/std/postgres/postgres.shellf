@@ -74,3 +74,95 @@ def database(name: str, owner: str) as root {
         return ok.created
     }
 }
+
+# `postgres.hba` exists for one reason: a plan should not write the major version into a
+# path. `/etc/postgresql/17/main/pg_hba.conf` breaks on the next Debian, and it breaks by
+# writing to a file that is not there (#546).
+#
+# No generic "find a versioned config path" mechanism was built, deliberately. The search
+# for a second instance turned up none — PostgreSQL is the only service in this repo whose
+# config path carries a version, and **no stdlib def names an `/etc` path at all**. A rule
+# built from one case is a guess.
+#
+# `postgres.config` writes the value itself instead of calling `pg_conftool set`, which
+# quotes only when a value contains `*` or a space — so an ordinary `127.0.0.1` went in bare
+# and PostgreSQL refused to start with `syntax error … near token ".0"` (#567). ADR-0050
+# could not catch that: the observe read the same value back and converged while the database
+# was down. An effect that lands and is *harmful* is outside what confirmation can see.
+#
+# Always single-quoting is safe, measured against a real cluster rather than assumed —
+# numeric, boolean, size and string parameters all start with quotes, and a bare
+# `127.0.0.1` control case confirmed the failure it is guarding.
+#
+# Read with pg_conftool, written by hand: each tool where it is correct. `-s show` resolves
+# the cluster and returns the value **unquoted**, which is exactly what a comparison wants;
+# `set` is the half that cannot be trusted.
+
+# An hba rule is not `key = value`, so `pg_conftool` cannot write one. The path still has to
+# be found, and `pg_lsclusters` answers with the server **down** — which matters, because a
+# plan configures `pg_hba` *before* starting postgres. `psql -tAc "SHOW hba_file"` answers
+# the same path and needs a connection, so an observe built on it would act on every first
+# deployment and converge only on the second: that is #515, and it was measured here (exit 2
+# with the cluster down) rather than assumed.
+#
+# Append-if-absent, matched on the whole line: a rule is a whole line, and a substring match
+# would let `host all app 0.0.0.0/0 trust` satisfy a request for a narrower one (#388).
+def hba(rule: str) as root {
+    observe {
+        return state(present: shell {
+            f=$(pg_lsclusters --no-header 2>/dev/null | awk 'NR==1 { print "/etc/postgresql/" $1 "/" $2 "/pg_hba.conf" }')
+            [ -n "$f" ] && grep -qxF -- "$rule" "$f"
+        }.exit == 0)
+    }
+    apply {
+        r = shell {
+            f=$(pg_lsclusters --no-header 2>/dev/null | awk 'NR==1 { print "/etc/postgresql/" $1 "/" $2 "/pg_hba.conf" }')
+            [ -n "$f" ] || { echo "no postgres cluster found" >&2; exit 1; }
+            printf '%s\n' "$rule" >> "$f"
+        }
+        if !r { return err.runtime(r) }
+        return ok.added
+    }
+}
+
+# The trailing comment on a rewritten line is lost, the way `file.replace` already loses it —
+# no regression, and not worth an awk that reassembles it.
+def config(key: str, value: str) as root {
+    check {
+        k = shell { printf '%s' "$key" | grep -qE '^[A-Za-z_][A-Za-z0-9_]*$' }
+        if !k { return err.badKey(k) }
+        # A caller who quotes as well would get the quotes doubled into the file. Refused
+        # rather than unwrapped: guessing which quotes were meant is how a config ends up
+        # holding a value nobody wrote.
+        q = shell { printf '%s' "$value" | grep -qE "^([\"']).*\\1$" }
+        if q { return err.quotedValue(q) }
+    }
+    observe {
+        return state(set: shell { [ "$(pg_conftool -s show "$key" 2>/dev/null)" = "$value" ] }.exit == 0)
+    }
+    apply {
+        r = shell {
+            f=$(pg_lsclusters --no-header 2>/dev/null | awk 'NR==1 { print "/etc/postgresql/" $1 "/" $2 "/postgresql.conf" }')
+            [ -n "$f" ] && [ -f "$f" ] || { echo "no postgres cluster found" >&2; exit 1; }
+            # Staged like file.replace, and for the same reason: the destination is never the
+            # thing being written, so nothing reads a half-rewritten file.
+            staged="$f.shellf.$$"
+            trap 'rm -f "$staged"' EXIT
+            cp -p "$f" "$staged"
+            # `key`, any spaces, `=`. Postgres ships `key = value` and a hand-edited file may
+            # hold `key=value`; matching only the spaced form left the other in place and
+            # appended a second line — the effective value was right and a dead one stayed
+            # above it. A leading `#` does not match, so a commented default stays commented.
+            #
+            # `k` is safe in a pattern: `check` restricts it to [A-Za-z_][A-Za-z0-9_]*.
+            # `\x27` is a single quote, and mawk — Debian's awk — prints it as one.
+            awk 'BEGIN { k = ENVIRON["key"]; v = ENVIRON["value"] }
+                 $0 ~ "^" k "[ \t]*=" { if (!done) { printf "%s = \x27%s\x27\n", k, v; done = 1 } next }
+                 { print }
+                 END { if (!done) printf "%s = \x27%s\x27\n", k, v }' "$f" > "$staged"
+            mv -f "$staged" "$f"
+        }
+        if !r { return err.runtime(r) }
+        return ok.set
+    }
+}
