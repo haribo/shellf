@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-04
+
 ### Added
 
 - `postgres.config(key, value)` sets a `postgresql.conf` value without naming the major version, and quotes it — `pg_conftool` leaves `127.0.0.1` bare, which stops the server from starting. The value is passed unquoted; a quoted one is refused rather than doubled (#567).
@@ -323,7 +325,8 @@ agent that evaluates on the host — "raw shell, but idempotent, previewable, fa
   per-user agent/workdir scoping.
 - Commands: `run`, `status`, `clean`, and `version`.
 
-[Unreleased]: https://github.com/haribo/shellf/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/haribo/shellf/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/haribo/shellf/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/haribo/shellf/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/haribo/shellf/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/haribo/shellf/compare/v0.8.0...v0.9.0
