@@ -21,17 +21,14 @@ on db {
     # Listen beyond localhost: the point of this deployment is that another machine
     # connects.
     #
-    # `postgres.hba` asks postgres where its hba file is, so no major version is written
-    # for it — and it answers while the server is **down**, which is when a first deployment
-    # configures it (#546).
+    # `postgres.config` and `postgres.hba` ask postgres where its files are, so no major
+    # version is written here (#546, #567). Both answer while the server is **down**, which
+    # is when a first deployment configures it.
     #
-    # `postgresql.conf` still carries the version. A `postgres.config` def was written and
-    # dropped: the tool it would call writes `127.0.0.1` unquoted and PostgreSQL then
-    # refuses to start (#567). A hardcoded path that works beats a def that breaks a
-    # database.
-    as root {
-        file.replace("/etc/postgresql/17/main/postgresql.conf", "listen_addresses", "'*'")
-    }
+    # The value is passed **unquoted**: the def quotes it, because PostgreSQL needs
+    # `'127.0.0.1'` and rejects it bare. A caller who quotes too is refused rather than
+    # having the quotes doubled into the file.
+    postgres.config("listen_addresses", "*")
 
     # Let the app host authenticate. Append-if-absent, matched on the whole line.
     postgres.hba("host all appuser 0.0.0.0/0 scram-sha-256")
