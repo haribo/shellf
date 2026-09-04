@@ -149,10 +149,15 @@ def config(key: str, value: str) as root {
             staged="$f.shellf.$$"
             trap 'rm -f "$staged"' EXIT
             cp -p "$f" "$staged"
-            # `key` then optional spaces then `=` — postgres writes `key = value`, so the
-            # bare `key=` prefix file.replace matches would miss every line in this file.
+            # `key`, any spaces, `=`. Postgres ships `key = value` and a hand-edited file may
+            # hold `key=value`; matching only the spaced form left the other in place and
+            # appended a second line — the effective value was right and a dead one stayed
+            # above it. A leading `#` does not match, so a commented default stays commented.
+            #
+            # `k` is safe in a pattern: `check` restricts it to [A-Za-z_][A-Za-z0-9_]*.
+            # `\x27` is a single quote, and mawk — Debian's awk — prints it as one.
             awk 'BEGIN { k = ENVIRON["key"]; v = ENVIRON["value"] }
-                 $1 == k && $2 == "=" { if (!done) { printf "%s = \x27%s\x27\n", k, v; done = 1 } next }
+                 $0 ~ "^" k "[ \t]*=" { if (!done) { printf "%s = \x27%s\x27\n", k, v; done = 1 } next }
                  { print }
                  END { if (!done) printf "%s = \x27%s\x27\n", k, v }' "$f" > "$staged"
             mv -f "$staged" "$f"
