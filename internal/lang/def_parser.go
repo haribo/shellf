@@ -1,6 +1,7 @@
 package lang
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -379,7 +380,15 @@ func (p *parser) primitiveCall() Expr {
 	if p.tok.kind != tLParen {
 		p.fail("~%s must be called", name)
 	}
-	return Call{Name: name, Args: p.callArgs(), Control: true}
+	args := p.callArgs()
+	if i, ok := patternArg[name]; ok && i < len(args) {
+		if lit, isLit := args[i].(StrLit); isLit {
+			if _, err := regexp.Compile(lit.Value); err != nil {
+				p.fail("~%s: %v", name, err)
+			}
+		}
+	}
+	return Call{Name: name, Args: args, Control: true}
 }
 
 // controlPathLit parses `%"conf.j2"` — a path on the control host. `%` before anything
@@ -432,11 +441,21 @@ func (p *parser) postfix() Expr {
 // purpose: if `%` could prefix a def, a def could run shell, and shell would run on the
 // machine holding every SSH key and every secret. shellf runs shell on targets.
 var ControlPrimitives = map[string]bool{
-	"file.read":   true,
-	"file.write":  true,
-	"file.render": true,
-	"dir.list":    true,
-	"dir.sync":    true,
+	"file.read":    true,
+	"file.write":   true,
+	"file.render":  true,
+	"dir.list":     true,
+	"dir.sync":     true,
+	"text.matches": true,
+	"text.replace": true,
+}
+
+// patternArg is the position of the RE2 pattern in each text primitive's argument list
+// (ADR-0055 §1). A literal there is compiled at parse: a pattern that cannot compile is a
+// fault in the plan, and saying so where it is written beats saying so mid-deploy.
+var patternArg = map[string]int{
+	"text.matches": 1,
+	"text.replace": 1,
 }
 
 func (p *parser) primary() Expr {

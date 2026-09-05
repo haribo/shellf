@@ -406,6 +406,43 @@ The refusal happens when the plan is read, before any host is contacted. It matt
 than it looks: a def receiving `"yes"` for `running` used to read it as *not true* and
 **stop** the service, reporting `ok.converged`.
 
+## Asking something of a value — `~text.matches` / `~text.replace` (ADR-0055)
+
+A type says what a value *is*; these say what shape it has. They are the only way to ask
+a question of a value other than "is it equal to that one?", and they belong in a def:
+
+```
+def replace(path: str, key: str, value: str) {
+    check {
+        if ~text.matches(key, "=") { return err.keyMustNotContainEquals }
+    }
+    …
+}
+```
+
+- `~text.matches(subject, pattern)` answers true or false.
+- `~text.replace(subject, pattern, replacement)` rewrites **every** match.
+
+Both are pure: no file, no host, no shell. The engine is Go's RE2, compiled into the
+binary, so a pattern answers the same on Debian, Alpine and BSD — `sed` does not. RE2 has
+no backtracking: `\d` is not part of it, `[0-9]` is.
+
+**The replacement is literal.** `$1` and `&` are ordinary characters, not references to
+what was matched (`${name}` is a different thing: shellf's own interpolation, applied to
+the string before the primitive sees it):
+
+```
+~text.replace("abc", "b", "&$1")     # → "a&$1c"
+```
+
+That is deliberate. `file.replace` once built a `sed` expression out of its own arguments,
+where `&` means "the whole match", and `URL=https://a&b` landed as `URL=https://aURL=oldb`
+(#487). A replacement with its own expansion syntax is that defect again.
+
+A pattern written as a literal is compiled when the def is parsed, so one that cannot
+compile is reported where it is written. A pattern arriving as a parameter is only knowable
+when the def runs, and fails there, naming the primitive.
+
 ## `%"…"` — a file on your machine, named by the plan (ADR-0043)
 
 A `%` marks a path the control host owns: `file.copy(%"conf.j2", "/etc/app.conf")`. What a

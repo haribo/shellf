@@ -51,15 +51,21 @@ def mode(path: str, mode: str) {
 # and re-corrupted the file (#487). awk reads both through ENVIRON instead: nothing the
 # caller passes is ever parsed as syntax.
 #
-# Still unguarded: a `=` in the key, or a newline in either argument, cannot be written as
-# one `key=value` line. Refusing them belongs in `check`, and `check` cannot express it —
-# the language compares values with `==` and nothing else, so the only way to ask "does
-# this hold a newline" is a shell round trip on the target, in every mode, to validate an
-# argument the control host already holds. That contradicts ADR-0034 §5. Tracked as the
-# language gap it is (#492), not worked around here.
+# What it refuses, and why it can: a `=` in the key, or a newline in either argument,
+# cannot be written as one `key=value` line. A key holding a `=` is the worse of the two —
+# `replace(f, "a=b", "v")` matches no line, appends `a=b=v`, and the file ends up with two
+# lines starting with `a=`, so a reader of that .env sees the key `a` defined twice and
+# `a` silently changes value. The guard needs to ask something of a value other than
+# equality, which the language could not express until `~text.matches` (ADR-0055, #575).
 def replace(path: str, key: str, value: str) {
     check {
         if key == "" { return err.keyMustNotBeEmpty }
+        # Each rule is asked for by name; none of them reaches a shell. `"\n"` is already
+        # a real newline by the time RE2 sees it — the lexer unescapes it — so the pattern
+        # is a literal character, not an escape RE2 has to interpret.
+        if ~text.matches(key, "=") { return err.keyMustNotContainEquals }
+        if ~text.matches(key, "\n") { return err.keyMustNotContainNewline }
+        if ~text.matches(value, "\n") { return err.valueMustNotContainNewline }
     }
     observe { return state(set: shell { grep -qxF -- "$key=$value" "$path" 2>/dev/null }.exit == 0) }
     apply {

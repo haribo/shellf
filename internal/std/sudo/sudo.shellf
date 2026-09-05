@@ -24,8 +24,11 @@ def write(name: str, content: str) as root {
         return state(synced: shell { test -f "$f" && printf '%s\n' "$content" | cmp -s - "$f" }.exit == 0, secured: shell { [ "$(stat -c '%a' "$f" 2>/dev/null)" = "440" ] }.exit == 0)
     }
     check {
-        n = shell { printf '%s' "$name" | grep -qE '^[A-Za-z0-9_-]+$' }
-        if !n { return err.badName(n) }
+        # The name becomes a file under /etc/sudoers.d, so it is held to what sudo will
+        # read back. Asked here rather than on the target: this is a question about a value
+        # the control host passed in, and it used to cost two shells over SSH to answer
+        # (ADR-0055, #575) — which also put this check out of reach of the unit fakes.
+        if !~text.matches(name, "^[A-Za-z0-9_-]+$") { return err.badName }
 
         r = shell {
             tmp=$(mktemp)
