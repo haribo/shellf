@@ -8,7 +8,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- The control host asks the agent whether a job is done every 25 ms at first, widening to a second, instead of a flat second throughout. A converged one-instruction plan against a local target drops from 698 ms to 439 ms, and a plan doing 200 ms of work from 1250 ms to 636 ms — the old cadence billed a whole second for work already finished. A long run still costs about one round trip per second (#573).
+- The control host asks the agent whether a job is done every 25 ms at first, widening to a second, instead of a flat second throughout: work already finished waited out the rest of the tick. A converged one-instruction plan drops from 698 ms to 439 ms; a long run still costs about one round trip per second (#573).
 
 ### Fixed
 
