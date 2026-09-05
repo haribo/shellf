@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- The control host asks the agent whether a job is done every 25 ms at first, widening to a second, instead of a flat second throughout. A converged one-instruction plan against a local target drops from 698 ms to 439 ms, and a plan doing 200 ms of work from 1250 ms to 636 ms — the old cadence billed a whole second for work already finished. A long run still costs about one round trip per second (#573).
+
 ### Fixed
 
 - `user.group` documents that the membership does not apply to later steps of the same run: groups are fixed when a session starts and the agent keeps its own (ADR-0005). The next step fails on a permission error that looks like the def not working (#510).
