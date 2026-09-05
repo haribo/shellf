@@ -636,7 +636,9 @@ func (ev *evaluator) evalExpr(e Expr) value {
 	case Field:
 		return ev.evalField(x)
 	case Binary:
-		eq := equal(ev.evalExpr(x.L), ev.evalExpr(x.R))
+		l, r := ev.evalExpr(x.L), ev.evalExpr(x.R)
+		ev.refuseBytesComparison(x.Op, l, r)
+		eq := equal(l, r)
 		if x.Op == "==" {
 			return eq
 		}
@@ -1199,4 +1201,30 @@ func truthy(v value) bool {
 	return false
 }
 
+// equal is `==` over the scalar values. Bytes never reach it: refuseBytesComparison stops
+// them first, which is also what keeps this line from panicking on two uncomparable
+// operands (#578).
 func equal(a, b value) bool { return a == b }
+
+// refuseBytesComparison enforces ADR-0034 §4 at the one boundary that never enforced it.
+// Bytes are opaque — they go from a primitive to an instruction and nowhere else — and the
+// record says in as many words that they cannot be compared. `==` did it anyway, in two
+// wrong ways:
+//
+//   - two Bytes panicked the evaluator, since `a == b` over interfaces holding []byte is a
+//     runtime error rather than an answer (#578);
+//   - Bytes against a string answered **false** for any content, because Go compares the
+//     dynamic types first. Silently false is worse than a panic: it reads as "the contents
+//     differ", which is the shape of #411.
+//
+// The message names the one comparison that is honest — a digest of the content, which the
+// caller can compute where the content lives.
+func (ev *evaluator) refuseBytesComparison(op string, l, r value) {
+	_, lb := l.(Bytes)
+	_, rb := r.(Bytes)
+	if !lb && !rb {
+		return
+	}
+	ev.fail("%s on bytes: content read by a primitive is opaque and cannot be compared (ADR-0034 §4) — "+
+		"compare a digest computed where the content is, or hand the bytes to an instruction", op)
+}

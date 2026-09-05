@@ -468,6 +468,21 @@ on where the file lives would change meaning when it moves.
 It bounds *which* files a def can obtain, not what it does with them: a def still runs
 shell on the target.
 
+### The content itself is opaque (ADR-0034 §4)
+
+What `~file.read` returns is **bytes**, not a string: it may be an image. Bytes go from a
+primitive to an instruction and nowhere else — they cannot be interpolated into `"${…}"`,
+and they cannot be compared:
+
+```
+x = ~file.read(src)
+if x == "hello" { … }        # refused: bytes cannot be compared
+file.write(dst, x)           # how they are meant to travel
+```
+
+The refusal is the point. Comparing content read as bytes means treating binary as text,
+and the two ways it used to go wrong were both silent about it (#578).
+
 ## Delivering a tree — `dir.copy` (ADR-0039)
 
 ```
