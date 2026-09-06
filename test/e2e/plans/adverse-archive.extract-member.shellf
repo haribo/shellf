@@ -6,6 +6,9 @@
 # the observe and the apply sides. A member holding a space that splits there extracts the
 # wrong thing — or nothing, which the observe reads as a sha mismatch and re-extracts for
 # ever.
+# Everything under `as root`, setup and call alike: the setup creates the tree, and a def
+# called outside the block runs as the SSH user, which cannot write into it. Found by CI —
+# a container where every step is root hides it completely.
 on target {
     as root {
         unsafe shell {
@@ -15,16 +18,16 @@ on target {
             printf 'other\n' > /tmp/adv-archive-member/src/other.txt
             tar czf /tmp/adv-archive-member/a.tar.gz -C /tmp/adv-archive-member/src .
         }
-    }
 
-    archive.extract-member("/tmp/adv-archive-member/a.tar.gz",
-                           "/tmp/adv-archive-member/out d'ir & f/extracted.txt",
-                           "./in ner/a b'c.txt")
-    shell {
-        f="/tmp/adv-archive-member/out d'ir & f/extracted.txt"
-        grep -qxF 'the member' "$f" || exit 1
-        # The other member did not come along: this def extracts one, by name.
-        grep -qxF 'other' "$f" && exit 1
-        exit 0
+        archive.extract-member("/tmp/adv-archive-member/a.tar.gz",
+                               "/tmp/adv-archive-member/out d'ir & f/extracted.txt",
+                               "./in ner/a b'c.txt")
+        shell {
+            f="/tmp/adv-archive-member/out d'ir & f/extracted.txt"
+            grep -qxF 'the member' "$f" || exit 1
+            # The other member did not come along: this def extracts one, by name.
+            grep -qxF 'other' "$f" && exit 1
+            exit 0
+        }
     }
 }
