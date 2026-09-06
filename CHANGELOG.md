@@ -15,6 +15,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Report rendering moves out of `cmd/shellf` into `internal/report`: the text and JSON reports, the `status` view, and the redaction keeping a credential off stdout. Entangled with flag parsing and process exit, it could only be tested by driving the whole command — so the layer an operator reads was the least tested. Now 94.5% (#491).
+
 - The control host asks the agent whether a job is done every 25 ms at first, widening to a second, instead of a flat second throughout: work already finished waited out the rest of the tick. A converged one-instruction plan drops from 698 ms to 439 ms; a long run still costs about one round trip per second (#573).
 
 ### Fixed
