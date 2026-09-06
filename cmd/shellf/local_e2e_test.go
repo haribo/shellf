@@ -21,7 +21,7 @@ func TestLocalTransport_EndToEnd(t *testing.T) {
 		t.Fatalf("build shellf: %v\n%s", err, out)
 	}
 
-	proj := project(t, filepath.Join(tmp, "proj"))
+	proj := projectDir(t, filepath.Join(tmp, "proj"))
 	target := filepath.Join(tmp, "provisioned")
 	writeFile(t, filepath.Join(proj, "inventories"), "inv.shellf", `host self = { local: "true" }`)
 	writeFile(t, filepath.Join(proj, "plans"), "plan.shellf", `on self {

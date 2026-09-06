@@ -15,6 +15,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Plan loading moves out of `cmd/shellf` into `internal/project`: the layout, sibling defs, imports, and the def table a run resolves against. That table is why it is a package — `lang` cannot import `std`, so something must see both, and it should not be the layer that exits the process. `main.go`: 1206 lines down to 587 (#491).
 - Report rendering moves out of `cmd/shellf` into `internal/report`: the text and JSON reports, the `status` view, and the redaction keeping a credential off stdout. Entangled with flag parsing and process exit, it could only be tested by driving the whole command — so the layer an operator reads was the least tested. Now 94.5% (#491).
 
 - The control host asks the agent whether a job is done every 25 ms at first, widening to a second, instead of a flat second throughout: work already finished waited out the rest of the tick. A converged one-instruction plan drops from 698 ms to 439 ms; a long run still costs about one round trip per second (#573).
