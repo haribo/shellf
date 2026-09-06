@@ -65,18 +65,6 @@ func TestLoadGlobals_MissingVarsFile(t *testing.T) {
 	}
 }
 
-func gitRun(t *testing.T, dir string, args ...string) {
-	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
-		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
-		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
-	}
-}
-
 func TestLoadInventory(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "inv.shellf", `host web = { address: "10.0.0.1", user: "deploy" }`)
@@ -103,15 +91,6 @@ func projectDir(t *testing.T, root string) string {
 		}
 	}
 	return root
-}
-
-func writeDef(t *testing.T, root, pkg, name, content string) {
-	t.Helper()
-	dir := filepath.Join(root, "defs", pkg)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, dir, name, content)
 }
 
 func writeFile(t *testing.T, dir, name, content string) {
