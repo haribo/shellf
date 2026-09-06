@@ -8,6 +8,9 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The toolchain CI uses, not merely a newer one (#589).
+# shellcheck source=test/toolchain.sh
+. "$here/toolchain.sh"
 root="$(cd "$here/.." && pwd)"
 floor="$(cat "$root/.github/coverage-floor.txt")"
 profile="$(mktemp)"
