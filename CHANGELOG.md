@@ -8,6 +8,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Seven adverse cases pass a hostile *argument* rather than a hostile starting state: `dir.ensure`, `dir.owner`, `dir.copy`, `file.copy`, `file.delete`, `file.template` and `archive.extract-member` are now called with paths holding a space, a quote and a `&`. Verified to fail when the quoting is removed, not merely to pass (#535).
+
 - A def's argument guards answer while the plan is read, when the `check` holding them reaches nothing — no shell, no host. `file.replace("/etc/app.env", "a=b", "v")` against two unreachable hosts went from 10 020 ms and no mention of the argument, to 5 ms naming the instruction and its line. Every check still runs on the target too (#492, ADR-0056).
 
 - `~text.matches(s, pattern)` and `~text.replace(s, pattern, repl)`: a def can ask something of a value other than equality, with the agent's own RE2 rather than the target's `sed`. `file.replace` now refuses a key holding a `=` — it used to append a second `a=` line and change the file's `a` — and `sudo.write` drops two shells from its `check` (#575).

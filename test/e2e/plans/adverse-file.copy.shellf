@@ -1,0 +1,21 @@
+# `file.copy` with hostile *arguments* on both sides (#527, #535).
+#
+# Two paths, so two chances to lose a quote — and the failure is asymmetric: a mangled
+# source fails loudly, a mangled destination writes the right bytes to the wrong place.
+on target {
+    dir.ensure("/tmp/adv-file-copy")
+    dir.ensure("/tmp/adv-file-copy/src dir")
+    unsafe shell { printf 'payload & more\n' > "/tmp/adv-file-copy/src dir/a b'c.txt" }
+
+    file.copy("/tmp/adv-file-copy/src dir/a b'c.txt", "/tmp/adv-file-copy/d e'f & g.txt")
+    shell {
+        grep -qxF 'payload & more' "/tmp/adv-file-copy/d e'f & g.txt" || exit 1
+        # Exactly one file landed: a split destination would have written two.
+        [ "$(find /tmp/adv-file-copy -maxdepth 1 -type f | wc -l)" = "1" ] || exit 1
+    }
+
+    # A second run over the same pair converges rather than re-copying — the hostile path
+    # must not defeat the sha256 guard that decides that.
+    file.copy("/tmp/adv-file-copy/src dir/a b'c.txt", "/tmp/adv-file-copy/d e'f & g.txt")
+    shell { grep -qxF 'payload & more' "/tmp/adv-file-copy/d e'f & g.txt" || exit 1 }
+}

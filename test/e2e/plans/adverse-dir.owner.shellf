@@ -1,0 +1,21 @@
+# `dir.owner` over a tree whose *names* are hostile (#527, #535).
+#
+# Its observe builds a `find` around `$path` and reads convergence from that find printing
+# nothing (#507). A path that splits there does not report a wrong owner — it reports
+# nothing, which this def reads as "converged". The failure is silence, not an error.
+on target {
+    dir.ensure("/tmp/adv-dir-owner")
+    dir.ensure("/tmp/adv-dir-owner/a b'c & d")
+    as root {
+        unsafe shell {
+            printf 'x\n' > "/tmp/adv-dir-owner/a b'c & d/f.txt"
+            chown root:root "/tmp/adv-dir-owner/a b'c & d/f.txt"
+        }
+        dir.owner("/tmp/adv-dir-owner/a b'c & d", "covuser")
+        shell {
+            # The machine, not the verdict: every entry under the hostile path is covuser.
+            [ "$(find "/tmp/adv-dir-owner/a b'c & d" ! -user covuser -print -quit)" = "" ] || exit 1
+            [ "$(stat -c '%U' "/tmp/adv-dir-owner/a b'c & d/f.txt")" = "covuser" ] || exit 1
+        }
+    }
+}
