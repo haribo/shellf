@@ -184,7 +184,14 @@ type Step struct {
 	// (ADR-0034). The value travels as an ordinary string; this records which ones the
 	// control host must be prepared to serve, so the allow-list is known before the
 	// plan is sent (ADR-0031 §3).
-	Control  []string `json:"control,omitempty"`
+	Control []string `json:"control,omitempty"`
+	// Line and Col are where the instruction was written. They stay on the control host —
+	// `json:"-"` — because the agent has the plan's source of nothing, and are there so a
+	// refusal can point at the call rather than name it (ADR-0056 §1), the way a shell has
+	// carried its own line since #470.
+	Line int `json:"-"`
+	Col  int `json:"-"`
+
 	Block    []Step   `json:"block,omitempty"` // an `as <user> { … }` sequential group (ADR-0011)
 	Parallel []Step   `json:"parallel,omitempty"`
 	If       *IfBlock `json:"if,omitempty"`

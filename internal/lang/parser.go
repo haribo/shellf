@@ -241,6 +241,9 @@ type parser struct {
 	userDefs  map[string]Def    // package + imported defs, resolved before the stdlib (ADR-0014/0015)
 	defPrefix string            // sub-package prefix for defs declared in this file (ADR-0033)
 
+	// Where the instruction being parsed was written (ADR-0056 §1).
+	stepLine, stepCol int
+
 	imports         map[string][]string // alias → imported package's def sources (ADR-0015)
 	importedAliases map[string]bool     // aliases already imported (duplicate check)
 
@@ -555,7 +558,12 @@ func (p *parser) step() proto.Step {
 	if p.tok.kind == tIdent && p.tok.val == "as" {
 		return p.asBlock()
 	}
-	name := p.expect(tIdent, "instruction or 'parallel'").val
+	nameTok := p.expect(tIdent, "instruction or 'parallel'")
+	name := nameTok.val
+	// Where the call was written, kept for a refusal that can point at it rather than
+	// name it (ADR-0056 §1). Set here and not in call(): by then the name is consumed,
+	// and a qualified `file.replace` would report the column of `replace`.
+	p.stepLine, p.stepCol = nameTok.line, nameTok.col
 	if p.tok.kind == tEq { // capture: name = <call>
 		p.adv()
 		rhs := p.step()
@@ -878,7 +886,8 @@ func (p *parser) call(name string) proto.Step {
 			}
 		}
 	}
-	return proto.Step{Instruction: name, Args: args, Refs: refs, Templates: templates, Control: control, Caught: caught, With: p.parseWith()}
+	return proto.Step{Instruction: name, Args: args, Refs: refs, Templates: templates, Control: control,
+		Caught: caught, With: p.parseWith(), Line: p.stepLine, Col: p.stepCol}
 }
 
 // arg resolves a binding's value (plan top-level binding or --vars file entry)

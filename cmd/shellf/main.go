@@ -354,6 +354,15 @@ func loadPlanPackage(planPath, invPath string, baseVars, setVars map[string]stri
 	if err := lang.CheckCycles(defs, cycleResolver(defs)); err != nil {
 		return nil, nil, fmt.Errorf("%s: %v", planPath, err)
 	}
+	// A def's own argument guards, answered here when they can be (ADR-0056). Here for the
+	// same reason as the cycles above: it needs the plan and both def sets. Only a `check`
+	// that reaches nothing is evaluated, and only an `err` decides — everything else is
+	// left to the evaluator on the target, which still runs every check.
+	for _, b := range plan {
+		if err := lang.CheckArguments(b.Steps, cycleResolver(defs)); err != nil {
+			return nil, nil, fmt.Errorf("%s: %v", planPath, err)
+		}
+	}
 	// `file.template` steps are NOT resolved here: they render per host, in the
 	// orchestrator, over each host's env (ADR-0024). See templateRenderer.
 	//
