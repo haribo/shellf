@@ -15,6 +15,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- The local checks reproduce CI. They pin the toolchain `go.mod` names — `GOTOOLCHAIN=auto` only ever upgrades, so a machine on a newer Go measured something CI never measured: coverage read 80.9% here and 81.8% there, and `deadcode` panicked outright. `test/lint.sh` runs golangci-lint at the workflow's version, which `go vet` cannot replace (#589).
+
 - Plan loading moves out of `cmd/shellf` into `internal/project`: the layout, sibling defs, imports, and the def table a run resolves against. That table is why it is a package — `lang` cannot import `std`, so something must see both, and it should not be the layer that exits the process. `main.go`: 1206 lines down to 587 (#491).
 - Report rendering moves out of `cmd/shellf` into `internal/report`: the text and JSON reports, the `status` view, and the redaction keeping a credential off stdout. Entangled with flag parsing and process exit, it could only be tested by driving the whole command — so the layer an operator reads was the least tested. Now 94.5% (#491).
 

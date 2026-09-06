@@ -50,6 +50,7 @@ Rules must be concise. One rule per line when possible.
 
 ## Testing
 
+- **Before opening a PR, run the checks CI runs**: `go test ./...`, `bash test/lint.sh`, `bash test/coverage-ratchet.sh`, `bash test/dead-code.sh`, `bash test/changelog-rule.sh`. They pin the toolchain from `go.mod` and the linter version from the workflow, so a green local run means a green CI (#589). `go vet` alone does not: it does not see a test helper left dead by a move, which is how #588 went red after a clean local run.
 - **NEVER run `test/e2e/run.sh` directly on a development machine — use `test/e2e/vm.sh run`.** The harness starts a `--privileged` container with systemd as PID 1; it shares the host kernel and has ended a developer's graphical session four times, rewriting `kernel.core_pattern` and `vm.swappiness` on the way (#528, #529). `vm.sh` runs the identical harness inside a throwaway VM, so the same container shares the VM's kernel instead. CI calls `run.sh` directly on purpose: a runner is already disposable.
 - **Every stdlib def is exercised against a real target by `test/e2e/plans/coverage.shellf`, no exception.** `test/e2e/def-coverage.sh` fails the build when one is not, so a new def arrives with its coverage or turns CI red. An exemption is allowed, named in that script with its reason — never silent.
 - A def that declares `observe` must report a converged outcome on a second run; the harness derives that set from the stdlib and checks it. A def with no `observe` is action-shaped (ADR-0029) and is excluded by construction, not by a list.
