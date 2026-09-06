@@ -443,6 +443,29 @@ A pattern written as a literal is compiled when the def is parsed, so one that c
 compile is reported where it is written. A pattern arriving as a parameter is only knowable
 when the def runs, and fails there, naming the primitive.
 
+### A guard that touches nothing answers before the run (ADR-0056)
+
+A `check` normally runs where the def runs: on the target. When **every** statement in it
+reaches nothing — no `shell`, no call to another def, and of the primitives only
+`~text.matches` / `~text.replace` — shellf evaluates it while reading the plan:
+
+```
+$ shellf run --dry-run plans/app.shellf
+plans/app.shellf: 12:5: file.replace: err.keyMustNotContainEquals
+```
+
+No host was contacted. The same plan used to report `unreachable` and say nothing about
+the argument, because the guard needed a machine to run on.
+
+Two limits, both deliberate:
+
+- **Only an `err` decides.** A pure check returning `ok` concludes nothing here and the run
+  proceeds — a question about state cannot be pure anyway.
+- **Only values the plan already holds.** An argument written `${inventory.field}`, or as a
+  bare name, is resolved per host and is not judged here: the text is not the value.
+
+It is an addition, not a replacement — every check still runs on the target.
+
 ## `%"…"` — a file on your machine, named by the plan (ADR-0043)
 
 A `%` marks a path the control host owns: `file.copy(%"conf.j2", "/etc/app.conf")`. What a

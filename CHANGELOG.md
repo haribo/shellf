@@ -8,6 +8,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A def's argument guards answer while the plan is read, when the `check` holding them reaches nothing — no shell, no host. `file.replace("/etc/app.env", "a=b", "v")` against two unreachable hosts went from 10 020 ms and no mention of the argument, to 5 ms naming the instruction and its line. Every check still runs on the target too (#492, ADR-0056).
+
 - `~text.matches(s, pattern)` and `~text.replace(s, pattern, repl)`: a def can ask something of a value other than equality, with the agent's own RE2 rather than the target's `sed`. `file.replace` now refuses a key holding a `=` — it used to append a second `a=` line and change the file's `a` — and `sudo.write` drops two shells from its `check` (#575).
 - ADR-0055: `~text.matches` and `~text.replace`, two primitives over values. The engine is the agent's own RE2, identical on every target, and the replacement is literal — a `$1` or an `&` in it is text, which is the defect #487 was. A def can finally refuse an argument it cannot honour (#575).
 
