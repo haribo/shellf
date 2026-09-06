@@ -38,6 +38,15 @@ type Options struct {
 	// plan". It can only ever *narrow*: a plan is the authority on what it touches, and a
 	// flag able to add a host would make the plan a suggestion (#460).
 	Limit []string
+
+	// ValidateArgs holds a host's resolved steps to what the defs declare, after the
+	// per-host expansion and before the request is sent (#582). A callback rather than a
+	// direct call: this package would otherwise have to know the language, and the def
+	// table it needs spans the user's package and the stdlib, which only the caller sees —
+	// the same reason CheckCycles is driven from cmd/shellf.
+	//
+	// Nil means no validation, which is what a caller that has no def table can offer.
+	ValidateArgs func([]proto.Step) error
 }
 
 // HostOutcome is one host's result for one block.
@@ -145,6 +154,15 @@ func Run(plan Plan, inv inventory.Inventory, agentBin, mode string, dial fleet.D
 			steps, err := proto.ResolveRefs(block.Steps, env, host.Interpreter)
 			if err != nil {
 				return nil, &ResolveError{Err: err}
+			}
+			// The values a host supplies exist for the first time here, so this is the
+			// earliest a `${inventory.…}` argument can be held to what the def declares
+			// (#582). A refusal stops this host's request rather than the run: two hosts
+			// can hold two different values, and one bad host is not the plan's fault.
+			if opt.ValidateArgs != nil {
+				if err := opt.ValidateArgs(steps); err != nil {
+					return nil, &ResolveError{Err: err}
+				}
 			}
 			return json.Marshal(proto.Request{Mode: mode, Steps: steps, Defs: defs, Verbose: opt.Verbose})
 		}

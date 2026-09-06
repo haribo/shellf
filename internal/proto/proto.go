@@ -138,7 +138,10 @@ func ResolveRefs(steps []Step, env map[string]string, interp string) ([]Step, er
 		// dropping it makes the agent read those paths on the target instead of the
 		// control host — silently, since a path is a path (#334).
 		step := Step{Instruction: s.Instruction, Args: args, Bind: s.Bind, Caught: s.Caught,
-			Become: s.Become, Interp: s.Interp, With: s.With, Control: s.Control}
+			Become: s.Become, Interp: s.Interp, With: s.With, Control: s.Control,
+			// Where it was written survives the expansion: a per-host refusal points at the
+			// call the same way one made while the plan was read does (ADR-0056 §1).
+			Line: s.Line, Col: s.Col}
 		if s.Instruction == "shell" { // a plan-level shell sees the per-host env via $name (#106)
 			step.Env = env
 			if len(s.With) > 0 { // a `with` binding overrides the host env for this call (ADR-0022)

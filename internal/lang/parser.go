@@ -868,7 +868,14 @@ func (p *parser) call(name string) proto.Step {
 			// (ADR-0045 §2). Variables are already interpolated here, so `"yes"` is
 			// caught before a host is contacted rather than stopping a service on one.
 			// A `ref` is skipped: what a captured result holds is only known at run time.
-			if params[i].Type == "bool" && !isBoolValue(vals[i].val) {
+			//
+			// A deferred value is skipped for the same reason, and it was not: the check
+			// read the text `${inventory.flag}` and refused a plan whose host holds
+			// `true`, which made a `bool` parameter unable to take a value from the
+			// inventory at all (#582). It is held to its type once expanded, on the
+			// control host, before the request goes out — where the value exists, which is
+			// the rule ADR-0045 §3 is named after.
+			if !vals[i].deferred && params[i].Type == "bool" && !isBoolValue(vals[i].val) {
 				p.fail("%s: %s expects a boolean, got %q — write true or false", name, n, vals[i].val)
 			}
 			if vals[i].deferred {

@@ -19,6 +19,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A `bool` parameter can take a value from the inventory. `service.ensure("nginx", "${inventory.flag}", true)` was refused whatever the host held, because the type check read the text standing in for the value instead of the value. It is now checked after the per-host expansion, so a host holding `"yes"` is still refused — naming that host and the line (#582).
+
 - Comparing bytes is refused by name instead of going wrong quietly. `~file.read(a) == ~file.read(b)` panicked the evaluator, and comparing bytes with a string answered false for any content — a def author reads that as "the contents differ". ADR-0034 §4 already said bytes cannot be compared; nothing enforced it (#578).
 
 - `user.group` documents that the membership does not apply to later steps of the same run: groups are fixed when a session starts and the agent keeps its own (ADR-0005). The next step fails on a permission error that looks like the def not working (#510).

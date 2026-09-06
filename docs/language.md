@@ -462,7 +462,9 @@ Two limits, both deliberate:
 - **Only an `err` decides.** A pure check returning `ok` concludes nothing here and the run
   proceeds — a question about state cannot be pure anyway.
 - **Only values the plan already holds.** An argument written `${inventory.field}`, or as a
-  bare name, is resolved per host and is not judged here: the text is not the value.
+  bare name, is resolved per host and is not judged here: the text is not the value. It is
+  judged once expanded — on the control host, before that host's request goes out — so the
+  refusal names the host as well as the line.
 
 It is an addition, not a replacement — every check still runs on the target.
 
