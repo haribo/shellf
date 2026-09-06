@@ -43,7 +43,7 @@ func TestExamplesResolvePerHost(t *testing.T) {
 				// which is a template placeholder and never reaches this table (#545).
 				"db_password": "placeholder",
 			}
-			plan, _, err := loadPlanPackage(p, invs[0], base, map[string]string{})
+			plan, _, _, err := loadPlanPackage(p, invs[0], base, map[string]string{})
 			if err != nil {
 				t.Fatalf("load: %v", err)
 			}

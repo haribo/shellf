@@ -204,7 +204,7 @@ func runCmd(args []string) {
 	for k, v := range secrets { // secrets win, like --set (ADR-0018)
 		setVars[k] = v
 	}
-	plan, defsSrc, err := loadPlanPackage(fs.Arg(0), *invPath, baseVars, setVars)
+	plan, defsSrc, validate, err := loadPlanPackage(fs.Arg(0), *invPath, baseVars, setVars)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -241,7 +241,7 @@ func runCmd(args []string) {
 		}
 	}
 
-	opt := orchestrator.Options{Parallel: *parallel, Limit: limits, Verbose: *verbose}
+	opt := orchestrator.Options{Parallel: *parallel, Limit: limits, Verbose: *verbose, ValidateArgs: validate}
 	printReports(orchestrator.Run(plan, inv, self, mode, dial, baseVars, setVars, defsSrc, opt), secretValues, *asJSON)
 }
 
@@ -322,37 +322,43 @@ func removedFlag(oldCheck bool) string {
 	return ""
 }
 
+// validateArgs holds a host's resolved steps to what the defs declare. It is built where
+// the def table is (loadPlanPackage) and handed to the orchestrator, which calls it after
+// each host's expansion — the earliest moment a `${inventory.…}` value exists (#582).
+type validateArgs func([]proto.Step) error
+
 // loadPlanPackage loads the plan file together with its package — every other
 // `*.shellf` file in the same directory (ADR-0014), so user defs written in a
-// sibling file resolve by name. Returns the plan and the concatenated user def
-// source to ship to the agent. baseVars is enriched in place with plan bindings.
-func loadPlanPackage(planPath, invPath string, baseVars, setVars map[string]string) (orchestrator.Plan, map[string]string, error) {
+// sibling file resolve by name. Returns the plan, the concatenated user def source to
+// ship to the agent, and the per-host argument validator described below. baseVars is
+// enriched in place with plan bindings.
+func loadPlanPackage(planPath, invPath string, baseVars, setVars map[string]string) (orchestrator.Plan, map[string]string, validateArgs, error) {
 	planSrc, err := os.ReadFile(planPath)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	root, err := projectRoot(planPath)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	libs, err := packageLibs(root)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	imports, err := readImports(planPath, string(planSrc))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	plan, defs, err := lang.ParsePackage(string(planSrc), libs, imports, baseVars, setVars, stdSignatures())
 	if err != nil {
-		return nil, nil, fmt.Errorf("%s: %v", planPath, err)
+		return nil, nil, nil, fmt.Errorf("%s: %v", planPath, err)
 	}
 	// A call cycle is a writing error, refused from reading the files (ADR-0030 §6). Here
 	// and not in `lang`, because the graph spans two sets no single package sees: these
 	// user defs, and the stdlib, which `lang` cannot import. The evaluator keeps its own
 	// guard, but it fires on the target, after earlier steps have already acted (#311).
 	if err := lang.CheckCycles(defs, cycleResolver(defs)); err != nil {
-		return nil, nil, fmt.Errorf("%s: %v", planPath, err)
+		return nil, nil, nil, fmt.Errorf("%s: %v", planPath, err)
 	}
 	// A def's own argument guards, answered here when they can be (ADR-0056). Here for the
 	// same reason as the cycles above: it needs the plan and both def sets. Only a `check`
@@ -360,7 +366,7 @@ func loadPlanPackage(planPath, invPath string, baseVars, setVars map[string]stri
 	// left to the evaluator on the target, which still runs every check.
 	for _, b := range plan {
 		if err := lang.CheckArguments(b.Steps, cycleResolver(defs)); err != nil {
-			return nil, nil, fmt.Errorf("%s: %v", planPath, err)
+			return nil, nil, nil, fmt.Errorf("%s: %v", planPath, err)
 		}
 	}
 	// `file.template` steps are NOT resolved here: they render per host, in the
@@ -371,7 +377,13 @@ func loadPlanPackage(planPath, invPath string, baseVars, setVars map[string]stri
 	// No control-side expansion left: `file.template` stopped being one in #334, and
 	// `dir.copy` is a def over `~dir.sync` since #335. A plan now reaches the agent as
 	// written.
-	return plan, defSource(defs), nil
+	// Held to the defs again once each host has supplied its values: a `${inventory.…}`
+	// argument does not exist until then, so the pass above deliberately left it alone
+	// (#582, ADR-0056 §4). Same def table, same refusals, later.
+	validate := func(steps []proto.Step) error {
+		return lang.CheckResolvedArguments(steps, cycleResolver(defs))
+	}
+	return plan, defSource(defs), validate, nil
 }
 
 // readSubPackage reads one sub-package directory into libs, keyed `<name>/<file>`.
@@ -808,7 +820,7 @@ func statusCmd(args []string) {
 		os.Exit(1)
 	}
 	base := map[string]string{}
-	plan, defsSrc, err := loadPlanPackage(fs.Arg(0), *invPath, base, secrets)
+	plan, defsSrc, validate, err := loadPlanPackage(fs.Arg(0), *invPath, base, secrets)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -842,7 +854,7 @@ func statusCmd(args []string) {
 	}
 	// `status` refuses an unknown target like `run` does. The render stays pure — the
 	// exit code is the caller's call, so a report string keeps one job (#451).
-	reports := orchestrator.Run(plan, inv, self, "status", dial, base, secrets, defsSrc, orchestrator.Options{Parallel: *parallel, Limit: limits})
+	reports := orchestrator.Run(plan, inv, self, "status", dial, base, secrets, defsSrc, orchestrator.Options{Parallel: *parallel, Limit: limits, ValidateArgs: validate})
 	if *asJSON {
 		out, _ := reportJSON(reports)
 		fmt.Print(redactJSON(out, secretValues))

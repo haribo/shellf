@@ -64,6 +64,16 @@ At parse time for a plan: variables are already interpolated there
 (`ParsePlanWithVars`), so the argument's final value is available before a single host is
 contacted. At evaluation for a call from one def to another, where values carry their type.
 
+A third place, for the same reason and named later (#582): an argument written
+`${inventory.<field>}` is supplied by the host and does not exist while the plan is read —
+what sits there is the text standing in for it ([ADR-0052](0052-per-host-interpolation.md)).
+It is held to its type **after the per-host expansion**, on the control host, before that
+host's request is sent. Checking the text instead refused plans that were correct, which
+made a `bool` parameter unable to take a value from the inventory at all.
+
+This clarifies where "where the value is still known" falls for a per-host value; it
+changes nothing about the decision, which is that the declared type is checked, by value.
+
 The refusal names the parameter and the value it received. An operator reading *`running`
 expects a boolean, got "yes"* knows the fix; an operator reading a stopped service does
 not.

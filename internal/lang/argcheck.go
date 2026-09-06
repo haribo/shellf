@@ -95,6 +95,62 @@ func pureCheck(def Def) (Phase, bool) {
 	return Phase{}, false
 }
 
+// CheckResolvedArguments is CheckArguments once every per-host value exists: the caller
+// runs it after `proto.ResolveRefs`, on the control host, before the request goes out.
+//
+// The two passes differ in what they may look at, not in what they decide (#582). While
+// the plan is read, an argument written `${inventory.flag}` is the *text* standing in for
+// a value the host has not supplied yet; judging it there refused plans that were correct,
+// which is what made a `bool` parameter unable to take a value from the inventory. Here
+// the value is the value, so the declared type is held to it as well — the rule ADR-0045
+// §3 is named after: checked where the value is known.
+func CheckResolvedArguments(steps []proto.Step, resolve DefResolver) error {
+	for _, s := range steps {
+		if err := checkResolvedStep(s, resolve); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func checkResolvedStep(s proto.Step, resolve DefResolver) error {
+	for _, group := range [][]proto.Step{s.Block, s.Parallel} {
+		if err := CheckResolvedArguments(group, resolve); err != nil {
+			return err
+		}
+	}
+	if s.If != nil {
+		for _, group := range [][]proto.Step{s.If.Then, s.If.Else} {
+			if err := CheckResolvedArguments(group, resolve); err != nil {
+				return err
+			}
+		}
+		if s.If.Cond != nil {
+			if err := checkResolvedStep(*s.If.Cond, resolve); err != nil {
+				return err
+			}
+		}
+	}
+	if s.Instruction == "" || s.Instruction == "shell" || resolve == nil {
+		return nil
+	}
+	def, ok := resolve(s.Instruction)
+	if !ok {
+		return nil
+	}
+	// The declared type, on the value that finally exists. A parameter the step does not
+	// carry was defaulted by the def and is not the caller's to answer for.
+	for _, param := range def.Params {
+		v, given := s.Args[param.Name]
+		if !given || param.Type != "bool" || isBoolValue(v) {
+			continue
+		}
+		return fmt.Errorf("%s%s: %s expects a boolean, got %q — write true or false",
+			position(s), s.Instruction, param.Name, v)
+	}
+	return checkStepArguments(s, resolve)
+}
+
 // CheckArguments evaluates every pure `check` it can decide, against the arguments the
 // plan wrote, and returns the first refusal. `resolve` supplies the defs — user defs and
 // the stdlib both, which is why this is driven from the caller the way CheckCycles is.
@@ -150,11 +206,7 @@ func checkStepArguments(s proto.Step, resolve DefResolver) error {
 	if !decided || res.Category != engine.ERR {
 		return nil
 	}
-	where := s.Instruction
-	if s.Line > 0 {
-		where = fmt.Sprintf("%d:%d: %s", s.Line, s.Col, s.Instruction)
-	}
-	return fmt.Errorf("%s: %s", where, res.String())
+	return fmt.Errorf("%s%s: %s", position(s), s.Instruction, res.String())
 }
 
 // newPureEvaluator builds the smallest evaluator a pure phase needs: the def's arguments,
@@ -200,4 +252,13 @@ func evalPureCheck(def Def, ph Phase, args, with map[string]string, control []st
 		return engine.Result{}, false
 	}
 	return ev.toResult(*o), true
+}
+
+// position renders where the instruction was written, empty when the step carries no
+// line — a step built by a test, or one this parser did not produce.
+func position(s proto.Step) string {
+	if s.Line <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d:%d: ", s.Line, s.Col)
 }

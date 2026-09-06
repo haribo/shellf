@@ -182,7 +182,7 @@ func TestLoadPlanPackage(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "inventories"), "inventory.shellf", `host web = { address: "1.1.1.1", user: "u" }`)
 	writeFile(t, filepath.Join(dir, "defs"), "notes.txt", "not a shellf file")
 
-	plan, defsSrc, err := loadPlanPackage(
+	plan, defsSrc, _, err := loadPlanPackage(
 		filepath.Join(dir, "plans", "plan.shellf"), filepath.Join(dir, "inventories", "inventory.shellf"),
 		map[string]string{}, map[string]string{})
 	if err != nil {
@@ -244,7 +244,7 @@ func TestReadImports(t *testing.T) {
 	}
 	// The full path resolves through loadPlanPackage too.
 	writeFile(t, filepath.Join(dir, "inventories"), "inv.shellf", `host web = { address: "x", user: "u" }`)
-	_, defs, err := loadPlanPackage(filepath.Join(plans, "plan.shellf"),
+	_, defs, _, err := loadPlanPackage(filepath.Join(plans, "plan.shellf"),
 		filepath.Join(dir, "inventories", "inv.shellf"), map[string]string{}, map[string]string{})
 	if err != nil {
 		t.Fatal(err)
@@ -267,7 +267,7 @@ func TestLoadPlanPackage_KeepsTemplateStepsForPerHostRender(t *testing.T) {
 		}
 	}`)
 	writeFile(t, filepath.Join(dir, "inventories"), "inv.shellf", `host t = { address: "x", user: "u" }`)
-	plan, _, err := loadPlanPackage(
+	plan, _, _, err := loadPlanPackage(
 		filepath.Join(dir, "plans", "plan.shellf"), filepath.Join(dir, "inventories", "inv.shellf"),
 		map[string]string{}, map[string]string{})
 	if err != nil {
@@ -310,7 +310,7 @@ func TestReadImports_RemoteModule(t *testing.T) {
 		"import r \"file://"+repo+"@v1.0.0\"\non web { r.deploy(\"9090\") }")
 	writeFile(t, filepath.Join(planDir, "inventories"), "inv.shellf", `host web = { address: "x", user: "u" }`)
 
-	plan, defs, err := loadPlanPackage(
+	plan, defs, _, err := loadPlanPackage(
 		filepath.Join(planDir, "plans", "plan.shellf"),
 		filepath.Join(planDir, "inventories", "inv.shellf"),
 		map[string]string{}, map[string]string{})
@@ -567,7 +567,7 @@ func TestLoadPlanPackage_RefusesACycleBeforeAnyTransport(t *testing.T) {
 	writeDef(t, dir, "c", "b.shellf", `def b(p: str) { apply { c.a(p) return ok.done } }`)
 	writeFile(t, filepath.Join(dir, "inventories"), "inventory.shellf", `host web = { address: "1.1.1.1", user: "u" }`)
 
-	_, _, err := loadPlanPackage(
+	_, _, _, err := loadPlanPackage(
 		filepath.Join(dir, "plans", "plan.shellf"), filepath.Join(dir, "inventories", "inventory.shellf"),
 		map[string]string{}, map[string]string{})
 	if err == nil {
@@ -592,7 +592,7 @@ func TestLoadPlanPackage_RefusesACycleThroughAnOverride(t *testing.T) {
 	writeDef(t, dir, "file", "write.shellf",
 		`override def write(path: str, content: str) { apply { d.deliver(path, content) return ok.done } }`)
 
-	_, _, err := loadPlanPackage(
+	_, _, _, err := loadPlanPackage(
 		filepath.Join(dir, "plans", "plan.shellf"), filepath.Join(dir, "inventories", "inventory.shellf"),
 		map[string]string{}, map[string]string{})
 	if err == nil {
@@ -643,7 +643,7 @@ func TestControlChannel_NilWhenThePlanAsksNothing(t *testing.T) {
 	planPath := filepath.Join(dir, "plans", "plan.shellf")
 	invPath := filepath.Join(dir, "inventories", "inv.shellf")
 
-	plan, _, err := loadPlanPackage(planPath, invPath, map[string]string{}, map[string]string{})
+	plan, _, _, err := loadPlanPackage(planPath, invPath, map[string]string{}, map[string]string{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -667,7 +667,7 @@ func TestControlChannel_ServesADeclaredPath(t *testing.T) {
 	planPath := filepath.Join(dir, "plans", "plan.shellf")
 	invPath := filepath.Join(dir, "inventories", "inv.shellf")
 
-	plan, _, err := loadPlanPackage(planPath, invPath, map[string]string{}, map[string]string{})
+	plan, _, _, err := loadPlanPackage(planPath, invPath, map[string]string{}, map[string]string{})
 	if err != nil {
 		t.Fatal(err)
 	}
