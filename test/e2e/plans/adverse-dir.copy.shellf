@@ -1,0 +1,18 @@
+# `dir.copy` where the hostile argument is inside the tree, not only around it (#527, #535).
+#
+# A transfer walks names it did not choose. A file called `a b'c.txt`, one starting with a
+# dash, and a nested directory with a space are all ordinary on a real machine, and each is
+# a place a path can be split on its way through the sync.
+on target {
+    dir.ensure("/tmp/adv-dir-copy")
+
+    dir.copy(%"hostile-tree", "/tmp/adv-dir-copy/dst dir")
+    shell {
+        [ -d "/tmp/adv-dir-copy/dst dir" ] || exit 1
+        grep -qxF 'plain' "/tmp/adv-dir-copy/dst dir/plain.txt" || exit 1
+        grep -qxF 'quoted' "/tmp/adv-dir-copy/dst dir/a b'c.txt" || exit 1
+        grep -qxF 'nested' "/tmp/adv-dir-copy/dst dir/sub dir/deep & file.txt" || exit 1
+        # Three files, no more: a split name would have produced extras.
+        [ "$(find "/tmp/adv-dir-copy/dst dir" -type f | wc -l)" = "3" ] || exit 1
+    }
+}

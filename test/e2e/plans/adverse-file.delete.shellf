@@ -1,0 +1,31 @@
+# `file.delete` with a hostile *argument* (#527, #535).
+#
+# The stakes here are the opposite of the other cases: a path this def mishandles is not a
+# file that fails to go away, it is a file that goes away and should not have. `rm -rf` on
+# a split argument deletes both halves.
+on target {
+    dir.ensure("/tmp/adv-file-delete")
+    unsafe shell {
+        printf 'x\n' > "/tmp/adv-file-delete/a b'c.txt"
+        printf 'keep\n' > /tmp/adv-file-delete/a
+        printf 'keep\n' > /tmp/adv-file-delete/keep.txt
+    }
+
+    file.delete("/tmp/adv-file-delete/a b'c.txt")
+    shell {
+        [ -e "/tmp/adv-file-delete/a b'c.txt" ] && exit 1
+        # The neighbours a split argument would have taken with it.
+        [ -f /tmp/adv-file-delete/a ] || exit 1
+        [ -f /tmp/adv-file-delete/keep.txt ] || exit 1
+        exit 0
+    }
+
+    # A path that looks like an option to `rm`.
+    unsafe shell { printf 'x\n' > /tmp/adv-file-delete/-rf }
+    file.delete("/tmp/adv-file-delete/-rf")
+    shell {
+        [ -e "/tmp/adv-file-delete/-rf" ] && exit 1
+        [ -f /tmp/adv-file-delete/keep.txt ] || exit 1
+        exit 0
+    }
+}

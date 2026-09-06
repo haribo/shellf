@@ -1,0 +1,21 @@
+# `file.template` where both the destination path and the rendered value are hostile
+# (#527, #535).
+#
+# The value is the half that matters here. It is substituted on the control host and then
+# travels into a `file.write`, so a `&` in it passes through two layers that have each been
+# a place where a caller's value was parsed as syntax (#487).
+hostile_value = "x & y | z 'q'"
+
+on target {
+    dir.ensure("/tmp/adv-file-template")
+
+    file.template(%"hostile.tmpl", "/tmp/adv-file-template/out d'ir & file.conf")
+    shell {
+        f="/tmp/adv-file-template/out d'ir & file.conf"
+        [ -f "$f" ] || exit 1
+        # Written, not interpreted — on both lines.
+        grep -qxF "name=x & y | z 'q'" "$f" || exit 1
+        grep -qxF 'literal=a & b | c' "$f" || exit 1
+        [ "$(find /tmp/adv-file-template -maxdepth 1 -type f | wc -l)" = "1" ] || exit 1
+    }
+}
