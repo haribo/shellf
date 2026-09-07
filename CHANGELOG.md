@@ -8,6 +8,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `test/bench/`: a shellf vs Ansible benchmark anyone can re-run (`SHELLF_BENCH=1 bash test/bench/run.sh`). One generator emits both the plan and the playbook, so neither side drifts; the two targets are diffed file by file and a mismatch fails the run before any timing is reported. No number is published — the README says what the measurement cannot claim (#464).
+
 - Seven adverse cases pass a hostile *argument* rather than a hostile starting state: `dir.ensure`, `dir.owner`, `dir.copy`, `file.copy`, `file.delete`, `file.template` and `archive.extract-member` are now called with paths holding a space, a quote and a `&`. Verified to fail when the quoting is removed, not merely to pass (#535).
 
 - A def's argument guards answer while the plan is read, when the `check` holding them reaches nothing — no shell, no host. `file.replace("/etc/app.env", "a=b", "v")` against two unreachable hosts went from 10 020 ms and no mention of the argument, to 5 ms naming the instruction and its line. Every check still runs on the target too (#492, ADR-0056).
