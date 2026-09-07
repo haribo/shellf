@@ -1,0 +1,26 @@
+# `file.replace` over a file that already holds the key **twice** (#594, #597).
+#
+# The apply guarantees one line per key: it rewrites the first, drops any further one, and
+# appends when there was none. The observe only asked whether *a* line `key=value` exists,
+# so a file carrying the wanted line plus a stale duplicate was reported converged — and a
+# reader of that .env generally takes the last one, which is the stale one.
+#
+# The state is neither a hostile argument nor a broken machine: it is right-shaped and
+# wrong, which is the shape `coverage.shellf` never produces.
+on target {
+    dir.ensure("/tmp/adv-replace-dup")
+    unsafe shell {
+        printf 'PORT=8080\nOTHER=x\nPORT=3000\n' > /tmp/adv-replace-dup/app.env
+    }
+
+    file.replace("/tmp/adv-replace-dup/app.env", "PORT", "8080")
+
+    shell {
+        f=/tmp/adv-replace-dup/app.env
+        # One line for the key, and it is the one that was asked for.
+        [ "$(grep -c '^PORT=' "$f")" = "1" ] || exit 1
+        grep -qx 'PORT=8080' "$f" || exit 1
+        # The unrelated line is untouched.
+        grep -qx 'OTHER=x' "$f" || exit 1
+    }
+}

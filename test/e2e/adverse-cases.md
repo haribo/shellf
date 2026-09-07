@@ -45,16 +45,23 @@ which is how the `&` corruption of #487 shipped.
   denied`. A shared parent is a dependency between cases, which is the thing one file per
   case exists to remove.
 
-## Two hostile things, not one
+## Three hostile things, not one
 
-A case makes either the **starting state** or the **argument** wrong — and they find
-different defects.
+A case makes the **starting state**, the **argument**, or the **shape of the state** wrong —
+and they find different defects.
 
-| | wrong starting state | wrong argument |
-|---|---|---|
-| asks | "the machine is not what you assume" | "the caller passed something you did not expect" |
-| finds | a def that misreads state, or half-converges | a path or a value parsed as syntax |
-| the defect behind it | #486, #480 | #487 — `URL=https://a&b` written as `URL=https://aURL=oldb` |
+| | wrong starting state | wrong argument | right-shaped but wrong |
+|---|---|---|---|
+| asks | "the machine is not what you assume" | "the caller passed something you did not expect" | "the state looks converged and is not" |
+| finds | a def that misreads state, or half-converges | a path or a value parsed as syntax | an `observe` asking less than its `apply` guarantees |
+| the defect behind it | #486, #480 | #487 — `URL=https://a&b` written as `URL=https://aURL=oldb` | #594 — four defs reporting `already` over a machine they would have changed |
+
+The third is the one `coverage.shellf` can never produce, because it only ever builds state
+from an empty target. Its cases are built by hand: a `.env` holding the wanted line **and**
+a stale duplicate, an archive's destination emptied with its sentinel left behind, a
+database that exists under the wrong owner, two logins where one is a regex match of the
+other. Each was verified to fail before the fix and pass after — a case of this kind that
+was never seen red proves nothing at all, since a weak observe passes it by construction.
 
 An argument case passes a path holding a space, a single quote and a `&`, or a name at a
 boundary (empty, very long, starting with a dash). It asserts the machine like any other

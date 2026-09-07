@@ -67,7 +67,19 @@ def replace(path: str, key: str, value: str) {
         if ~text.matches(key, "\n") { return err.keyMustNotContainNewline }
         if ~text.matches(value, "\n") { return err.valueMustNotContainNewline }
     }
-    observe { return state(set: shell { grep -qxF -- "$key=$value" "$path" 2>/dev/null }.exit == 0) }
+    # Observed: **exactly one** line carries the key, and it holds the value — which is what
+    # the apply below guarantees. `grep -qxF "$key=$value"` asked only whether *a* matching
+    # line exists, so a file holding `PORT=8080` and a stale `PORT=3000` was reported
+    # converged, while a reader of that .env generally takes the last one (#594, #597).
+    #
+    # Read through ENVIRON like the apply, so nothing the caller passes is a pattern (#487).
+    observe {
+        return state(set: shell {
+            awk 'BEGIN { p = ENVIRON["key"] "="; want = p ENVIRON["value"]; n = length(p) }
+                 substr($0, 1, n) == p { seen++; if ($0 != want) wrong = 1 }
+                 END { exit (seen == 1 && !wrong) ? 0 : 1 }' "$path" 2>/dev/null
+        }.exit == 0)
+    }
     apply {
         r = shell {
             # Staged like file.write, and for the same reason: the destination is never
