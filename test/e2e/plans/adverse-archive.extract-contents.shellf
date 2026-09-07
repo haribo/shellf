@@ -1,0 +1,33 @@
+# `archive.extract` over a destination whose contents were removed (#594, #596).
+#
+# The observe reads a sentinel the def wrote itself — "this archive was extracted here
+# once" — which is not the claim "its contents are here". Delete what was delivered, leave
+# the sentinel, and the def reported `already` over an empty destination.
+#
+# This is #486 again: a fact about history standing in for a fact about the machine.
+on target {
+    as root {
+        unsafe shell {
+            rm -rf /tmp/adv-extract-contents
+            mkdir -p /tmp/adv-extract-contents/src/inner
+            printf 'one\n' > /tmp/adv-extract-contents/src/inner/one.txt
+            printf 'two\n' > /tmp/adv-extract-contents/src/two.txt
+            tar czf /tmp/adv-extract-contents/a.tar.gz -C /tmp/adv-extract-contents/src .
+        }
+
+        archive.extract("/tmp/adv-extract-contents/a.tar.gz", "/tmp/adv-extract-contents/dst")
+
+        # Somebody removes what the archive delivered; the sentinel survives.
+        unsafe shell {
+            rm -f /tmp/adv-extract-contents/dst/two.txt
+            rm -rf /tmp/adv-extract-contents/dst/inner
+        }
+
+        archive.extract("/tmp/adv-extract-contents/a.tar.gz", "/tmp/adv-extract-contents/dst")
+
+        shell {
+            [ -f /tmp/adv-extract-contents/dst/two.txt ] || exit 1
+            [ -f /tmp/adv-extract-contents/dst/inner/one.txt ] || exit 1
+        }
+    }
+}

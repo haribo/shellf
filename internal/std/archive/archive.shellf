@@ -3,10 +3,27 @@ def extract(src: str, dst: str) {
     # time, equals the current archive's sha256. So a changed archive at `src`
     # re-extracts, and an unchanged one is skipped (#259). Both hashes are computed
     # target-side, since `src` is a target path.
+    # The sentinel alone was the whole observe, and it answers the wrong question: it says
+    # "this archive was extracted here once", not "its contents are here". Deleting what the
+    # archive delivered while leaving the marker reported `already` over an empty
+    # destination — #486 in another def (#594, #596).
+    #
+    # So both are asked: the sentinel first, because it is one `cat` and it is what makes a
+    # *changed* archive re-extract, then the members. Listing the archive costs a pass over
+    # it on every run; that is the price of an observe that describes the machine rather
+    # than its own bookkeeping. Directories are skipped — `tar` recreates them implicitly,
+    # and an archive need not carry entries for them.
     observe {
         return state(extracted: shell {
-            test -f "$dst/.shellf-archive-sha256" &&
-            [ "$(cat "$dst/.shellf-archive-sha256" 2>/dev/null)" = "$(sha256sum "$src" | cut -d' ' -f1)" ]
+            test -f "$dst/.shellf-archive-sha256" || exit 1
+            [ "$(cat "$dst/.shellf-archive-sha256" 2>/dev/null)" = "$(sha256sum "$src" | cut -d' ' -f1)" ] || exit 1
+            # No `exit` inside the loop: it runs in a subshell of the pipeline, where an
+            # exit would be lost. The absence is reported as output instead.
+            missing=$(tar tzf "$src" | while IFS= read -r m; do
+                case "$m" in */) continue ;; esac
+                [ -e "$dst/$m" ] || printf 'x'
+            done)
+            [ -z "$missing" ]
         }.exit == 0)
     }
     apply {

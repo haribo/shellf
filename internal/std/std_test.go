@@ -192,7 +192,10 @@ func TestTruthyResources(t *testing.T) {
 		{"dir.ensure", "mkdir", "created", map[string]string{"path": "/opt/x"}},
 		{"file.line", ">>", "added", map[string]string{"path": "/etc/x", "line": "z"}},
 		{"file.delete", "rm -rf", "deleted", map[string]string{"path": "/tmp/gone"}},
-		{"archive.extract", "tar", "extracted", map[string]string{"src": "/a.tgz", "dst": "/opt"}},
+		// `tar xzf` and not `tar`: the observe now lists the archive's members with
+		// `tar tzf` to check they are actually under `dst` (#594), so the bare word no
+		// longer tells the two phases apart.
+		{"archive.extract", "tar xzf", "extracted", map[string]string{"src": "/a.tgz", "dst": "/opt"}},
 		{"user.group", "usermod", "added", map[string]string{"user": "x", "group": "docker"}},
 		{"file.download", "curl", "downloaded", map[string]string{"url": "http://x", "dst": "/d", "sha256": "abc"}},
 	}
