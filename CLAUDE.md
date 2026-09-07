@@ -35,12 +35,13 @@ Rules must be concise. One rule per line when possible.
 
 ## Implementing an issue
 
-- **No issue is trusted** — not one written a year ago, not one written an hour ago, not one you wrote yourself. Age is not the criterion: #387 describes code written the same day and its central claim still had to be read in the file
-- Verify every claim **in the files** before acting, and cite `file:line` for each. "I read the code" is not verification; a citation the reader can re-open is
-- Say explicitly what you could **not** confirm, and record a claim that turns out false **in the issue itself** — a wrong claim dropped in silence is raised again six months later
-- Also check the issue is still current: close it with evidence if already delivered, post an audit comment if the architecture drifted under it
-- **Then, before touching anything**, explain the problem **simply and concisely** — an example when an example is what makes it clear. The user validates *that explanation*, not the issue. Build after
-- Exempt: trivial changes (typo, formatting, dep bump), the same boundary that exempts them from needing an issue. Friction that buys nothing is how a rule gets routed around
+- No issue is trusted — not one written a year ago, not one written an hour ago, not one you wrote yourself. Age is not the criterion: an issue can describe code written the same day and still have a false central claim
+- Verify every claim against the current code and docs, and cite `file:line` for each one confirmed — "I read the code" is not verification, a citation the reader can re-open is. Say explicitly what you could not confirm
+- Record the outcome in the issue itself, never only in the conversation: a claim that proved false becomes a correction comment, an issue already delivered is closed with the evidence, an issue whose premise drifted gets an audit comment and a re-scope. The issue is what a later session reads; the conversation is not
+- Then, before touching anything: explain what the issue actually consists of — simply and concisely, with an example when an example is what makes it clear — including what the verification changed about it
+- Wait for explicit validation of that explanation. No implementation without it. What is validated is the problem as explained, and the approach too when more than one credible approach exists — agreeing on the problem is not agreeing on the fix
+- Implement the validated scope and nothing else: an unrelated bug, or a good idea found on the way, becomes its own issue and never an extra commit on this branch
+- Exempt: trivial changes (typo, formatting, broken link, dependency bump) — the same boundary that exempts them from needing an issue. Friction that buys nothing is how a rule gets routed around
 
 ## Discipline (user-requested)
 

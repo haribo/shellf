@@ -22,6 +22,10 @@ hash = "9a65081d690c"
 adopted = "2026-08-04"
 hash = "6d93ba90db46"
 
+[rules.issue-handling]
+adopted = "2026-09-07"
+hash = "bd91539c493b"
+
 [rules.measurable-defect]
 adopted = "2026-08-04"
 hash = "268cf19aeb9d"
@@ -33,10 +37,6 @@ hash = "78dc260ec367"
 [rules.severe-opinion]
 adopted = "2026-08-04"
 hash = "da1ad3af8e04"
-
-[rules.stale-issue-audit]
-adopted = "2026-08-04"
-hash = "fca725ad312a"
 
 [rules.testing-guard]
 adopted = "2026-08-04"
