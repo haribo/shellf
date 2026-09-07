@@ -125,8 +125,22 @@ def download(url: str, dst: str, sha256: str) {
     }
     apply {
         r = shell {
-            curl -fsSLo "$dst" "$url"
-            echo "$sha256  $dst" | sha256sum -c --status
+            # Staged, then renamed — the destination is never the thing being downloaded.
+            # `curl -o "$dst"` wrote straight to it and verified afterwards, so a hash that
+            # did not match left unverified content at the path a plan said would hold a
+            # verified one, with the previous file already gone (#599). Measured: a wrong
+            # hash reported `err.runtime` over a destination that already held the new
+            # bytes. The sha256 is mandatory here precisely because the source is not
+            # trusted; verifying after the write spends that guarantee.
+            staged="$dst.shellf.$$"
+            trap 'rm -f "$staged"' EXIT
+            curl -fsSLo "$staged" "$url"
+            echo "$sha256  $staged" | sha256sum -c --status
+            # `curl -o` onto an existing file kept that file's mode; a rename does not, so
+            # a second download of a binary would have dropped the `+x` a plan set with
+            # `file.mode`. Carried over explicitly rather than lost silently.
+            if [ -f "$dst" ]; then chmod "$(stat -c '%a' "$dst")" "$staged"; fi
+            mv -f "$staged" "$dst"
         }
         if !r { return err.runtime(r) }
         return ok.downloaded

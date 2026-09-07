@@ -1400,4 +1400,47 @@ printf '%s' "$out" | grep -q 'err.validation' \
 docker exec "$cname" test -e /etc/systemd/system/adv-malformed.service \
   && fail "a refused unit must leave nothing in /etc/systemd/system (#525)"
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out, booleans are booleans, dry-run diffs a change, commands are reported, purged packages reinstalled, defs survive a hostile state, dir.owner sees a missing path, ufw converges while down, a malformed unit is refused"
+say "28. a bad hash leaves the destination untouched (#599)"
+# `file.download` used to `curl -o` straight onto its destination and verify afterwards, so
+# a hash that did not match had already replaced the file — usually an executable, and the
+# sha256 is mandatory precisely because the source is not trusted. Asserted on the machine:
+# the verdict was always correct, it was the state behind it that was not.
+mkdir -p "$work/dl/plans" "$work/dl/inventories" "$work/dl/assets" "$work/dl/defs"
+cp "$work/inventory.shellf" "$work/dl/inventories/inv.shellf"
+# As `deploy`, not root: the plan below runs as the SSH user, and a root-owned destination
+# would fail the rename for a reason that has nothing to do with what is under test. Learned
+# from #591, where exactly this passed against an all-root container and failed here.
+docker exec -u deploy "$cname" sh -c '
+  printf "the original binary\n" > /tmp/dl-dst.bin
+  chmod 700 /tmp/dl-dst.bin
+  printf "the new content\n"     > /tmp/dl-src.bin'
+# sha256 of "the new content\n", and a hash that matches nothing.
+good="7f421c967a0152d7badb1dbe458e7b48ab1b3d62b76c36f4c7b196e5782048ec"
+bad="0000000000000000000000000000000000000000000000000000000000000000"
+cat > "$work/dl/plans/plan.shellf" <<EOF
+on target {
+    d = file.download("file:///tmp/dl-src.bin", "/tmp/dl-dst.bin", "$bad")?
+    if d == err.runtime {
+        shell {
+            grep -qx 'the original binary' /tmp/dl-dst.bin || exit 1
+            [ "\$(stat -c '%a' /tmp/dl-dst.bin)" = "700" ] || exit 1
+            ls /tmp/dl-dst.bin.shellf.* >/dev/null 2>&1 && exit 1
+            exit 0
+        }
+    }
+    file.download("file:///tmp/dl-src.bin", "/tmp/dl-dst.bin", "$good")
+    shell {
+        grep -qx 'the new content' /tmp/dl-dst.bin || exit 1
+        [ "\$(stat -c '%a' /tmp/dl-dst.bin)" = "700" ] || exit 1
+    }
+}
+EOF
+out="$("$work/shellf" run --inventory "$work/dl/inventories/inv.shellf" --insecure \
+  "$work/dl/plans/plan.shellf" 2>&1)" || fail "the download step failed:\n$out"
+printf '%s\n' "$out"
+docker exec -u deploy "$cname" grep -qx 'the new content' /tmp/dl-dst.bin \
+  || fail "a verified download must land"
+docker exec -u deploy "$cname" sh -c '[ "$(stat -c "%a" /tmp/dl-dst.bin)" = "700" ]' \
+  || fail "a download must keep the destination's mode — a staged rename drops it (#599)"
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out, booleans are booleans, dry-run diffs a change, commands are reported, purged packages reinstalled, defs survive a hostile state, dir.owner sees a missing path, ufw converges while down, a malformed unit is refused, a bad hash leaves the destination alone"
