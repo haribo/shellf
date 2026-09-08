@@ -8,6 +8,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `sshd.config` checks the name it builds a path from, as `sudo.write` and `systemd.unit` already did. A name carrying a `/` wrote into a subdirectory sshd never reads — a drop-in believed installed that the server never sees. The def called itself the same shape as `sudo.write`, having copied its content check and not its name check (#617).
+
 - `==` refuses a value it cannot compare instead of crashing. Two shell results, or two outcomes, panicked the evaluator. The rule is now a whitelist — strings, ints and booleans compare, the rest is refused by name and says what to write instead. `if r == ok`, silently false before, is refused too (#616).
 
 - A dead `SSH_AUTH_SOCK` no longer discards a working inventory key. A socket outliving its agent failed the run over an agent the host never needed, so the same plan worked in one terminal and not in another. The agent is skipped and named in the trace; with no other method the error stands (#612).
