@@ -1,0 +1,31 @@
+# `archive.extract` over a destination whose member was **emptied in place** (#614).
+#
+# #594 widened the observe from "the sentinel is there" to "every member is there", which
+# is the difference between believing your own bookkeeping and looking at the machine. It
+# stopped at existence: a file truncated where it stands keeps its name, so the def still
+# reported `already` over content that is gone.
+#
+# The state is right-shaped and wrong — the third kind of adverse case (adverse-cases.md).
+on target {
+    as root {
+        unsafe shell {
+            rm -rf /tmp/adv-extract-emptied
+            mkdir -p /tmp/adv-extract-emptied/src/inner
+            printf 'one\n' > /tmp/adv-extract-emptied/src/inner/one.txt
+            printf 'two\n' > /tmp/adv-extract-emptied/src/two.txt
+            tar czf /tmp/adv-extract-emptied/a.tar.gz -C /tmp/adv-extract-emptied/src .
+        }
+
+        archive.extract("/tmp/adv-extract-emptied/a.tar.gz", "/tmp/adv-extract-emptied/dst")
+
+        # The file keeps its name and loses its content: the shape existence cannot see.
+        unsafe shell { : > /tmp/adv-extract-emptied/dst/two.txt }
+
+        archive.extract("/tmp/adv-extract-emptied/a.tar.gz", "/tmp/adv-extract-emptied/dst")
+
+        shell {
+            grep -qx 'two' /tmp/adv-extract-emptied/dst/two.txt || exit 1
+            grep -qx 'one' /tmp/adv-extract-emptied/dst/inner/one.txt || exit 1
+        }
+    }
+}
