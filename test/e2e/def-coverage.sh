@@ -21,6 +21,11 @@ exempt() {
     # Installs docker on the target. The harness image ships it already, so calling this
     # would either no-op against a state the plan did not create, or reinstall the daemon
     # the transfer tests depend on.
+    #
+    # Worth naming plainly, because the exemption hides it: this def runs a remote script as
+    # root, and it is the only one no e2e run ever executes — the least verified instruction
+    # in the stdlib is the one with the widest reach. The def itself records why it is
+    # allowed to pipe that script (#601); this line records what the exemption costs.
     docker.install) return 0 ;;
   esac
   return 1
