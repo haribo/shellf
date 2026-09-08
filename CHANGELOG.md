@@ -8,6 +8,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `archive.extract` checks what its members hold, not only that they are there: their digests are recorded at extract time and compared after, so a file emptied in place is no longer reported converged. It also costs less — an observe no longer opens the archive, where listing it decompressed the whole thing every run (#614).
+
 - `postgres.config` doubles a single quote in the value, which is how postgres escapes one. Written raw it closed the quote early and the cluster refused the file — at startup, so the failure surfaced on the next restart rather than on the run that caused it. Verified against a real cluster, including that the value still converges (#618).
 
 - `sshd.config` checks the name it builds a path from, as `sudo.write` and `systemd.unit` already did. A name carrying a `/` wrote into a subdirectory sshd never reads — a drop-in believed installed that the server never sees. The def called itself the same shape as `sudo.write`, having copied its content check and not its name check (#617).
