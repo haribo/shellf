@@ -170,7 +170,13 @@ def config(key: str, value: str) as root {
             #
             # `k` is safe in a pattern: `check` restricts it to [A-Za-z_][A-Za-z0-9_]*.
             # `\x27` is a single quote, and mawk — Debian's awk — prints it as one.
-            awk 'BEGIN { k = ENVIRON["key"]; v = ENVIRON["value"] }
+            # A single quote inside the value is doubled, which is how postgres escapes one
+            # inside a quoted value. Written raw it closed the quote early — `key = \x27it\x27s\x27`
+            # — and the server refused the file at **startup**, so the failure surfaced on the
+            # next restart rather than on the run that caused it (#618). Verified against a
+            # real cluster: the doubled form restarts cleanly, and `pg_conftool -s show`
+            # returns the value unescaped, so the observe above still compares equal.
+            awk 'BEGIN { k = ENVIRON["key"]; v = ENVIRON["value"]; gsub(/\x27/, "\x27\x27", v) }
                  $0 ~ "^" k "[ \t]*=" { if (!done) { printf "%s = \x27%s\x27\n", k, v; done = 1 } next }
                  { print }
                  END { if (!done) printf "%s = \x27%s\x27\n", k, v }' "$f" > "$staged"
