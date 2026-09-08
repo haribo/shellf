@@ -28,7 +28,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- The resident agent no longer marks a job done when it could not write the result. Both writes discarded their error and the marker went out unconditionally, so a full workdir — a tmpfs, where a one-byte marker fits and a kilobyte result does not — made the control host report `unexpected end of JSON input` for a job that ran. A short result carrying the cause is written instead (#600).
+- The resident agent marks a job done only after writing the result. The marker went out unconditionally, so a full tmpfs workdir — where one byte fits and a kilobyte does not — made the control host report `unexpected end of JSON input` for a job that ran. A short result naming the cause is written instead (#600).
 
 - Four defs reported `already` over a machine their own apply would have changed, each because the `observe` asked less than the `apply` guarantees: `file.replace` accepted a duplicated key, `archive.extract` trusted a sentinel over the contents, `postgres.database` ignored the owner, `htpasswd.entry` matched the login as a regex (#594).
 
