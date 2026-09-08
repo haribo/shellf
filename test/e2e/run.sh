@@ -1483,4 +1483,33 @@ docker exec -u deploy "$cname" grep -qx 'the member' /tmp/mem29/installed.bin \
 docker exec -u deploy "$cname" sh -c '[ "$(stat -c "%a" /tmp/mem29/installed.bin)" = "750" ]' \
   || fail "extract-member must keep the destination's mode — a staged rename drops it (#613)"
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out, booleans are booleans, dry-run diffs a change, commands are reported, purged packages reinstalled, defs survive a hostile state, dir.owner sees a missing path, ufw converges while down, a malformed unit is refused, a bad hash leaves the destination alone, a failed member extraction leaves it too"
+say "30. a quote in a postgres value does not break the server (#618)"
+# `postgres.config` writes `key = \x27value\x27`, so a value carrying a single quote closed
+# the quote early and the cluster refused the file — at **startup**, which means on the next
+# restart rather than on the run that caused it. The restart below is the assertion: a file
+# postgres will not read is a file that stops it coming back.
+mkdir -p "$work/pgq/plans" "$work/pgq/inventories" "$work/pgq/assets" "$work/pgq/defs"
+cp "$work/inventory.shellf" "$work/pgq/inventories/inv.shellf"
+cat > "$work/pgq/plans/plan.shellf" <<'EOF'
+on target {
+    as root {
+        postgres.config("application_name", "it's a test")
+        unsafe shell { pg_ctlcluster $(ls /etc/postgresql) main restart }
+        shell {
+            grep -q "^application_name = 'it''s a test'$" \
+              /etc/postgresql/$(ls /etc/postgresql)/main/postgresql.conf
+        }
+    }
+}
+EOF
+out="$("$work/shellf" run --inventory "$work/pgq/inventories/inv.shellf" --insecure \
+  "$work/pgq/plans/plan.shellf" 2>&1)" || fail "a quoted value must be written and accepted:\n$out"
+printf '%s\n' "$out"
+# And it converges: `pg_conftool -s show` returns the value unescaped, so the observe must
+# compare equal to what the caller passed rather than to the doubled form.
+out="$("$work/shellf" run --inventory "$work/pgq/inventories/inv.shellf" --insecure \
+  "$work/pgq/plans/plan.shellf" 2>&1)" || fail "the second run failed:\n$out"
+printf '%s' "$out" | grep -q 'postgres.config.*already' \
+  || { printf '%s\n' "$out"; fail "a quoted value must converge on a second run (#618)"; }
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out, booleans are booleans, dry-run diffs a change, commands are reported, purged packages reinstalled, defs survive a hostile state, dir.owner sees a missing path, ufw converges while down, a malformed unit is refused, a bad hash leaves the destination alone, a failed member extraction leaves it too, a quoted postgres value is accepted"

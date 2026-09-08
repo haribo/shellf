@@ -8,6 +8,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `postgres.config` doubles a single quote in the value, which is how postgres escapes one. Written raw it closed the quote early and the cluster refused the file — at startup, so the failure surfaced on the next restart rather than on the run that caused it. Verified against a real cluster, including that the value still converges (#618).
+
 - `sshd.config` checks the name it builds a path from, as `sudo.write` and `systemd.unit` already did. A name carrying a `/` wrote into a subdirectory sshd never reads — a drop-in believed installed that the server never sees. The def called itself the same shape as `sudo.write`, having copied its content check and not its name check (#617).
 
 - `==` refuses a value it cannot compare instead of crashing. Two shell results, or two outcomes, panicked the evaluator. The rule is now a whitelist — strings, ints and booleans compare, the rest is refused by name and says what to write instead. `if r == ok`, silently false before, is refused too (#616).
