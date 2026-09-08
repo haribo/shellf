@@ -71,3 +71,58 @@ func TestServeResident_ProcessesThenSelfKills(t *testing.T) {
 		t.Fatalf("binary should be erased on self-kill (zero trace)")
 	}
 }
+
+// #600. The result and the marker were written with their errors discarded, and the marker
+// unconditionally — so a workdir that cannot take the result still got `done-<id>`. The
+// control host then `cat`s a file that is not there, reads an empty answer for a job that
+// ran, and reports `unexpected end of JSON input`: an error naming everything except what
+// happened.
+//
+// Simulated by making the result path unwritable rather than by filling a disk: what the
+// code must not do is write the marker after a failed write, whatever caused the failure.
+func TestProcessJob_NoMarkerWhenTheResultCannotBeWritten(t *testing.T) {
+	wd := t.TempDir()
+	req := proto.Request{Mode: "apply", Steps: []proto.Step{{Instruction: "shell", Args: map[string]string{"cmd": "echo hi"}}}}
+	data, _ := json.Marshal(req)
+	reqPath := filepath.Join(wd, "req-job9.json.claiming")
+	if err := os.WriteFile(reqPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A directory where the result file must go: every write to that path fails, and it
+	// cannot be replaced by a rename either.
+	if err := os.MkdirAll(filepath.Join(wd, "out-job9.json"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	f := newFake()
+	f.set("echo hi", "", 0)
+	processJob(wd, reqPath, f, nil)
+
+	if _, err := os.Stat(filepath.Join(wd, "done-job9")); err == nil {
+		t.Fatal("done was written while the result was not — the control host would read an empty result for a job that ran")
+	}
+}
+
+// The fallback of the same fix: when the full result cannot be stored but a short one can,
+// the agent says so rather than staying silent until the run times out. Here the result is
+// writable, so the ordinary path applies and the marker follows the result.
+func TestProcessJob_MarkerFollowsTheResult(t *testing.T) {
+	wd := t.TempDir()
+	req := proto.Request{Mode: "apply", Steps: []proto.Step{{Instruction: "shell", Args: map[string]string{"cmd": "echo hi"}}}}
+	data, _ := json.Marshal(req)
+	reqPath := filepath.Join(wd, "req-job8.json.claiming")
+	if err := os.WriteFile(reqPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	f := newFake()
+	f.set("echo hi", "", 0)
+	processJob(wd, reqPath, f, nil)
+
+	if _, err := os.Stat(filepath.Join(wd, "out-job8.json")); err != nil {
+		t.Fatalf("the result must be written: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(wd, "done-job8")); err != nil {
+		t.Fatalf("the marker must follow it: %v", err)
+	}
+}

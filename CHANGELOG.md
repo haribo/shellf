@@ -28,6 +28,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The resident agent no longer marks a job done when it could not write the result. Both writes discarded their error and the marker went out unconditionally, so a full workdir — a tmpfs, where a one-byte marker fits and a kilobyte result does not — made the control host report `unexpected end of JSON input` for a job that ran. A short result carrying the cause is written instead (#600).
+
 - Four defs reported `already` over a machine their own apply would have changed, each because the `observe` asked less than the `apply` guarantees: `file.replace` accepted a duplicated key, `archive.extract` trusted a sentinel over the contents, `postgres.database` ignored the owner, `htpasswd.entry` matched the login as a regex (#594).
 
 - `file.download` verifies the hash before touching the destination. It downloaded straight onto it and checked afterwards, so a hash that did not match left unverified content at the path — usually an executable — with the previous file already gone. The mandatory sha256 exists because the source is not trusted; verifying after the write spent that guarantee (#599).

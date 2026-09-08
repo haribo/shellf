@@ -96,12 +96,43 @@ func processJob(workdir, reqPath string, ex engine.Executor, ch *Channel) {
 		resp = runRequest(req, ex, ch) // shared path: pre-flight + run (ADR-0012)
 	}
 
-	out, _ := json.Marshal(resp)
-	tmp := filepath.Join(workdir, "out-"+id+".json.tmp")
-	_ = os.WriteFile(tmp, out, 0o600)
-	_ = os.Rename(tmp, filepath.Join(workdir, "out-"+id+".json")) // atomic
+	// The marker follows the result, and only if the result is there. Both writes used to
+	// discard their error and `done-<id>` was written unconditionally, so a workdir that
+	// could not take the result still announced one: the control host `cat`s a file that is
+	// not there and reports `unexpected end of JSON input` for a job that ran (#600). The
+	// workdir is a tmpfs (ADR-0025), where a full filesystem takes a kilobyte-sized result
+	// and still accepts a one-byte marker — which is exactly how the two come apart.
+	if err := writeResult(workdir, id, resp); err != nil {
+		// The full result did not fit or could not be written. A short one carrying the
+		// reason usually still can, and it turns a timeout into an answer that names the
+		// cause. If even that fails, no marker is written: the job stays un-done and the
+		// run ends on its own deadline, which is slow but never wrong.
+		short := proto.Response{Error: "the agent could not write its result: " + err.Error()}
+		if err2 := writeResult(workdir, id, short); err2 != nil {
+			_ = os.Remove(reqPath)
+			return
+		}
+	}
 	_ = os.WriteFile(filepath.Join(workdir, "done-"+id), []byte("0"), 0o600)
 	_ = os.Remove(reqPath) // consumed
+}
+
+// writeResult stores a response as out-<id>.json, atomically: the control host reads that
+// file the moment the marker appears, so it must never see a half-written one.
+func writeResult(workdir, id string, resp proto.Response) error {
+	out, err := json.Marshal(resp)
+	if err != nil {
+		return err
+	}
+	tmp := filepath.Join(workdir, "out-"+id+".json.tmp")
+	if err := os.WriteFile(tmp, out, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, filepath.Join(workdir, "out-"+id+".json")); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // cleanup erases everything on self-kill: the workdir (residues) and the agent
