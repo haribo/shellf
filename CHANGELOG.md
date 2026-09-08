@@ -8,6 +8,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `==` refuses a value it cannot compare instead of crashing. Two shell results, or two outcomes, panicked the evaluator. The rule is now a whitelist — strings, ints and booleans compare, the rest is refused by name and says what to write instead. `if r == ok`, silently false before, is refused too (#616).
+
 - A dead `SSH_AUTH_SOCK` no longer discards a working inventory key. A socket outliving its agent failed the run over an agent the host never needed, so the same plan worked in one terminal and not in another. The agent is skipped and named in the trace; with no other method the error stands (#612).
 
 - `shellf status` exits non-zero when a host could not be reached. It asked a helper that only inspected block errors, so a sweep printing `unreachable` on every line still exited 0 — the worst answer for the command a monitor runs on a schedule. Drift stays a success: reporting what differs is what `status` is for (#615).
