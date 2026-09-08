@@ -8,6 +8,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A dead `SSH_AUTH_SOCK` no longer discards a working inventory key. A socket outliving its agent failed the run over an agent the host never needed, so the same plan worked in one terminal and not in another. The agent is skipped and named in the trace; with no other method the error stands (#612).
+
 - `shellf status` exits non-zero when a host could not be reached. It asked a helper that only inspected block errors, so a sweep printing `unreachable` on every line still exited 0 — the worst answer for the command a monitor runs on a schedule. Drift stays a success: reporting what differs is what `status` is for (#615).
 
 - `archive.extract-member` extracts to a staged file and renames it. It redirected `tar` straight at the destination, so a member missing from the archive emptied the file that was there — usually an executable, since that is what this def installs. The destination's mode is carried over, which a rename would otherwise drop (#613).

@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -316,5 +317,44 @@ func TestPosix_DeliversTheScriptVerbatim(t *testing.T) {
 	}
 	if string(out) != "one|two" {
 		t.Fatalf("the script must reach sh unchanged, got %q", out)
+	}
+}
+
+// #612. A dead `SSH_AUTH_SOCK` — a detached tmux, a closed session, an inherited variable —
+// discarded the inventory key that had already been loaded, and failed the run complaining
+// about an agent the host never needed. ADR-0026 ranks `key:` first and only requires an
+// error when *neither* method is available.
+//
+// The failure was environmental and invisible: same plan, same inventory, same machine,
+// working in one terminal and not in another.
+func TestAuthMethods_DeadAgentSocketKeepsTheKey(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", filepath.Join(t.TempDir(), "nope.sock"))
+	m, cleanup, err := (SSH{Key: writeKeyFile(t)}).authMethods()
+	if err != nil {
+		t.Fatalf("a dead agent must not discard a working key: %v", err)
+	}
+	defer cleanup()
+	if len(m) != 1 {
+		t.Fatalf("the key remains, the agent is dropped → 1 method, got %d", len(m))
+	}
+}
+
+// …and it says so, once, where a run with --trace can see it. Silence is what made the
+// defect above hard to attribute.
+func TestAuthMethods_DeadAgentSocketIsTraced(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "nope.sock")
+	t.Setenv("SSH_AUTH_SOCK", sock)
+	var traced []string
+	s := SSH{Key: writeKeyFile(t), Trace: func(format string, a ...any) {
+		traced = append(traced, fmt.Sprintf(format, a...))
+	}}
+	if _, cleanup, err := s.authMethods(); err != nil {
+		t.Fatal(err)
+	} else {
+		cleanup()
+	}
+	joined := strings.Join(traced, "\n")
+	if !strings.Contains(joined, sock) {
+		t.Fatalf("the skipped agent must be named in the trace, got: %q", joined)
 	}
 }
