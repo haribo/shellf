@@ -8,6 +8,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `shellf status` exits non-zero when a host could not be reached. It asked a helper that only inspected block errors, so a sweep printing `unreachable` on every line still exited 0 — the worst answer for the command a monitor runs on a schedule. Drift stays a success: reporting what differs is what `status` is for (#615).
+
 - `archive.extract-member` extracts to a staged file and renames it. It redirected `tar` straight at the destination, so a member missing from the archive emptied the file that was there — usually an executable, since that is what this def installs. The destination's mode is carried over, which a rename would otherwise drop (#613).
 
 ## [0.12.0] - 2026-09-08
