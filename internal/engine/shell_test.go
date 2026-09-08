@@ -14,20 +14,9 @@ func TestShell_NoGuard_Runs(t *testing.T) {
 	}
 }
 
-func TestShell_UnlessSatisfied_Skips(t *testing.T) {
-	f := &fcFake{responses: map[string]ShellResult{netInspect: {Exit: 0}}} // guard satisfied
-	got := Run(Shell{Cmd: netCreate, Unless: netInspect}, f, Apply).String()
-	if got != "ok.alreadySatisfied" {
-		t.Fatalf("got %s, want ok.alreadySatisfied", got)
-	}
-	if f.calls[netCreate] {
-		t.Fatal("command ran despite the guard being satisfied")
-	}
-}
-
 func TestShell_Check_WouldNotMutate(t *testing.T) {
-	f := &fcFake{responses: map[string]ShellResult{netInspect: {Exit: 1}}} // guard not satisfied
-	got := Run(Shell{Cmd: netCreate, Unless: netInspect}, f, Check).String()
+	f := &fcFake{}
+	got := Run(Shell{Cmd: netCreate}, f, Check).String()
 	if got != "would.ran" {
 		t.Fatalf("got %s, want would.ran", got)
 	}
@@ -51,13 +40,5 @@ func TestShell_Apply_InjectsEnv(t *testing.T) {
 	Shell{Cmd: "echo $name", Env: Env{"name": "alice"}}.Apply(f)
 	if f.gotEnv["name"] != "alice" {
 		t.Fatalf("Apply must pass Env to the executor (#106), got %+v", f.gotEnv)
-	}
-}
-
-func TestShell_Guard_InjectsEnv(t *testing.T) {
-	f := &envFake{result: ShellResult{Exit: 1}} // guard fails → command would run
-	Shell{Cmd: "act", Unless: "test -f $path", Env: Env{"path": "/tmp/x"}}.Guard(f)
-	if f.gotEnv["path"] != "/tmp/x" {
-		t.Fatalf("Guard must pass Env to the executor (#106), got %+v", f.gotEnv)
 	}
 }

@@ -6,12 +6,8 @@ import (
 	"shellf/internal/proto"
 )
 
-func capture(cmd, unless, bind string) proto.Step {
-	args := map[string]string{"cmd": cmd}
-	if unless != "" {
-		args["unless"] = unless
-	}
-	return proto.Step{Instruction: "shell", Args: args, Bind: bind}
+func capture(cmd, bind string) proto.Step {
+	return proto.Step{Instruction: "shell", Args: map[string]string{"cmd": cmd}, Bind: bind}
 }
 
 func ifRef(name, test string) proto.Step {
@@ -33,7 +29,7 @@ func TestAgentCapture_ChangedRunsThen(t *testing.T) {
 	f.set("doit", "", 0)
 	f.set("thencmd", "", 0)
 	serve(t, f, proto.Request{Mode: "apply", Steps: []proto.Step{
-		capture("doit", "", "x"),
+		capture("doit", "x"),
 		ifRef("x", "changed"),
 	}})
 	if !f.called("thencmd", "") {
@@ -41,19 +37,31 @@ func TestAgentCapture_ChangedRunsThen(t *testing.T) {
 	}
 }
 
+// A captured result that did not act must not fire `if x.changed { … }`. The producer is a
+// def that observes itself already converged: a raw `shell` always acts, so it cannot make
+// this state — it used to be made with an `unless` guard, which was removed in #619 because
+// no plan could write one.
+//
+// Both directions matter and both fail silently: losing the flag stops every
+// `if x.changed { restart }` downstream, inventing it fires them all for nothing.
 func TestAgentCapture_NotChangedSkipsThen(t *testing.T) {
-	// x = shell { doit } unless { guard-ok } → skipped → not changed → then skipped
 	f := newFake()
-	f.set("guardcmd", "", 0) // guard satisfied → shell skipped
-	serve(t, f, proto.Request{Mode: "apply", Steps: []proto.Step{
-		capture("doit", "guardcmd", "x"),
-		ifRef("x", "changed"),
-	}})
-	if f.called("doit", "") {
-		t.Fatalf("guard satisfied → shell must be skipped")
+	f.set(`test -f "$path"`, "", 0) // observe: already in the desired state
+	serve(t, f, proto.Request{
+		Mode: "apply",
+		Defs: map[string]string{
+			"converged": `def converged(path: str) { observe { return state(there: shell { test -f "$path" }.exit == 0) } apply { shell { touch "$path" } return ok.done } }`,
+		},
+		Steps: []proto.Step{
+			{Instruction: "converged", Args: map[string]string{"path": "/tmp/x"}, Bind: "x"},
+			ifRef("x", "changed"),
+		},
+	})
+	if f.called(`touch "$path"`, "") {
+		t.Fatal("the def was already converged → its apply must not run")
 	}
 	if f.called("thencmd", "") {
-		t.Fatalf("x.changed false → then must NOT run")
+		t.Fatal("x.changed false → then must NOT run")
 	}
 }
 
@@ -63,7 +71,7 @@ func TestAgentCapture_OkSugar(t *testing.T) {
 	f.set("doit", "", 0)
 	f.set("thencmd", "", 0)
 	serve(t, f, proto.Request{Mode: "apply", Steps: []proto.Step{
-		capture("doit", "", "x"),
+		capture("doit", "x"),
 		ifRef("x", "ok"),
 	}})
 	if !f.called("thencmd", "") {
@@ -72,7 +80,7 @@ func TestAgentCapture_OkSugar(t *testing.T) {
 }
 
 func caughtCap(cmd, bind string) proto.Step {
-	s := capture(cmd, "", bind)
+	s := capture(cmd, bind)
 	s.Caught = true
 	return s
 }
@@ -207,7 +215,7 @@ func TestAgentCapture_OutcomePattern(t *testing.T) {
 		return []proto.Step{{Instruction: "shell", Args: map[string]string{"cmd": cmd}}}
 	}
 	serve(t, f, proto.Request{Mode: "apply", Steps: []proto.Step{
-		capture("doit", "", "x"),
+		capture("doit", "x"),
 		{If: &proto.IfBlock{CondRef: &proto.ResultRef{Name: "x", Category: "ok"}, Then: then("yes")}},
 		{If: &proto.IfBlock{CondRef: &proto.ResultRef{Name: "x", Category: "err"}, Then: then("no")}},
 	}})

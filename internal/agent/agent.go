@@ -404,7 +404,9 @@ func agentErr(label string, err error) proto.StepResult {
 func dispatch(step proto.Step) (engine.Instruction, error) {
 	switch step.Instruction {
 	case "shell":
-		return engine.Shell{Cmd: step.Args["cmd"], Unless: step.Args["unless"], Env: engine.Env(step.Env)}, nil
+		// No `unless`: it was read from the step's arguments and no parser ever produced
+		// one, so the only way to set it was a hand-forged request (#619).
+		return engine.Shell{Cmd: step.Args["cmd"], Env: engine.Env(step.Env)}, nil
 	default:
 		return nil, fmt.Errorf("unknown instruction: %q", step.Instruction)
 	}
