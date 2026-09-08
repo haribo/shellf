@@ -547,25 +547,18 @@ func statusCmd(args []string) {
 	// `status` refuses an unknown target like `run` does. The render stays pure — the
 	// exit code is the caller's call, so a report string keeps one job (#451).
 	reports := orchestrator.Run(plan, inv, self, "status", dial, base, secrets, defsSrc, orchestrator.Options{Parallel: *parallel, Limit: limits, ValidateArgs: validate})
+	// The verdict comes from the renderer that produced the report, as it does for `run`:
+	// asking a second function is how `status` came to exit 0 over a fleet where every host
+	// was unreachable (#615).
 	if *asJSON {
-		out, _ := report.JSON(reports)
+		out, anyErr := report.JSON(reports)
 		fmt.Print(report.RedactJSON(out, secretValues))
-		exitFor(anyBlockError(reports))
+		exitFor(anyErr)
 		return
 	}
-	fmt.Print(report.Redact(report.Status(reports), secretValues))
-	exitFor(anyBlockError(reports))
-}
-
-// anyBlockError reports whether any block failed as a whole (an unknown target), as
-// opposed to a per-host outcome.
-func anyBlockError(reports []orchestrator.BlockReport) bool {
-	for _, blk := range reports {
-		if blk.Err != nil {
-			return true
-		}
-	}
-	return false
+	text, anyErr := report.Status(reports)
+	fmt.Print(report.Redact(text, secretValues))
+	exitFor(anyErr)
 }
 
 // allUnknownTargets reports whether every block failed on an unknown target — the shape

@@ -44,7 +44,7 @@ func TestStatusReport(t *testing.T) {
 			{Host: "app2", Err: errFake("dial")},
 		},
 	}}
-	got := Status(reports)
+	got, _ := Status(reports)
 	for _, want := range []string{
 		"on web:",
 		"  app1:",
@@ -353,7 +353,7 @@ func TestRedactJSON_IgnoresEmptySecrets(t *testing.T) {
 // `status` renders block errors and empty blocks like `run` does (#451) — the paths that
 // only a status sweep reaches.
 func TestStatusReport_BlockErrorAndEmptyBlock(t *testing.T) {
-	text := Status([]orchestrator.BlockReport{
+	text, _ := Status([]orchestrator.BlockReport{
 		{Target: "wbe", Err: &orchestrator.UnknownTargetError{Target: "wbe"}},
 		{Target: "spare"},
 	})
@@ -488,6 +488,60 @@ func TestStatusStep_ShapesByWhatTheStepIs(t *testing.T) {
 				if !strings.Contains(b.String(), w) {
 					t.Fatalf("missing %q in:\n%s", w, b.String())
 				}
+			}
+		})
+	}
+}
+
+// #615. `status` exited 0 over a fleet where every host was unreachable: it asked
+// `anyBlockError`, which answers about blocks, while the verdict it needed was the one
+// `Text` and `JSON` already compute from the hosts. `Status` now returns it too, so the
+// three renderers answer the same question the same way and the caller cannot pick the
+// wrong one.
+func TestStatus_ReportsAHostThatCouldNotBeReached(t *testing.T) {
+	cases := map[string]struct {
+		reports []orchestrator.BlockReport
+		failed  bool
+	}{
+		"an unreachable host": {
+			reports: []orchestrator.BlockReport{{
+				Target: "web",
+				Hosts:  []orchestrator.HostOutcome{{Host: "h1", Err: errFake("dial refused")}},
+			}},
+			failed: true,
+		},
+		"an unknown target": {
+			reports: []orchestrator.BlockReport{
+				{Target: "wbe", Err: &orchestrator.UnknownTargetError{Target: "wbe"}},
+			},
+			failed: true,
+		},
+		// Drift is what `status` is for, not a failure: a field that differs must still
+		// exit 0, or a monitor cannot tell "unreachable" from "not converged".
+		"a host reporting drift": {
+			reports: []orchestrator.BlockReport{{
+				Target: "web",
+				Hosts: []orchestrator.HostOutcome{{Host: "h1", Response: proto.Response{
+					Results: []proto.StepResult{{Label: "dir.ensure(path=/opt)", Fields: []engine.FieldDiff{
+						{Name: "present", Current: "false", Desired: "true"},
+					}}},
+				}}},
+			}},
+			failed: false,
+		},
+		"a converged host": {
+			reports: []orchestrator.BlockReport{{
+				Target: "web",
+				Hosts:  []orchestrator.HostOutcome{{Host: "h1", Response: proto.Response{}}},
+			}},
+			failed: false,
+		},
+	}
+	for what, c := range cases {
+		t.Run(what, func(t *testing.T) {
+			_, failed := Status(c.reports)
+			if failed != c.failed {
+				t.Fatalf("failed = %v, want %v", failed, c.failed)
 			}
 		})
 	}
