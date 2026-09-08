@@ -233,26 +233,33 @@ as `current → desired`, without acting.
 ## Instructions
 
 Most instructions are `def`s written in shellf and embedded in the binary; only
-`shell` and five **primitives** — `~file.read`, `~file.write`, `~file.render`,
-`~dir.list`, `~dir.sync` — are built in. Most are idempotent: a def that declares
+`shell` and seven **primitives** — `~file.read`, `~file.write`, `~file.render`,
+`~dir.list`, `~dir.sync`, `~text.matches`, `~text.replace` — are built in. Most are idempotent: a def that declares
 `observe` skips its `apply` when the desired state already holds. Some are
 **action-shaped** and always act — `service.restart`, `docker.compose-up` — because
 restarting a service has no "already restarted" to observe; `--dry-run` says `would`
 for those rather than pretending otherwise.
 
-- **Packages & services** — `apt.install(pkg)` · `apt.update()` · `service.ensure(name, running, enabled)` (running/enabled are `"true"`/`"false"`; a `.timer` unit works as the name) · `service.restart(name)` · `service.reload(name)` · `systemd.daemon-reload()` · `user.group(user, group)` · `user.ensure(name, shell)`
-- **Files & directories** — `file.copy(%"src", dst)` (deliver a file from the control host, binary-safe) · `file.template(%"src", dst)` (render a control-host file's `~{var}` and deliver it — `src` must be marked `%"…"`, an unmarked path is refused) · `dir.copy(%"src", dst, compare)` (deliver a control-host tree verbatim, binary-safe; sends only what differs, so a converged tree transfers nothing — `compare` defaults to size+mtime, pass `"sha256"` when a change may preserve both) · `file.write(path, content)` · `file.mode(path, mode)` · `file.replace(path, key, value)` (a `key=value` line) · `file.line(path, line)` · `file.delete(path)` · `file.download(url, dst, sha256)` · `dir.sync(%"src", dst, compare)` (same transfer, and it **removes** what the source does not have — `--dry-run` names every file it would delete) · `dir.ensure(path)` · `dir.owner(path, owner)` · `archive.extract(src, dst)` · `archive.extract-member(src, dst, member)` (one file out of a tarball) · `git.clone(url, dst)` · `git.sync(url, dst, ref)` (update to a pinned ref)
+- **Packages & services** — `apt.install(pkg)` · `apt.update()` · `service.ensure(name, running, enabled)` (running/enabled are `"true"`/`"false"`; a `.timer` unit works as the name) · `service.restart(name)` · `service.reload(name)` · `systemd.daemon-reload()` · `systemd.unit(name, content)` (installs a unit file, refusing one `systemd-analyze verify` rejects before it reaches `/etc`; a timer is a unit) · `user.group(user, group)` · `user.ensure(name, shell)`
+- **Files & directories** — `file.copy(%"src", dst)` (deliver a file from the control host, binary-safe) · `file.template(%"src", dst)` (render a control-host file's `~{var}` and deliver it — `src` must be marked `%"…"`, an unmarked path is refused) · `dir.copy(%"src", dst, compare)` (deliver a control-host tree verbatim, binary-safe; sends only what differs, so a converged tree transfers nothing — `compare` defaults to size+mtime, pass `"sha256"` when a change may preserve both) · `file.write(path, content)` · `file.mode(path, mode)` · `file.replace(path, key, value)` (a `key=value` line) · `file.line(path, line)` · `file.delete(path)` · `file.download(url, dst, sha256)` · `dir.sync(%"src", dst, compare)` (same transfer, and it **removes** what the source does not have — `--dry-run` names every file it would delete) · `dir.ensure(path)` · `dir.owner(path, owner)` · `dir.mode(path, mode)` · `file.owner(path, owner)` · `file.ensure(path, mode)` (create with an exact mode if absent, never touch the content of one that exists) · `archive.extract(src, dst)` · `archive.extract-member(src, dst, member)` (one file out of a tarball) · `git.clone(url, dst)` · `git.sync(url, dst, ref)` (update to a pinned ref)
 - **Questions** (read-only, deterministic in `--dry-run`) — `dir.exists(path)` · `file.exists(path)` · `http.check(url, status)` · `http.wait-for(url, timeout)` (retries until ready)
 - **Validated configs** — `sudo.write(name, content)` (checked with `visudo -cf`, set 0440) · `sshd.config(name, content)` (checked with `sshd -t -f`). The check runs before anything is written, and in `--dry-run` too, so an invalid file is caught before it can lock you out
+- **System** — `sysctl.set(key, value)` (live *and* persisted — a value written to `/etc/sysctl.d` and never applied does nothing until a reboot) · `system.timezone(zone)`
+- **PostgreSQL** — `postgres.role(name, password)` (verifies the password by connecting with it) · `postgres.database(name, owner)` · `postgres.config(key, value)` · `postgres.hba(rule)` (both ask postgres where its files are, so no major version is written into a path)
+- **Credentials** — `htpasswd.entry(path, user, password)` (one file holds several accounts; the file is left at 0600)
 - **Firewall** — `ufw.enable()` · `ufw.default(incoming, outgoing)` · `ufw.open(port, proto)`
-- **Docker** — `docker.install()` · `docker.network(name)` · `docker.compose-up(dir, build)` (`build` `"true"` rebuilds local images; always re-applies — `up -d` is idempotent) · `docker.compose-restart(dir, service)` (handler — omit `service.ensure` for the whole stack; gate it on `.changed`, e.g. after a mounted config is edited)
+- **Docker** — `docker.install()` · `docker.network(name)` · `docker.compose-up(dir, build)` (`build` `"true"` rebuilds local images; always re-applies — `up -d` is idempotent) · `docker.prune(until)` (reclaims disk from unused images; `docker system prune` is deliberately not covered — it removes volumes) · `docker.compose-restart(dir, service)` (handler — omit `service.ensure` for the whole stack; gate it on `.changed`, e.g. after a mounted config is edited)
 
 **Primitives** (ADR-0036) — `~` marks an engine primitive (no phases, no override), and
 `%` marks a path on your machine: `~file.read(path)` reads — on your machine if the path is marked, on the target
 otherwise — `~file.write(path, bytes)` writes on the target, `~file.render(%"path")`
 reads a template on your machine and substitutes its `~{var}` there, and
 `~dir.list(path)` lists a directory, and `~dir.sync(src, dst, delete, compare)` transfers a
-tree. Only those five names may carry a `~`; anything else is a parse error, and the control
+tree. Two more read and rewrite a **value** rather than a file, with the agent's own RE2 and
+a literal replacement (ADR-0055): `~text.matches(s, pattern)` answers true or false, and
+`~text.replace(s, pattern, repl)` rewrites every match — which is how a def refuses an
+argument it cannot honour without shelling out to the target.
+Only those seven names may carry a `~`; anything else is a parse error, and the control
 host serves only the paths the plan marked — a render included, which is why it names a file
 rather than carrying one.
 

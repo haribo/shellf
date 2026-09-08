@@ -26,7 +26,11 @@ def entry(path: str, user: str, password: str) as root {
     }
     observe {
         return state(valid: shell {
-            line=$(grep "^$user:" "$path" 2>/dev/null | head -1)
+            # The login is matched literally, the way the apply does. `grep "^$user:"` made
+            # it a regex, and the check above allows `.` — so `a.b` matched the line of
+            # `axb` and this observe decided from another account's hash (#594, #598).
+            line=$(awk 'BEGIN { p = ENVIRON["user"] ":"; n = length(p) }
+                        substr($0, 1, n) == p { print; exit }' "$path" 2>/dev/null)
             [ -n "$line" ] || exit 1
             hash=${line#*:}
             # $apr1$<salt>$<digest> — the salt is the third field.

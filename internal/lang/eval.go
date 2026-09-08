@@ -3,6 +3,7 @@ package lang
 import (
 	"encoding/base64"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -635,7 +636,9 @@ func (ev *evaluator) evalExpr(e Expr) value {
 	case Field:
 		return ev.evalField(x)
 	case Binary:
-		eq := equal(ev.evalExpr(x.L), ev.evalExpr(x.R))
+		l, r := ev.evalExpr(x.L), ev.evalExpr(x.R)
+		ev.refuseBytesComparison(x.Op, l, r)
+		eq := equal(l, r)
 		if x.Op == "==" {
 			return eq
 		}
@@ -770,14 +773,26 @@ func (ev *evaluator) evalControlCall(c Call) value {
 	// of arguments, which sends the author looking at their transport.
 	want := 1
 	switch c.Name {
-	case "file.write":
+	case "file.write", "text.matches":
 		want = 2
+	case "text.replace":
+		want = 3
 	case "dir.sync":
 		want = 4
 	}
 	if len(c.Args) != want {
 		ev.fail("~%s takes exactly %d argument(s), got %d", c.Name, want, len(c.Args))
 	}
+
+	// The text primitives are pure (ADR-0055 §1): they read no file, write no file and
+	// reach no host, so they are answered before the channel is required. Asking for a
+	// control host to test a string would put a def's argument check out of reach of
+	// exactly the runs that need it most.
+	switch c.Name {
+	case "text.matches", "text.replace":
+		return ev.evalText(c)
+	}
+
 	if ev.fetch == nil {
 		ev.fail("~%s: no control host channel available for this run", c.Name)
 	}
@@ -985,6 +1000,58 @@ func (ev *evaluator) readTarget(primitive, path string) []byte {
 	return b
 }
 
+// evalText answers `~text.matches` and `~text.replace` (ADR-0055). The engine is RE2,
+// compiled into this binary, so a pattern gives the same answer on Debian, Alpine and
+// BSD — which `sed` on the target does not.
+//
+// The replacement is substituted **literally** (§3): `$1` and `&` are ordinary characters.
+// Giving them meaning is #487 in another syntax — a value the caller passed, parsed as
+// syntax — which is the defect that produced this primitive. (`${name}` never reaches
+// here: that is shellf's own interpolation, applied to the literal at parse.)
+func (ev *evaluator) evalText(c Call) value {
+	subject := ev.evalExpr(c.Args[0])
+	pattern, ok := ev.evalExpr(c.Args[1]).(string)
+	if !ok {
+		ev.fail("~%s: the pattern must be a string", c.Name)
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		ev.fail("~%s: %v", c.Name, err)
+	}
+
+	// Bytes travel from a primitive to a primitive (ADR-0034 §4), which is the whole point
+	// of `~file.read` → `~text.replace` → `~file.write`. The kind is preserved rather than
+	// flattened to a string: a file read here may be binary, and stringifying it is how
+	// #411 delivered an empty file.
+	switch subj := subject.(type) {
+	case string:
+		if c.Name == "text.matches" {
+			return re.MatchString(subj)
+		}
+		return re.ReplaceAllLiteralString(subj, ev.textReplacement(c))
+	case Bytes:
+		if c.Name == "text.matches" {
+			return re.Match(subj)
+		}
+		return Bytes(re.ReplaceAllLiteral(subj, []byte(ev.textReplacement(c))))
+	}
+	ev.fail("~%s: the subject must be text", c.Name)
+	return nil
+}
+
+// textReplacement evaluates the third argument of `~text.replace`, which a `~file.read`
+// may have produced — so it is read with the same two kinds as the subject.
+func (ev *evaluator) textReplacement(c Call) string {
+	switch r := ev.evalExpr(c.Args[2]).(type) {
+	case string:
+		return r
+	case Bytes:
+		return string(r)
+	}
+	ev.fail("~%s: the replacement must be text", c.Name)
+	return ""
+}
+
 // resourceKey is what the control host is asked for. The primitive is part of the key
 // so listing a directory cannot be answered with a file's contents.
 func resourceKey(primitive, path string) string { return primitive + ":" + path }
@@ -1134,4 +1201,30 @@ func truthy(v value) bool {
 	return false
 }
 
+// equal is `==` over the scalar values. Bytes never reach it: refuseBytesComparison stops
+// them first, which is also what keeps this line from panicking on two uncomparable
+// operands (#578).
 func equal(a, b value) bool { return a == b }
+
+// refuseBytesComparison enforces ADR-0034 §4 at the one boundary that never enforced it.
+// Bytes are opaque — they go from a primitive to an instruction and nowhere else — and the
+// record says in as many words that they cannot be compared. `==` did it anyway, in two
+// wrong ways:
+//
+//   - two Bytes panicked the evaluator, since `a == b` over interfaces holding []byte is a
+//     runtime error rather than an answer (#578);
+//   - Bytes against a string answered **false** for any content, because Go compares the
+//     dynamic types first. Silently false is worse than a panic: it reads as "the contents
+//     differ", which is the shape of #411.
+//
+// The message names the one comparison that is honest — a digest of the content, which the
+// caller can compute where the content lives.
+func (ev *evaluator) refuseBytesComparison(op string, l, r value) {
+	_, lb := l.(Bytes)
+	_, rb := r.(Bytes)
+	if !lb && !rb {
+		return
+	}
+	ev.fail("%s on bytes: content read by a primitive is opaque and cannot be compared (ADR-0034 §4) — "+
+		"compare a digest computed where the content is, or hand the bytes to an instruction", op)
+}

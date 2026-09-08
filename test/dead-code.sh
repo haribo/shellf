@@ -19,6 +19,9 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The toolchain CI uses, not merely a newer one (#589).
+# shellcheck source=test/toolchain.sh
+. "$here/toolchain.sh"
 root="$(cd "$here/.." && pwd)"
 
 fail() { printf '\033[1;31mFAIL: %s\033[0m\n' "$*" >&2; exit 1; }

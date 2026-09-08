@@ -63,13 +63,27 @@ def database(name: str, owner: str) as root {
         o = shell { printf '%s' "$owner" | grep -qE '^[A-Za-z_][A-Za-z0-9_]*$' }
         if !o { return err.badOwner(o) }
     }
+    # Presence **and** ownership, because that is what the apply guarantees. Asking only
+    # whether a database of that name exists reported `already` over one owned by somebody
+    # else, and the `createdb -O` never ran — an app role unable to write to its own
+    # database, under a green run (#594, #595).
     observe {
-        return state(present: shell {
-            su - postgres -c "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='$name'\"" | grep -q 1
+        return state(owned: shell {
+            su - postgres -c "psql -tAc \"SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname='$name'\"" \
+              | tr -d ' ' | grep -qx "$owner"
         }.exit == 0)
     }
     apply {
-        r = shell { su - postgres -c "createdb -O '$owner' '$name'" }
+        r = shell {
+            # Two ways to reach the same state, and `createdb -O` only covers one:
+            # it cannot touch a database that already exists. A wrong owner is repaired
+            # rather than reported, since the def's contract is the end state.
+            if su - postgres -c "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='$name'\"" | grep -q 1; then
+                su - postgres -c "psql -c 'ALTER DATABASE $name OWNER TO $owner'"
+            else
+                su - postgres -c "createdb -O '$owner' '$name'"
+            fi
+        }
         if !r { return err.runtime(r) }
         return ok.created
     }

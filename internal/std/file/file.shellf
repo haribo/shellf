@@ -51,17 +51,35 @@ def mode(path: str, mode: str) {
 # and re-corrupted the file (#487). awk reads both through ENVIRON instead: nothing the
 # caller passes is ever parsed as syntax.
 #
-# Still unguarded: a `=` in the key, or a newline in either argument, cannot be written as
-# one `key=value` line. Refusing them belongs in `check`, and `check` cannot express it —
-# the language compares values with `==` and nothing else, so the only way to ask "does
-# this hold a newline" is a shell round trip on the target, in every mode, to validate an
-# argument the control host already holds. That contradicts ADR-0034 §5. Tracked as the
-# language gap it is (#492), not worked around here.
+# What it refuses, and why it can: a `=` in the key, or a newline in either argument,
+# cannot be written as one `key=value` line. A key holding a `=` is the worse of the two —
+# `replace(f, "a=b", "v")` matches no line, appends `a=b=v`, and the file ends up with two
+# lines starting with `a=`, so a reader of that .env sees the key `a` defined twice and
+# `a` silently changes value. The guard needs to ask something of a value other than
+# equality, which the language could not express until `~text.matches` (ADR-0055, #575).
 def replace(path: str, key: str, value: str) {
     check {
         if key == "" { return err.keyMustNotBeEmpty }
+        # Each rule is asked for by name; none of them reaches a shell. `"\n"` is already
+        # a real newline by the time RE2 sees it — the lexer unescapes it — so the pattern
+        # is a literal character, not an escape RE2 has to interpret.
+        if ~text.matches(key, "=") { return err.keyMustNotContainEquals }
+        if ~text.matches(key, "\n") { return err.keyMustNotContainNewline }
+        if ~text.matches(value, "\n") { return err.valueMustNotContainNewline }
     }
-    observe { return state(set: shell { grep -qxF -- "$key=$value" "$path" 2>/dev/null }.exit == 0) }
+    # Observed: **exactly one** line carries the key, and it holds the value — which is what
+    # the apply below guarantees. `grep -qxF "$key=$value"` asked only whether *a* matching
+    # line exists, so a file holding `PORT=8080` and a stale `PORT=3000` was reported
+    # converged, while a reader of that .env generally takes the last one (#594, #597).
+    #
+    # Read through ENVIRON like the apply, so nothing the caller passes is a pattern (#487).
+    observe {
+        return state(set: shell {
+            awk 'BEGIN { p = ENVIRON["key"] "="; want = p ENVIRON["value"]; n = length(p) }
+                 substr($0, 1, n) == p { seen++; if ($0 != want) wrong = 1 }
+                 END { exit (seen == 1 && !wrong) ? 0 : 1 }' "$path" 2>/dev/null
+        }.exit == 0)
+    }
     apply {
         r = shell {
             # Staged like file.write, and for the same reason: the destination is never
@@ -119,8 +137,22 @@ def download(url: str, dst: str, sha256: str) {
     }
     apply {
         r = shell {
-            curl -fsSLo "$dst" "$url"
-            echo "$sha256  $dst" | sha256sum -c --status
+            # Staged, then renamed — the destination is never the thing being downloaded.
+            # `curl -o "$dst"` wrote straight to it and verified afterwards, so a hash that
+            # did not match left unverified content at the path a plan said would hold a
+            # verified one, with the previous file already gone (#599). Measured: a wrong
+            # hash reported `err.runtime` over a destination that already held the new
+            # bytes. The sha256 is mandatory here precisely because the source is not
+            # trusted; verifying after the write spends that guarantee.
+            staged="$dst.shellf.$$"
+            trap 'rm -f "$staged"' EXIT
+            curl -fsSLo "$staged" "$url"
+            echo "$sha256  $staged" | sha256sum -c --status
+            # `curl -o` onto an existing file kept that file's mode; a rename does not, so
+            # a second download of a binary would have dropped the `+x` a plan set with
+            # `file.mode`. Carried over explicitly rather than lost silently.
+            if [ -f "$dst" ]; then chmod "$(stat -c '%a' "$dst")" "$staged"; fi
+            mv -f "$staged" "$dst"
         }
         if !r { return err.runtime(r) }
         return ok.downloaded

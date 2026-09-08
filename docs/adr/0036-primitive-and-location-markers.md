@@ -6,6 +6,10 @@ Active. **Supersedes [ADR-0034](0034-control-host-primitives.md)**, whose decisi
 keeps — the language reaches control-host data through a closed set of primitives — and
 whose marker it splits in two.
 
+**Extended by [ADR-0055](0055-text-primitives.md)**, which adds two primitives over values
+(`~text.matches`, `~text.replace`) to the set of §5. The marker rules and the closedness of
+the set are unchanged; only the membership grows.
+
 ## Context
 
 ADR-0034 gave `%` a single meaning, "on my machine", and applied it to two different

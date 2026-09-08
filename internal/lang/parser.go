@@ -241,6 +241,9 @@ type parser struct {
 	userDefs  map[string]Def    // package + imported defs, resolved before the stdlib (ADR-0014/0015)
 	defPrefix string            // sub-package prefix for defs declared in this file (ADR-0033)
 
+	// Where the instruction being parsed was written (ADR-0056 §1).
+	stepLine, stepCol int
+
 	imports         map[string][]string // alias → imported package's def sources (ADR-0015)
 	importedAliases map[string]bool     // aliases already imported (duplicate check)
 
@@ -555,7 +558,12 @@ func (p *parser) step() proto.Step {
 	if p.tok.kind == tIdent && p.tok.val == "as" {
 		return p.asBlock()
 	}
-	name := p.expect(tIdent, "instruction or 'parallel'").val
+	nameTok := p.expect(tIdent, "instruction or 'parallel'")
+	name := nameTok.val
+	// Where the call was written, kept for a refusal that can point at it rather than
+	// name it (ADR-0056 §1). Set here and not in call(): by then the name is consumed,
+	// and a qualified `file.replace` would report the column of `replace`.
+	p.stepLine, p.stepCol = nameTok.line, nameTok.col
 	if p.tok.kind == tEq { // capture: name = <call>
 		p.adv()
 		rhs := p.step()
@@ -860,7 +868,14 @@ func (p *parser) call(name string) proto.Step {
 			// (ADR-0045 §2). Variables are already interpolated here, so `"yes"` is
 			// caught before a host is contacted rather than stopping a service on one.
 			// A `ref` is skipped: what a captured result holds is only known at run time.
-			if params[i].Type == "bool" && !isBoolValue(vals[i].val) {
+			//
+			// A deferred value is skipped for the same reason, and it was not: the check
+			// read the text `${inventory.flag}` and refused a plan whose host holds
+			// `true`, which made a `bool` parameter unable to take a value from the
+			// inventory at all (#582). It is held to its type once expanded, on the
+			// control host, before the request goes out — where the value exists, which is
+			// the rule ADR-0045 §3 is named after.
+			if !vals[i].deferred && params[i].Type == "bool" && !isBoolValue(vals[i].val) {
 				p.fail("%s: %s expects a boolean, got %q — write true or false", name, n, vals[i].val)
 			}
 			if vals[i].deferred {
@@ -878,7 +893,8 @@ func (p *parser) call(name string) proto.Step {
 			}
 		}
 	}
-	return proto.Step{Instruction: name, Args: args, Refs: refs, Templates: templates, Control: control, Caught: caught, With: p.parseWith()}
+	return proto.Step{Instruction: name, Args: args, Refs: refs, Templates: templates, Control: control,
+		Caught: caught, With: p.parseWith(), Line: p.stepLine, Col: p.stepCol}
 }
 
 // arg resolves a binding's value (plan top-level binding or --vars file entry)

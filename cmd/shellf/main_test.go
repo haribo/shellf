@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"flag"
 	"io"
@@ -11,10 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"shellf/internal/engine"
-	"shellf/internal/lang"
 	"shellf/internal/orchestrator"
-	"shellf/internal/proto"
+	"shellf/internal/project"
 )
 
 // The end-to-end wiring of `runCmd`/`cleanCmd` (flag parsing → transport → exit
@@ -68,290 +65,6 @@ func TestLoadGlobals_MissingVarsFile(t *testing.T) {
 	}
 }
 
-func TestStdSignatures(t *testing.T) {
-	sig := stdSignatures()
-
-	if params, req, ok := sig("file.copy"); !ok || len(params) != 2 || req != 2 || params[0].Name != "src" || params[1].Name != "dst" {
-		t.Fatalf("file-copy signature: %v req=%d ok=%v", params, req, ok)
-	}
-	// A stdlib def resolves its params from the embedded source (self-hosting).
-	if params, req, ok := sig("dir.ensure"); !ok || len(params) != 1 || req != 1 || params[0].Name != "path" {
-		t.Fatalf("stdlib dir-ensure signature: %v req=%d ok=%v", params, req, ok)
-	}
-	// compose-up gained an optional `build` param → 2 params, 1 required.
-	if params, req, ok := sig("docker.compose-up"); !ok || len(params) != 2 || req != 1 {
-		t.Fatalf("compose-up optional-param signature: %v req=%d ok=%v", params, req, ok)
-	}
-	if _, _, ok := sig("no-such-instruction"); ok {
-		t.Fatal("an unknown instruction must not resolve")
-	}
-}
-
-func TestStatusReport(t *testing.T) {
-	reports := []orchestrator.BlockReport{{
-		Target: "web",
-		Hosts: []orchestrator.HostOutcome{
-			{
-				Host: "app1",
-				Response: proto.Response{Results: []proto.StepResult{
-					// a drifted value field
-					{Label: "apt-install(nginx)", Category: "would", Fields: []engine.FieldDiff{
-						{Name: "version", Current: "1.2.0", Desired: "1.3.0", Converged: false},
-					}},
-					// a converged truthy field
-					{Label: "dir.ensure(/opt)", Category: "ok", Fields: []engine.FieldDiff{
-						{Name: "present", Current: "true", Desired: "true", Converged: true},
-					}},
-					// an absent value renders as a dash
-					{Label: "file.download(x)", Category: "would", Fields: []engine.FieldDiff{
-						{Name: "present", Current: "", Desired: "true", Converged: false},
-					}},
-					// an action-shaped def
-					{Label: "restart(nginx)", Category: "ok", Tag: "action"},
-				}},
-			},
-			{Host: "app2", Err: errFake("dial")},
-		},
-	}}
-	got := statusReport(reports)
-	for _, want := range []string{
-		"on web:",
-		"  app1:",
-		"version: 1.2.0 → 1.3.0",
-		"present: true\n",
-		"present: — → true",
-		"restart(nginx)", "action (no observable state)",
-		"  app2: unreachable (dial)",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("status report missing %q in:\n%s", want, got)
-		}
-	}
-}
-
-type errFake string
-
-func (e errFake) Error() string { return string(e) }
-
-func TestReportText(t *testing.T) {
-	reports := []orchestrator.BlockReport{{
-		Target: "web",
-		Hosts: []orchestrator.HostOutcome{
-			{
-				Host: "app1",
-				Response: proto.Response{
-					Results: []proto.StepResult{
-						{Label: "apt-install(nginx)", Category: "ok", Tag: "installed"},
-						{Label: "shell(bad)", Category: "err", Tag: "runtime",
-							Shell: &engine.ShellResult{Stdout: "line1\nline2"}},
-					},
-					Halted: true,
-				},
-			},
-			{Host: "app2", Err: errFake("dial refused")},
-		},
-	}}
-	text, anyErr := reportText(reports)
-	if !anyErr {
-		t.Fatal("a host with an err step must set anyErr")
-	}
-	for _, want := range []string{
-		"on web:", "  app1:",
-		"apt-install(nginx)", "ok.installed",
-		"err.runtime", "| line1", "| line2",
-		"(halted)",
-		"  app2: unreachable (dial refused)",
-	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("report missing %q in:\n%s", want, text)
-		}
-	}
-
-	// A clean run reports no error.
-	if _, anyErr := reportText([]orchestrator.BlockReport{{Target: "web", Hosts: []orchestrator.HostOutcome{
-		{Host: "app1", Response: proto.Response{Results: []proto.StepResult{{Label: "x", Category: "ok"}}}},
-	}}}); anyErr {
-		t.Fatal("a clean run must not set anyErr")
-	}
-}
-
-func TestLoadPlanPackage(t *testing.T) {
-	dir := project(t, t.TempDir())
-	writeFile(t, filepath.Join(dir, "plans"), "plan.shellf", `on web { m.mark("/x", "hi") }`)
-	writeDef(t, dir, "m", "mark.shellf", `def mark(path: str, content: str) { apply { shell { echo hi } return ok.done } }`)
-	writeFile(t, filepath.Join(dir, "inventories"), "inventory.shellf", `host web = { address: "1.1.1.1", user: "u" }`)
-	writeFile(t, filepath.Join(dir, "defs"), "notes.txt", "not a shellf file")
-
-	plan, defsSrc, err := loadPlanPackage(
-		filepath.Join(dir, "plans", "plan.shellf"), filepath.Join(dir, "inventories", "inventory.shellf"),
-		map[string]string{}, map[string]string{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The plan resolves `mark` against the sibling def.
-	if plan[0].Steps[0].Instruction != "m.mark" || plan[0].Steps[0].Args["path"] != "/x" {
-		t.Fatalf("sibling def not resolved: %+v", plan[0].Steps[0])
-	}
-	// The def ships keyed by name; the inventory does not leak into it.
-	if !strings.Contains(defsSrc["m.mark"], "def mark") {
-		t.Fatalf("def source not collected: %v", defsSrc)
-	}
-	for _, src := range defsSrc {
-		if strings.Contains(src, "host web") {
-			t.Fatal("the inventory must not be loaded as a package def")
-		}
-	}
-}
-
-func TestPackageLibs_ExcludesPlanAndInventory(t *testing.T) {
-	dir := project(t, t.TempDir())
-	writeFile(t, filepath.Join(dir, "plans"), "plan.shellf", `on web { }`)
-	writeDef(t, dir, "p", "lib.shellf", `def a() { apply { shell { echo hi } return ok.done } }`)
-	writeFile(t, filepath.Join(dir, "inventories"), "inventory.shellf", `host web = { address: "x", user: "u" }`)
-
-	libs, err := packageLibs(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := libs["p/lib.shellf"]; !ok || len(libs) != 1 {
-		t.Fatalf("expected only lib.shellf, got %v", keys(libs))
-	}
-}
-
-func TestReadImports(t *testing.T) {
-	dir := project(t, t.TempDir())
-	plans := filepath.Join(dir, "plans")
-	writeFile(t, plans, "plan.shellf", "import lib \"sub\"\non web { lib.helper() }")
-	sub := filepath.Join(plans, "sub")
-	if err := os.Mkdir(sub, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(sub, "h.shellf"), []byte(`def helper() { apply { shell { echo hi } return ok.done } }`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	planSrc, _ := os.ReadFile(filepath.Join(plans, "plan.shellf"))
-	imports, err := readImports(filepath.Join(plans, "plan.shellf"), string(planSrc))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(imports["lib"]) != 1 || !strings.Contains(imports["lib"][0], "def helper") {
-		t.Fatalf("import not resolved to its package sources: %v", imports)
-	}
-	// An import of a missing directory errors.
-	bad := "import ghost \"nope\"\non web { }"
-	if _, err := readImports(filepath.Join(plans, "plan.shellf"), bad); err == nil {
-		t.Fatal("importing a missing directory must error")
-	}
-	// The full path resolves through loadPlanPackage too.
-	writeFile(t, filepath.Join(dir, "inventories"), "inv.shellf", `host web = { address: "x", user: "u" }`)
-	_, defs, err := loadPlanPackage(filepath.Join(plans, "plan.shellf"),
-		filepath.Join(dir, "inventories", "inv.shellf"), map[string]string{}, map[string]string{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(defs["lib.helper"], "def helper") {
-		t.Fatalf("imported def not shipped under its qualified name: %v", defs)
-	}
-}
-
-func TestLoadPlanPackage_KeepsTemplateStepsForPerHostRender(t *testing.T) {
-	// Templates are NOT resolved at load time anymore — they render per host in
-	// the orchestrator (ADR-0024). loadPlanPackage keeps the `file.template` step, with
-	// its parse-time `dst` interpolation and `with { }` intact. Here a `for` loop
-	// var is captured into `with` for the render (ADR-0023 composition).
-	dir := project(t, t.TempDir())
-	writeFile(t, filepath.Join(dir, "assets"), "svc.tmpl", "service=@{svc}\n")
-	writeFile(t, filepath.Join(dir, "plans"), "plan.shellf", `on t {
-		for svc in ["alpha", "beta"] {
-			file.template(%"svc.tmpl", "/opt/${svc}/x") with { svc = "${svc}" }
-		}
-	}`)
-	writeFile(t, filepath.Join(dir, "inventories"), "inv.shellf", `host t = { address: "x", user: "u" }`)
-	plan, _, err := loadPlanPackage(
-		filepath.Join(dir, "plans", "plan.shellf"), filepath.Join(dir, "inventories", "inv.shellf"),
-		map[string]string{}, map[string]string{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i, item := range []string{"alpha", "beta"} {
-		s := plan[0].Steps[i]
-		if s.Instruction != "file.template" { // still a template, not yet a file-write
-			t.Fatalf("iteration %d: template should survive load, got %q", i, s.Instruction)
-		}
-		if s.Args["dst"] != "/opt/"+item+"/x" { // dst `${svc}` interpolated at parse
-			t.Fatalf("iteration %d: dst=%q", i, s.Args["dst"])
-		}
-		if s.With["svc"] != item { // loop var captured into `with` for the render
-			t.Fatalf("iteration %d: with[svc]=%q, want %q", i, s.With["svc"], item)
-		}
-	}
-}
-
-func TestReadImports_RemoteModule(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-	t.Setenv("XDG_CACHE_HOME", t.TempDir()) // isolate the module cache
-
-	// A git repo module of one def, tagged v1.0.0.
-	repo := t.TempDir()
-	gitRun(t, repo, "init", "-q", "-b", "main")
-	if err := os.WriteFile(filepath.Join(repo, "web.shellf"),
-		[]byte(`def deploy(port: str) { apply { shell { echo "$port" } return ok.done } }`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	gitRun(t, repo, "add", ".")
-	gitRun(t, repo, "commit", "-q", "-m", "init")
-	gitRun(t, repo, "tag", "v1.0.0")
-
-	// A plan that imports it remotely.
-	planDir := project(t, t.TempDir())
-	writeFile(t, filepath.Join(planDir, "plans"), "plan.shellf",
-		"import r \"file://"+repo+"@v1.0.0\"\non web { r.deploy(\"9090\") }")
-	writeFile(t, filepath.Join(planDir, "inventories"), "inv.shellf", `host web = { address: "x", user: "u" }`)
-
-	plan, defs, err := loadPlanPackage(
-		filepath.Join(planDir, "plans", "plan.shellf"),
-		filepath.Join(planDir, "inventories", "inv.shellf"),
-		map[string]string{}, map[string]string{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan[0].Steps[0].Instruction != "r.deploy" || plan[0].Steps[0].Args["port"] != "9090" {
-		t.Fatalf("remote import not resolved: %+v", plan[0].Steps[0])
-	}
-	if !strings.Contains(defs["r.deploy"], "def deploy") {
-		t.Fatalf("imported def not shipped qualified: %v", defs)
-	}
-	// The lockfile was written next to the plan.
-	if _, err := os.Stat(filepath.Join(planDir, "shellf.lock")); err != nil {
-		t.Fatalf("shellf.lock not written: %v", err)
-	}
-}
-
-func gitRun(t *testing.T, dir string, args ...string) {
-	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
-		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
-		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
-	}
-}
-
-func TestDefSource(t *testing.T) {
-	// Each def maps to its own source, keyed by resolved name.
-	got := defSource(map[string]lang.Def{
-		"a":          {Source: "def a() {}"},
-		"web.deploy": {Source: "def deploy() {}"},
-	})
-	if got["a"] != "def a() {}" || got["web.deploy"] != "def deploy() {}" {
-		t.Fatalf("defSource: %v", got)
-	}
-}
-
 func TestLoadInventory(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "inv.shellf", `host web = { address: "10.0.0.1", user: "deploy" }`)
@@ -367,9 +80,10 @@ func TestLoadInventory(t *testing.T) {
 	}
 }
 
-// project lays out an empty shellf project (ADR-0038) under root and returns it, so a
+// writeDef writes a def into its package directory, creating it: defs/<pkg>/<name>.
+// projectDir lays out an empty shellf project (ADR-0038) under root and returns it, so a
 // test states the layout once instead of repeating four MkdirAll calls.
-func project(t *testing.T, root string) string {
+func projectDir(t *testing.T, root string) string {
 	t.Helper()
 	for _, d := range []string{"plans", "defs", "assets", "inventories"} {
 		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
@@ -379,29 +93,11 @@ func project(t *testing.T, root string) string {
 	return root
 }
 
-// writeDef writes a def into its package directory, creating it: defs/<pkg>/<name>.
-func writeDef(t *testing.T, root, pkg, name, content string) {
-	t.Helper()
-	dir := filepath.Join(root, "defs", pkg)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, dir, name, content)
-}
-
 func writeFile(t *testing.T, dir, name, content string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func keys(m map[string]string) []string {
-	var ks []string
-	for k := range m {
-		ks = append(ks, k)
-	}
-	return ks
 }
 
 func TestLoadSecrets(t *testing.T) {
@@ -430,20 +126,6 @@ func TestLoadSecrets(t *testing.T) {
 	}
 }
 
-func TestRedact(t *testing.T) {
-	got := redact("file.write(pass=S3cr3t!, /etc/x)\nstdout: S3cr3t!", []string{"S3cr3t!", ""})
-	if strings.Contains(got, "S3cr3t!") {
-		t.Fatalf("secret not redacted: %q", got)
-	}
-	if strings.Count(got, "***") != 2 {
-		t.Fatalf("both occurrences should be masked: %q", got)
-	}
-	// An empty secret does not blank the whole string.
-	if redact("abc", []string{""}) != "abc" {
-		t.Fatal("empty secret must not redact")
-	}
-}
-
 func TestKVFlags(t *testing.T) {
 	var k kvFlags
 	if err := k.Set("a=1"); err != nil {
@@ -461,47 +143,6 @@ func TestVersionLine(t *testing.T) {
 	version = "v9.9.9"
 	if got := versionLine(); got != "shellf v9.9.9" {
 		t.Fatalf("versionLine: %q", got)
-	}
-}
-
-func TestReportText_Preview(t *testing.T) {
-	reports := []orchestrator.BlockReport{{
-		Target: "web",
-		Hosts: []orchestrator.HostOutcome{{
-			Host: "app1",
-			Response: proto.Response{Results: []proto.StepResult{
-				{Label: "compose-up(dir=/opt/app)", Category: "would", Tag: "up",
-					Preview: "Recreate app-web-1\nRecreate app-worker-1"},
-			}},
-		}},
-	}}
-	text, _ := reportText(reports)
-	for _, want := range []string{
-		"compose-up(dir=/opt/app)", "would.up",
-		"preview ▸ Recreate app-web-1",
-		"preview ▸ Recreate app-worker-1",
-	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("preview not rendered (%q) in:\n%s", want, text)
-		}
-	}
-}
-
-// The rename table must not advise a name that does not exist: a message pointing at
-// `file.write` is only useful if `file.write` actually resolves. Checked here because
-// internal/lang cannot import internal/std (std imports lang).
-func TestRenameTable_TargetsResolve(t *testing.T) {
-	sig := stdSignatures()
-	if len(lang.Renamed) < 25 {
-		t.Fatalf("rename table looks incomplete: %d entries", len(lang.Renamed))
-	}
-	for old, want := range lang.Renamed {
-		if _, _, ok := sig(want); !ok {
-			t.Errorf("%q is advised as the replacement for %q but does not resolve", want, old)
-		}
-		if _, _, ok := sig(old); ok {
-			t.Errorf("%q must no longer resolve (ADR-0032 §4: no aliases)", old)
-		}
 	}
 }
 
@@ -554,96 +195,18 @@ func TestRemovedFlag(t *testing.T) {
 // other call path. Its comment cited ADR-0022 for the precedence chain, which was wrong —
 // that chain is ADR-0003 §3; ADR-0022 is the `with { }` per-call override.
 
-// #311: a call cycle is refused when the defs are loaded, not when they run (ADR-0030
-// §6). The distinction is the whole issue: the evaluator's guard fires on the target,
-// after earlier steps of the plan have already acted, leaving a partially applied host.
-//
-// loadPlanPackage runs before anything is dialled, so a failure here *is* the "no host
-// was contacted" assertion — there is no transport in this call path to stub out.
-func TestLoadPlanPackage_RefusesACycleBeforeAnyTransport(t *testing.T) {
-	dir := project(t, t.TempDir())
-	writeFile(t, filepath.Join(dir, "plans"), "plan.shellf", `on web { c.a("/x") }`)
-	writeDef(t, dir, "c", "a.shellf", `def a(p: str) { apply { c.b(p) return ok.done } }`)
-	writeDef(t, dir, "c", "b.shellf", `def b(p: str) { apply { c.a(p) return ok.done } }`)
-	writeFile(t, filepath.Join(dir, "inventories"), "inventory.shellf", `host web = { address: "1.1.1.1", user: "u" }`)
-
-	_, _, err := loadPlanPackage(
-		filepath.Join(dir, "plans", "plan.shellf"), filepath.Join(dir, "inventories", "inventory.shellf"),
-		map[string]string{}, map[string]string{})
-	if err == nil {
-		t.Fatal("a cyclic package must not load")
-	}
-	if !strings.Contains(err.Error(), "call cycle: c.a -> c.b -> c.a") {
-		t.Fatalf("the error must name the chain, got %v", err)
-	}
-}
-
-// A cycle that only exists because a user def overrides a stdlib one and calls back into
-// the caller. This is why the check takes the run's own resolver rather than the package
-// map: seen from the user package alone, `file.write` is just a name that is not there.
-func TestLoadPlanPackage_RefusesACycleThroughAnOverride(t *testing.T) {
-	dir := project(t, t.TempDir())
-	writeFile(t, filepath.Join(dir, "plans"), "plan.shellf", `on web { d.deliver("/x", "hi") }`)
-	writeDef(t, dir, "d", "deliver.shellf",
-		`def deliver(path: str, content: str) { apply { file.write(path, content) return ok.done } }`)
-	writeFile(t, filepath.Join(dir, "inventories"), "inventory.shellf", `host web = { address: "1.1.1.1", user: "u" }`)
-	// `defs/file/` is the package `file`, so this declares `file.write` and overrides the
-	// stdlib def of that name (ADR-0038 §2 over ADR-0033's rule).
-	writeDef(t, dir, "file", "write.shellf",
-		`override def write(path: str, content: str) { apply { d.deliver(path, content) return ok.done } }`)
-
-	_, _, err := loadPlanPackage(
-		filepath.Join(dir, "plans", "plan.shellf"), filepath.Join(dir, "inventories", "inventory.shellf"),
-		map[string]string{}, map[string]string{})
-	if err == nil {
-		t.Fatal("a cycle through an override must not load")
-	}
-	if !strings.Contains(err.Error(), "call cycle") {
-		t.Fatalf("got %v", err)
-	}
-}
-
-// #355: a def must live in a package directory. The message says where to move it —
-// written when `defs/` replaced the plan's siblings, and never exercised until now.
-func TestPackageLibs_RefusesALooseDef(t *testing.T) {
-	dir := project(t, t.TempDir())
-	writeFile(t, filepath.Join(dir, "defs"), "stray.shellf",
-		`def a() { apply { return ok.done } }`)
-
-	_, err := packageLibs(dir)
-	if err == nil {
-		t.Fatal("a def outside a package directory must be refused")
-	}
-	if !strings.Contains(err.Error(), "defs/<package>/stray.shellf") {
-		t.Fatalf("the error must name where to move it, got %v", err)
-	}
-}
-
-// A project with no `defs/` at all is legitimate — a plan may call only stdlib
-// instructions — and must load rather than fail on a missing directory.
-func TestPackageLibs_NoDefsDirectoryIsFine(t *testing.T) {
-	dir := t.TempDir() // deliberately not laid out: only plans/ is required
-	libs, err := packageLibs(dir)
-	if err != nil {
-		t.Fatalf("a project without defs/ must load: %v", err)
-	}
-	if len(libs) != 0 {
-		t.Fatalf("expected no libs, got %v", keys(libs))
-	}
-}
-
 // #345: a plan that asks the control host for nothing opens no bridge. The channel
 // factory returns nil for every host, which is what keeps a detached job detached
 // (ADR-0031 §2) — a bridge opened for nothing would make every plan depend on the
 // control host staying reachable.
 func TestControlChannel_NilWhenThePlanAsksNothing(t *testing.T) {
-	dir := project(t, t.TempDir())
+	dir := projectDir(t, t.TempDir())
 	writeFile(t, filepath.Join(dir, "plans"), "plan.shellf", `on web { dir.ensure("/x") }`)
 	writeFile(t, filepath.Join(dir, "inventories"), "inv.shellf", `host web = { address: "1.1.1.1", user: "u" }`)
 	planPath := filepath.Join(dir, "plans", "plan.shellf")
 	invPath := filepath.Join(dir, "inventories", "inv.shellf")
 
-	plan, _, err := loadPlanPackage(planPath, invPath, map[string]string{}, map[string]string{})
+	plan, _, _, err := project.Load(planPath, invPath, map[string]string{}, map[string]string{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -659,7 +222,7 @@ func TestControlChannel_NilWhenThePlanAsksNothing(t *testing.T) {
 
 // And the other half: a plan that marks a control-host path gets a channel.
 func TestControlChannel_ServesADeclaredPath(t *testing.T) {
-	dir := project(t, t.TempDir())
+	dir := projectDir(t, t.TempDir())
 	writeFile(t, filepath.Join(dir, "assets"), "motd.tmpl", "hello @{who}\n")
 	writeFile(t, filepath.Join(dir, "plans"), "plan.shellf",
 		`on web { file.template(%"motd.tmpl", "/etc/motd") }`)
@@ -667,7 +230,7 @@ func TestControlChannel_ServesADeclaredPath(t *testing.T) {
 	planPath := filepath.Join(dir, "plans", "plan.shellf")
 	invPath := filepath.Join(dir, "inventories", "inv.shellf")
 
-	plan, _, err := loadPlanPackage(planPath, invPath, map[string]string{}, map[string]string{})
+	plan, _, _, err := project.Load(planPath, invPath, map[string]string{}, map[string]string{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -678,93 +241,6 @@ func TestControlChannel_ServesADeclaredPath(t *testing.T) {
 	channelFor := controlChannel(planPath, plan, inv, map[string]string{}, map[string]string{})
 	if channelFor("web") == nil {
 		t.Fatal("a plan declaring a control-host path must get a bridge")
-	}
-}
-
-// #356: a plan that catches an error with `?` and handles it did its job, yet shellf
-// exited 1 — so `shellf run … && echo deployed` never printed, and the language's own
-// error handling was unusable from a script or a CI job.
-//
-// Found by running examples/plans/webserver.shellf, which demonstrates `?` on purpose:
-// nothing failed, and the run reported failure.
-func TestReportText_ACaughtErrorIsNotARunFailure(t *testing.T) {
-	caught := []orchestrator.BlockReport{{
-		Target: "web",
-		Hosts: []orchestrator.HostOutcome{{
-			Host: "app1",
-			Response: proto.Response{Results: []proto.StepResult{
-				{Label: "apt.install(pkg=absent)", Category: "err", Tag: "runtime", Caught: true},
-				{Label: "shell(logger …)", Category: "ok", Tag: "ran"},
-			}},
-		}},
-	}}
-	if _, anyErr := reportText(caught); anyErr {
-		t.Fatal("an error the plan caught and handled must not fail the run")
-	}
-
-	// The other half: an uncaught error still fails, or `?` would be a way to make every
-	// failure invisible.
-	uncaught := caught
-	uncaught[0].Hosts[0].Response.Results[0].Caught = false
-	if _, anyErr := reportText(uncaught); !anyErr {
-		t.Fatal("an uncaught error must still fail the run")
-	}
-}
-
-// #414: `dir.copy`'s third argument is documented (`docs/language.md`, README) and was
-// refused — `dir.copy expects 2 argument(s), got 3`. A stale Go-builtin entry in
-// stdSignatures shadowed the def, which grew `compare` when `dir.copy` became a def over
-// `~dir.sync` (#335, ADR-0039 §6). `dir.sync` was never in that table, which is why the
-// same call works there.
-//
-// The rule the table's own comment states: "adding a def needs no parser-side edit".
-func TestStdSignatures_ComeFromTheDefs(t *testing.T) {
-	sig := stdSignatures()
-
-	params, required, ok := sig("dir.copy")
-	if !ok {
-		t.Fatal("dir.copy must resolve")
-	}
-	if len(params) != 3 || params[2].Name != "compare" {
-		t.Fatalf("dir.copy's signature must come from its def: %v", params)
-	}
-	if required != 2 {
-		t.Fatalf("compare has a default, so two arguments are required, got %d", required)
-	}
-
-	// The neighbour that was in the same table, for the same stale reason.
-	if params, required, ok := sig("file.copy"); !ok || len(params) != 2 || required != 2 {
-		t.Fatalf("file.copy: %v %d %v", params, required, ok)
-	}
-}
-
-// The whole point of #451 is the exit code, so it is asserted here rather than on the
-// report string: the text was already empty-and-harmless, and every string assertion
-// passed while `shellf run … && echo deployed` printed `deployed`.
-func TestReportText_UnknownTargetErrorsTheRun(t *testing.T) {
-	reports := []orchestrator.BlockReport{{
-		Target: "wbe",
-		Err:    &orchestrator.UnknownTargetError{Target: "wbe"},
-	}}
-	text, anyErr := reportText(reports)
-	if !anyErr {
-		t.Fatal("an unknown target must make the run exit non-zero")
-	}
-	if !strings.Contains(text, "wbe") {
-		t.Fatalf("the report must name the target: %q", text)
-	}
-}
-
-// A group with no members is a success, and it must say so: an empty block line reads
-// exactly like a block that converged (#451).
-func TestReportText_EmptyBlockSaysSo(t *testing.T) {
-	reports := []orchestrator.BlockReport{{Target: "spare"}}
-	text, anyErr := reportText(reports)
-	if anyErr {
-		t.Fatal("an empty group is not an error")
-	}
-	if !strings.Contains(text, "no hosts") {
-		t.Fatalf("an empty block must report why it did nothing: %q", text)
 	}
 }
 
@@ -806,108 +282,15 @@ func TestCheckParallel(t *testing.T) {
 	}
 }
 
-// A run has to be consumable by something other than a human: a CI step gating on what
-// changed, a dashboard, a script. Parsing the prose breaks the day a line is reworded
-// (#459).
-func TestReportJSON_CarriesTheSameVerdictsAsTheText(t *testing.T) {
-	reports := []orchestrator.BlockReport{{
-		Target: "web",
-		Hosts: []orchestrator.HostOutcome{
-			{Host: "app1", Response: proto.Response{
-				Results: []proto.StepResult{
-					{Label: "apt.install(nginx)", Category: "ok", Tag: "installed", Changed: true},
-					{Label: "shell(bad)", Category: "err", Tag: "runtime"},
-				},
-				Halted: true,
-			}},
-			{Host: "app2", Err: errFake("dial refused")},
-		},
-	}}
-
-	out, anyErr := reportJSON(reports)
-	_, textErr := reportText(reports)
-	if anyErr != textErr {
-		t.Fatalf("the two renderers must agree on failure: json=%v text=%v", anyErr, textErr)
-	}
-
-	var got jsonReport
-	if err := json.Unmarshal([]byte(out), &got); err != nil {
-		t.Fatalf("the output must parse: %v\n%s", err, out)
-	}
-	if got.Version == 0 {
-		t.Fatal("the shape is a contract once published; it carries a version")
-	}
-	if len(got.Blocks) != 1 || got.Blocks[0].Target != "web" {
-		t.Fatalf("blocks: %+v", got.Blocks)
-	}
-	if len(got.Blocks[0].Hosts) != 2 {
-		t.Fatalf("both hosts must appear, including the unreachable one: %+v", got.Blocks[0].Hosts)
-	}
-	h := got.Blocks[0].Hosts[0]
-	if len(h.Results) != 2 || h.Results[0].Tag != "installed" || !h.Halted {
-		t.Fatalf("host detail lost: %+v", h)
-	}
-	if got.Blocks[0].Hosts[1].Error == "" {
-		t.Fatal("a host that could not be reached must carry its error")
-	}
-}
-
-// A block-level failure (#451) has no host to hang on, and must survive into the JSON —
-// otherwise a consumer sees an empty block and reads it as "nothing to do".
-func TestReportJSON_CarriesBlockErrors(t *testing.T) {
-	reports := []orchestrator.BlockReport{{
-		Target: "wbe",
-		Err:    &orchestrator.UnknownTargetError{Target: "wbe"},
-	}}
-	out, anyErr := reportJSON(reports)
-	if !anyErr {
-		t.Fatal("an unknown target must fail the run in JSON mode too")
-	}
-	var got jsonReport
-	if err := json.Unmarshal([]byte(out), &got); err != nil {
-		t.Fatal(err)
-	}
-	if got.Blocks[0].Error == "" || !strings.Contains(got.Blocks[0].Error, "wbe") {
-		t.Fatalf("the block error must be named: %+v", got.Blocks[0])
-	}
-}
-
-// `--json` must not become a secret-exfiltration flag. The trap is JSON escaping: a secret
-// holding a quote or a backslash is not present verbatim in the encoded bytes, so masking
-// the rendered string is not enough on its own.
-func TestReportJSON_RedactsSecretsIncludingEscapedForms(t *testing.T) {
-	for _, secret := range []string{"pl41ntext", `qu"ote`, `back\slash`, "new\nline"} {
-		reports := []orchestrator.BlockReport{{
-			Target: "web",
-			Hosts: []orchestrator.HostOutcome{{Host: "app1", Response: proto.Response{
-				Results: []proto.StepResult{{
-					Label:    "file.write(content=" + secret + ")",
-					Category: "ok",
-					Tag:      "written",
-					Preview:  "wrote " + secret,
-				}},
-			}}},
-		}}
-		out, _ := reportJSON(reports)
-		masked := redactJSON(out, []string{secret})
-		if strings.Contains(masked, secret) {
-			t.Fatalf("the raw secret survived: %q in %s", secret, masked)
-		}
-		// And the escaped form, which is what actually sits in the encoded bytes.
-		esc, _ := json.Marshal(secret)
-		inner := string(esc[1 : len(esc)-1])
-		if strings.Contains(masked, inner) {
-			t.Fatalf("the escaped secret survived: %q in %s", inner, masked)
-		}
-		if !json.Valid([]byte(masked)) {
-			t.Fatalf("masking must keep the output parseable: %s", masked)
-		}
-	}
-}
-
 // anyBlockError is what makes `status` exit non-zero on an unknown target (#451). It had
 // no test of its own — the behaviour was only covered end to end, where a change to it
 // would surface as a puzzling exit code rather than a failing assertion.
+// errFake is a minimal error for table cases. internal/report has its own since #491:
+// a test helper does not cross a package boundary.
+type errFake string
+
+func (e errFake) Error() string { return string(e) }
+
 func TestAnyBlockError(t *testing.T) {
 	none := []orchestrator.BlockReport{
 		{Target: "web", Hosts: []orchestrator.HostOutcome{{Host: "h1"}}},
@@ -930,73 +313,6 @@ func TestAnyBlockError(t *testing.T) {
 	}
 	if !anyBlockError(blocked) {
 		t.Fatal("a block that could not run must be reported")
-	}
-}
-
-// The JSON renderer must agree with the text one on the cases that decide the exit code,
-// not only on the happy path: a caught error is not a failure (ADR-0009, #356), and an
-// uncaught one is.
-func TestReportJSON_CaughtErrorIsNotAFailure(t *testing.T) {
-	caught := []orchestrator.BlockReport{{
-		Target: "web",
-		Hosts: []orchestrator.HostOutcome{{Host: "h1", Response: proto.Response{
-			Results: []proto.StepResult{{Label: "s", Category: "err", Tag: "runtime", Caught: true}},
-		}}},
-	}}
-	if _, anyErr := reportJSON(caught); anyErr {
-		t.Fatal("an error the plan handled is not a failed run")
-	}
-	uncaught := []orchestrator.BlockReport{{
-		Target: "web",
-		Hosts: []orchestrator.HostOutcome{{Host: "h1", Response: proto.Response{
-			Results: []proto.StepResult{{Label: "s", Category: "err", Tag: "runtime"}},
-		}}},
-	}}
-	if _, anyErr := reportJSON(uncaught); !anyErr {
-		t.Fatal("an uncaught error must fail the run")
-	}
-}
-
-// An empty run still produces a valid document — a consumer parses it unconditionally, so
-// "no blocks" must not mean "no JSON".
-func TestReportJSON_EmptyRunStaysValid(t *testing.T) {
-	out, anyErr := reportJSON(nil)
-	if anyErr {
-		t.Fatal("an empty run did not fail")
-	}
-	var got jsonReport
-	if err := json.Unmarshal([]byte(out), &got); err != nil {
-		t.Fatalf("must still parse: %v (%s)", err, out)
-	}
-	if got.Blocks == nil {
-		t.Fatal("blocks must be an empty array, not null: a consumer iterates it")
-	}
-}
-
-// An empty secret masks nothing: it would otherwise match everywhere and turn the whole
-// document into asterisks.
-func TestRedactJSON_IgnoresEmptySecrets(t *testing.T) {
-	const doc = `{"host":"h1"}`
-	if got := redactJSON(doc, []string{""}); got != doc {
-		t.Fatalf("an empty secret must be ignored, got %q", got)
-	}
-	if got := redactJSON(doc, nil); got != doc {
-		t.Fatalf("no secrets must leave the document untouched, got %q", got)
-	}
-}
-
-// `status` renders block errors and empty blocks like `run` does (#451) — the paths that
-// only a status sweep reaches.
-func TestStatusReport_BlockErrorAndEmptyBlock(t *testing.T) {
-	text := statusReport([]orchestrator.BlockReport{
-		{Target: "wbe", Err: &orchestrator.UnknownTargetError{Target: "wbe"}},
-		{Target: "spare"},
-	})
-	if !strings.Contains(text, "wbe") {
-		t.Fatalf("the block error must be named: %q", text)
-	}
-	if !strings.Contains(text, "no hosts") {
-		t.Fatalf("an empty block must say so: %q", text)
 	}
 }
 
@@ -1044,23 +360,5 @@ func TestTracer_RedactsAndStaysOffStdout(t *testing.T) {
 	}
 	if outBuf.String() != "" {
 		t.Fatalf("nothing may reach stdout: %q", outBuf.String())
-	}
-}
-
-// A shell variable holds arbitrary content — a whole config file arrives as one `content`
-// argument. Printed raw it breaks the report's shape, which is what a first run showed
-// (#470).
-func TestOneLine_BoundsAValue(t *testing.T) {
-	if got := oneLine("hello\n"); got != "hello …" {
-		t.Fatalf("a trailing newline must not split the line: %q", got)
-	}
-	if got := oneLine("first\nsecond\nthird"); got != "first …" {
-		t.Fatalf("only the first line is kept: %q", got)
-	}
-	if got := oneLine(strings.Repeat("x", 200)); len(got) > 70 {
-		t.Fatalf("a long value must be cut: %d chars", len(got))
-	}
-	if got := oneLine("/opt/app"); got != "/opt/app" {
-		t.Fatalf("an ordinary value must pass through untouched: %q", got)
 	}
 }

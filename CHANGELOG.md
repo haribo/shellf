@@ -6,6 +6,42 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-08
+
+### Added
+
+- `test/bench/`: a shellf vs Ansible benchmark anyone can re-run (`SHELLF_BENCH=1 bash test/bench/run.sh`). One generator emits both the plan and the playbook, so neither side drifts; the two targets are diffed file by file and a mismatch fails the run before any timing is reported. No number is published — the README says what the measurement cannot claim (#464).
+
+- Seven adverse cases pass a hostile *argument* rather than a hostile starting state: `dir.ensure`, `dir.owner`, `dir.copy`, `file.copy`, `file.delete`, `file.template` and `archive.extract-member` are now called with paths holding a space, a quote and a `&`. Verified to fail when the quoting is removed, not merely to pass (#535).
+
+- A def's argument guards answer while the plan is read, when the `check` holding them reaches nothing — no shell, no host. `file.replace("/etc/app.env", "a=b", "v")` against two unreachable hosts went from 10 020 ms and no mention of the argument, to 5 ms naming the instruction and its line. Every check still runs on the target too (#492, ADR-0056).
+
+- `~text.matches(s, pattern)` and `~text.replace(s, pattern, repl)`: a def can ask something of a value other than equality, with the agent's own RE2 rather than the target's `sed`. `file.replace` now refuses a key holding a `=` — it used to append a second `a=` line and change the file's `a` — and `sudo.write` drops two shells from its `check` (#575).
+- ADR-0055: `~text.matches` and `~text.replace`, two primitives over values. The engine is the agent's own RE2, identical on every target, and the replacement is literal — a `$1` or an `&` in it is text, which is the defect #487 was. A def can finally refuse an argument it cannot honour (#575).
+
+### Changed
+
+- The local checks reproduce CI. They pin the toolchain `go.mod` names — `GOTOOLCHAIN=auto` only ever upgrades, so a machine on a newer Go measured something CI never measured: coverage read 80.9% here and 81.8% there, and `deadcode` panicked outright. `test/lint.sh` runs golangci-lint at the workflow's version, which `go vet` cannot replace (#589).
+
+- Plan loading moves out of `cmd/shellf` into `internal/project`: the layout, sibling defs, imports, and the def table a run resolves against. That table is why it is a package — `lang` cannot import `std`, so something must see both, and it should not be the layer that exits the process. `main.go`: 1206 lines down to 587 (#491).
+- Report rendering moves out of `cmd/shellf` into `internal/report`: the text and JSON reports, the `status` view, and the redaction keeping a credential off stdout. Entangled with flag parsing and process exit, it could only be tested by driving the whole command — so the layer an operator reads was the least tested. Now 94.5% (#491).
+
+- The control host asks the agent whether a job is done every 25 ms at first, widening to a second, instead of a flat second throughout: work already finished waited out the rest of the tick. A converged one-instruction plan drops from 698 ms to 439 ms; a long run still costs about one round trip per second (#573).
+
+### Fixed
+
+- The resident agent marks a job done only after writing the result. The marker went out unconditionally, so a full tmpfs workdir — where one byte fits and a kilobyte does not — made the control host report `unexpected end of JSON input` for a job that ran. A short result naming the cause is written instead (#600).
+
+- Four defs reported `already` over a machine their own apply would have changed, each because the `observe` asked less than the `apply` guarantees: `file.replace` accepted a duplicated key, `archive.extract` trusted a sentinel over the contents, `postgres.database` ignored the owner, `htpasswd.entry` matched the login as a regex (#594).
+
+- `file.download` verifies the hash before touching the destination. It downloaded straight onto it and checked afterwards, so a hash that did not match left unverified content at the path — usually an executable — with the previous file already gone. The mandatory sha256 exists because the source is not trusted; verifying after the write spent that guarantee (#599).
+
+- A `bool` parameter can take a value from the inventory. `service.ensure("nginx", "${inventory.flag}", true)` was refused whatever the host held, because the type check read the text standing in for the value instead of the value. It is now checked after the per-host expansion, so a host holding `"yes"` is still refused — naming that host and the line (#582).
+
+- Comparing bytes is refused by name instead of going wrong quietly. `~file.read(a) == ~file.read(b)` panicked the evaluator, and comparing bytes with a string answered false for any content — a def author reads that as "the contents differ". ADR-0034 §4 already said bytes cannot be compared; nothing enforced it (#578).
+
+- `user.group` documents that the membership does not apply to later steps of the same run: groups are fixed when a session starts and the agent keeps its own (ADR-0005). The next step fails on a permission error that looks like the def not working (#510).
+
 ## [0.11.0] - 2026-09-04
 
 ### Added
@@ -325,7 +361,8 @@ agent that evaluates on the host — "raw shell, but idempotent, previewable, fa
   per-user agent/workdir scoping.
 - Commands: `run`, `status`, `clean`, and `version`.
 
-[Unreleased]: https://github.com/haribo/shellf/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/haribo/shellf/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/haribo/shellf/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/haribo/shellf/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/haribo/shellf/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/haribo/shellf/compare/v0.9.0...v0.9.1

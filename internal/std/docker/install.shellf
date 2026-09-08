@@ -1,3 +1,27 @@
+# Why this pipes a remote script when `file.download` refuses to fetch anything without a
+# sha256 — the two answer the same trust question in opposite ways, and the position is
+# stated here rather than left for a reader to infer (#601).
+#
+# `file.download` fetches an **artefact**: a release binary, immutable, at a version the
+# plan names. A hash of it is checkable because the bytes never move, and the file is
+# usually executed later by something else, long after anyone looked. Refusing an unverified
+# one costs nothing.
+#
+# `https://get.docker.com` is a **script that changes with every Docker release**. Pinning a
+# hash would break the def on each of them, and a hash bumped without reading the diff is a
+# ritual, not a verification — the appearance of the guarantee `file.download` actually
+# provides. What is trusted here is TLS and the domain, which is the same trust the
+# alternative would need anyway: the apt route means adding Docker's repository and its
+# signing key, on the authority of the same domain.
+#
+# So this def is a **convenience, not a guarantee**. A plan that does not want that trust
+# does not call it: it installs docker through apt with a repository and a key it chose,
+# which shellf can express with the defs it already has.
+#
+# The cost is recorded in `test/e2e/def-coverage.sh`: this is the one def no e2e run
+# exercises, so the least verified instruction in the stdlib is also the one running remote
+# code as root. That is the price of the position above, and it is why the position is
+# written down rather than assumed.
 def install() as root {
     observe { return state(installed: shell { command -v docker }.exit == 0) }
     apply {

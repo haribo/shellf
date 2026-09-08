@@ -1,0 +1,25 @@
+# `dir.ensure` with a hostile *argument* rather than a hostile state (#527, #535).
+#
+# A path holding a space, a single quote and a shell metacharacter. Nothing exotic —
+# "Application Support", "Bob's data" — and the shape that finds a `$path` somebody forgot
+# to quote: unquoted, `mkdir -p /tmp/adv-dir-ensure/a b'c` creates two directories, or
+# nothing at all.
+on target {
+    dir.ensure("/tmp/adv-dir-ensure")
+
+    dir.ensure("/tmp/adv-dir-ensure/a b'c & d")
+    shell {
+        # The directory that must exist is the one that was asked for, whole. `find` with
+        # -maxdepth 1 also proves no sibling was created by a split argument.
+        [ -d "/tmp/adv-dir-ensure/a b'c & d" ] || exit 1
+        [ "$(find /tmp/adv-dir-ensure -maxdepth 1 -mindepth 1 | wc -l)" = "1" ] || exit 1
+    }
+
+    # A path whose last segment starts with a dash: `mkdir` would read it as an option.
+    dir.ensure("/tmp/adv-dir-ensure/-rf")
+    shell { [ -d "/tmp/adv-dir-ensure/-rf" ] || exit 1 }
+
+    # Idempotent over the same hostile path: the second call must not fail on "exists".
+    dir.ensure("/tmp/adv-dir-ensure/a b'c & d")
+    shell { [ -d "/tmp/adv-dir-ensure/a b'c & d" ] || exit 1 }
+}

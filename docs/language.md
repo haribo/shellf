@@ -406,6 +406,68 @@ The refusal happens when the plan is read, before any host is contacted. It matt
 than it looks: a def receiving `"yes"` for `running` used to read it as *not true* and
 **stop** the service, reporting `ok.converged`.
 
+## Asking something of a value — `~text.matches` / `~text.replace` (ADR-0055)
+
+A type says what a value *is*; these say what shape it has. They are the only way to ask
+a question of a value other than "is it equal to that one?", and they belong in a def:
+
+```
+def replace(path: str, key: str, value: str) {
+    check {
+        if ~text.matches(key, "=") { return err.keyMustNotContainEquals }
+    }
+    …
+}
+```
+
+- `~text.matches(subject, pattern)` answers true or false.
+- `~text.replace(subject, pattern, replacement)` rewrites **every** match.
+
+Both are pure: no file, no host, no shell. The engine is Go's RE2, compiled into the
+binary, so a pattern answers the same on Debian, Alpine and BSD — `sed` does not. RE2 has
+no backtracking: `\d` is not part of it, `[0-9]` is.
+
+**The replacement is literal.** `$1` and `&` are ordinary characters, not references to
+what was matched (`${name}` is a different thing: shellf's own interpolation, applied to
+the string before the primitive sees it):
+
+```
+~text.replace("abc", "b", "&$1")     # → "a&$1c"
+```
+
+That is deliberate. `file.replace` once built a `sed` expression out of its own arguments,
+where `&` means "the whole match", and `URL=https://a&b` landed as `URL=https://aURL=oldb`
+(#487). A replacement with its own expansion syntax is that defect again.
+
+A pattern written as a literal is compiled when the def is parsed, so one that cannot
+compile is reported where it is written. A pattern arriving as a parameter is only knowable
+when the def runs, and fails there, naming the primitive.
+
+### A guard that touches nothing answers before the run (ADR-0056)
+
+A `check` normally runs where the def runs: on the target. When **every** statement in it
+reaches nothing — no `shell`, no call to another def, and of the primitives only
+`~text.matches` / `~text.replace` — shellf evaluates it while reading the plan:
+
+```
+$ shellf run --dry-run plans/app.shellf
+plans/app.shellf: 12:5: file.replace: err.keyMustNotContainEquals
+```
+
+No host was contacted. The same plan used to report `unreachable` and say nothing about
+the argument, because the guard needed a machine to run on.
+
+Two limits, both deliberate:
+
+- **Only an `err` decides.** A pure check returning `ok` concludes nothing here and the run
+  proceeds — a question about state cannot be pure anyway.
+- **Only values the plan already holds.** An argument written `${inventory.field}`, or as a
+  bare name, is resolved per host and is not judged here: the text is not the value. It is
+  judged once expanded — on the control host, before that host's request goes out — so the
+  refusal names the host as well as the line.
+
+It is an addition, not a replacement — every check still runs on the target.
+
 ## `%"…"` — a file on your machine, named by the plan (ADR-0043)
 
 A `%` marks a path the control host owns: `file.copy(%"conf.j2", "/etc/app.conf")`. What a
@@ -430,6 +492,21 @@ on where the file lives would change meaning when it moves.
 
 It bounds *which* files a def can obtain, not what it does with them: a def still runs
 shell on the target.
+
+### The content itself is opaque (ADR-0034 §4)
+
+What `~file.read` returns is **bytes**, not a string: it may be an image. Bytes go from a
+primitive to an instruction and nowhere else — they cannot be interpolated into `"${…}"`,
+and they cannot be compared:
+
+```
+x = ~file.read(src)
+if x == "hello" { … }        # refused: bytes cannot be compared
+file.write(dst, x)           # how they are meant to travel
+```
+
+The refusal is the point. Comparing content read as bytes means treating binary as text,
+and the two ways it used to go wrong were both silent about it (#578).
 
 ## Delivering a tree — `dir.copy` (ADR-0039)
 

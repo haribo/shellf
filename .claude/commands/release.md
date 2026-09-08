@@ -29,12 +29,12 @@ explicit human "go" each time — this overrides any standing "be autonomous".**
   - update link refs: `[Unreleased]: …/compare/vX.Y.Z...HEAD`, and add
     `[X.Y.Z]: …/compare/v<prev>...vX.Y.Z` (or `…/releases/tag/vX.Y.Z` if first).
   - Do **not** edit the entries' wording here — they were written per-PR.
-- Commit `chore(release): vX.Y.Z`, push, open a PR into `develop`, wait for green,
+- Commit `chore(changelog): roll vX.Y.Z`, push, open a PR into `develop`, wait for green,
   squash-merge (`/gh-merge-develop`). Then `git checkout develop && git pull`.
 
 ### 3. Merge `develop`→`main` — **APPROVAL GATE 1**
 
-- `gh pr create --base main --head develop --title "chore(release): vX.Y.Z"` with a
+- `gh pr create --base main --head develop --title "chore(release): cut vX.Y.Z"` with a
   short body. Wait until every check is green (`gh pr checks`).
 - **The body must carry one `Closes #N` per issue in this version.** A feature PR's
   `Closes` never fires: GitHub honours the keyword only when the PR merges into the
@@ -47,7 +47,7 @@ explicit human "go" each time — this overrides any standing "be autonomous".**
   entry may also cite an issue it merely refers to.
 - **Stop. Show the PR and ask the user to approve the merge to `main`.**
 - On explicit approval only:
-  `gh pr merge <n> --merge --subject "chore(release): vX.Y.Z (#<n>)" --body ""`
+  `gh pr merge <n> --merge --subject "chore(release): cut vX.Y.Z (#<n>)" --body ""`
   (merge commit, never squash). The explicit `--subject` is required: without it
   GitHub writes `Merge pull request #<n> from …`, the only non-conventional
   subject in the history.

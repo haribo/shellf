@@ -32,6 +32,26 @@ def ensure(name: str, shell: str, system: bool = false) as root {
     }
 }
 
+# **The membership does not apply to anything later in the same run.** The def is truthful —
+# `usermod -aG` ran, `/etc/group` holds the new membership, and the observe reads it back —
+# but supplementary groups are fixed when a session is established, and the agent keeps the
+# session it was started with (ADR-0005).
+#
+# So the natural next step fails in a way that looks like this def not working:
+#
+#     user.group("deploy", "docker")            ok.added
+#     shell { docker image prune -af }          err.runtime
+#         ! permission denied … Docker daemon socket
+#
+# Re-running the plan does not help either: the agent is a **transient resident** that lives
+# across a burst of runs until a long TTL expires (ADR-0005), so the next run reuses the same
+# session. A step that needs the new group must either escalate with `as root`, or belong to
+# a run after the agent has aged out — `shellf clean` forces that early.
+#
+# Not made to fail instead: the def would have to know what the rest of the plan does. And
+# not worked around with `newgrp` or by re-execing the agent — the first does not survive to
+# the next step either, and the second contradicts the resident model that makes a second run
+# cost no round trip (#510).
 def group(user: str, group: str) as root {
     observe { return state(member: shell { id -nG "$user" | tr ' ' '\n' | grep -qx "$group" }.exit == 0) }
     apply {

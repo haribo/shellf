@@ -59,3 +59,14 @@ Groups are the unit of assignment (which hosts run a `def`) — covered separate
 **Per-host business variables** (Ansible `host_vars` / `group_vars`). Excluded by
 design: multi-source variable precedence is a debugging pit. Business values are
 passed as **explicit `def` arguments**, never resolved implicitly from the host.
+
+> **Superseded.** A host does carry free-form variables today, and a plan reads them —
+> through a prefix that names where the value comes from, which is what this exclusion was
+> protecting against. [ADR-0052](../adr/0052-per-host-interpolation.md) added
+> `${inventory.<field>}` for the host a step runs on;
+> [ADR-0054](../adr/0054-cross-host-inventory-reads.md) added
+> `${inventory.<host>.<field>}` for another host's, because an address that exists once in
+> reality was being written twice. [ADR-0053](../adr/0053-one-name-one-source.md) is what
+> makes it safe: one name resolves against one source, so the pit this paragraph describes
+> — the same name meaning two things depending on how it is written — is closed by rule
+> rather than by abstinence. `key` stays refused: it is the path to a private key.

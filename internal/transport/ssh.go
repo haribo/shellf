@@ -674,7 +674,29 @@ func (s SSH) hostKeyCallback() (ssh.HostKeyCallback, error) {
 	}, nil
 }
 
-var pollWait = time.Second // poll cadence; a var so tests can shrink it
+// pollWait is the FIRST interval between two "is the job done?" asks; every
+// later wait doubles it, up to pollWaitMax. A plan that converges in tens of
+// milliseconds must not be billed a whole second before anyone observes it
+// (#573, measured in #464), and a plan that runs for minutes must not cost one
+// SSH round trip per tick — the ramp buys both. Vars so tests can shrink them.
+var (
+	pollWait    = 25 * time.Millisecond
+	pollWaitMax = time.Second
+)
+
+// nextPollWait widens an interval towards the ceiling; a zero interval — the
+// state before the first ask — starts at pollWait.
+func nextPollWait(d time.Duration) time.Duration {
+	if d == 0 {
+		d = pollWait
+	} else {
+		d *= 2
+	}
+	if d > pollWaitMax {
+		return pollWaitMax
+	}
+	return d
+}
 
 // How hard the control host tries to put a bridge back after its session drops (#347).
 // Bounded on purpose: a host that has genuinely gone away must let the run end, and the
@@ -723,11 +745,17 @@ func (s SSH) poll(wd, jobid string, deadline time.Time) ([]byte, error) {
 		}
 	}()
 
+	var wait time.Duration
+	backoff := func() {
+		wait = nextPollWait(wait)
+		time.Sleep(wait)
+	}
+
 	for time.Now().Before(deadline) {
 		if cn == nil {
 			c, err := s.dialConn()
 			if err != nil {
-				time.Sleep(pollWait)
+				backoff()
 				continue // survive: retry the dial
 			}
 			cn = c
@@ -736,14 +764,14 @@ func (s SSH) poll(wd, jobid string, deadline time.Time) ([]byte, error) {
 		if err != nil {
 			_ = cn.close()
 			cn = nil // dropped → re-dial next iteration
-			time.Sleep(pollWait)
+			backoff()
 			continue
 		}
 		if ready {
 			rmJob(cn, wd, jobid)
 			return data, nil
 		}
-		time.Sleep(pollWait)
+		backoff()
 	}
 	return nil, fmt.Errorf("agent job %s timed out after %s", jobid, s.execTimeout())
 }
