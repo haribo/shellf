@@ -631,11 +631,24 @@ func (s SSH) authMethods() ([]ssh.AuthMethod, func(), error) {
 
 	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
 		conn, err := net.Dial("unix", sock)
-		if err != nil {
+		switch {
+		case err != nil && len(methods) > 0:
+			// A dead socket removes a method; it does not fail a run that can already
+			// authenticate. `SSH_AUTH_SOCK` outlives the agent it names — a detached tmux,
+			// a closed session, an inherited variable — and discarding the inventory key
+			// over it made the same plan work in one terminal and not in another (#612).
+			// ADR-0026 §1 ranks `key:` first, "an explicit choice wins", and asks for an
+			// error only when neither method is available; that case is still below.
+			//
+			// Traced rather than silent: being invisible is what made this hard to
+			// attribute to the environment it comes from.
+			s.trace("skipping ssh-agent (%s): %v", sock, err)
+		case err != nil:
 			return nil, noop, fmt.Errorf("connect ssh-agent (%s): %w", sock, err)
+		default:
+			methods = append(methods, ssh.PublicKeysCallback(agent.NewClient(conn).Signers))
+			noop = func() { _ = conn.Close() }
 		}
-		methods = append(methods, ssh.PublicKeysCallback(agent.NewClient(conn).Signers))
-		noop = func() { _ = conn.Close() }
 	}
 
 	if len(methods) == 0 {
