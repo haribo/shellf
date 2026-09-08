@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-08
+
 ### Added
 
 - `test/bench/`: a shellf vs Ansible benchmark anyone can re-run (`SHELLF_BENCH=1 bash test/bench/run.sh`). One generator emits both the plan and the playbook, so neither side drifts; the two targets are diffed file by file and a mismatch fails the run before any timing is reported. No number is published — the README says what the measurement cannot claim (#464).
@@ -359,7 +361,8 @@ agent that evaluates on the host — "raw shell, but idempotent, previewable, fa
   per-user agent/workdir scoping.
 - Commands: `run`, `status`, `clean`, and `version`.
 
-[Unreleased]: https://github.com/haribo/shellf/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/haribo/shellf/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/haribo/shellf/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/haribo/shellf/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/haribo/shellf/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/haribo/shellf/compare/v0.9.0...v0.9.1
