@@ -1,15 +1,23 @@
 # Examples
 
-**One project, two plans** — which is what a real project looks like. The layout is the
+**One project, four plans** — which is what a real project looks like. The layout is the
 one every shellf project uses (ADR-0038):
 
 ```
 examples/
-  plans/          webserver.shellf, blog.shellf
+  plans/          webserver.shellf, blog.shellf, hosting.shellf, fleet.shellf
   defs/           blog/, common/          → called blog.data-dir, common.banner
   assets/         blog/compose.env.tmpl   → addressed %"blog/compose.env.tmpl"
   inventories/    inventory.shellf
 ```
+
+The four are not variations on one another. `webserver` and `blog` show the language —
+start there. `hosting` and `fleet` **measured** it: each was written against a real target
+and every place shellf had nothing to offer became an instruction (`docs/dogfood.md`).
+`hosting` is one machine — Traefik, an app built on the host, a systemd-timer backup;
+`fleet` is two, which is where a host needing another host's address first appears. Both
+carry **no `unsafe shell`**, and that count is the number to watch: a later version needing
+one has found a gap worth an issue.
 
 A def is addressed by name, not by where it sits next to: `defs/common/banner.shellf`
 declares `banner`, and any plan calls `common.banner(…)` with no import and no flag.
