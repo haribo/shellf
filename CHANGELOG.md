@@ -33,6 +33,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- `unless` is gone from the engine. The parser has refused the keyword for a while, but `engine.Shell` still carried the guard and the agent still read it from a step's free-form arguments — reachable by a hand-forged request and by nothing a plan can write. A capability with no way to express it is a trap for the next reader (#619).
+
 - The local checks reproduce CI. They pin the toolchain `go.mod` names — `GOTOOLCHAIN=auto` only ever upgrades, so a machine on a newer Go measured something CI never measured: coverage read 80.9% here and 81.8% there, and `deadcode` panicked outright. `test/lint.sh` runs golangci-lint at the workflow's version, which `go vet` cannot replace (#589).
 
 - Plan loading moves out of `cmd/shellf` into `internal/project`: the layout, sibling defs, imports, and the def table a run resolves against. That table is why it is a package — `lang` cannot import `std`, so something must see both, and it should not be the layer that exits the process. `main.go`: 1206 lines down to 587 (#491).
