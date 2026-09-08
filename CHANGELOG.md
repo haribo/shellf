@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- `archive.extract-member` extracts to a staged file and renames it. It redirected `tar` straight at the destination, so a member missing from the archive emptied the file that was there — usually an executable, since that is what this def installs. The destination's mode is carried over, which a rename would otherwise drop (#613).
+
 ## [0.12.0] - 2026-09-08
 
 ### Added
