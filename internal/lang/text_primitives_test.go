@@ -112,3 +112,47 @@ func TestText_Arity(t *testing.T) {
 		})
 	}
 }
+
+// #633. A def calling another instruction with too few arguments was accepted: the missing
+// parameter bound to the empty string, so `file.write(p)` overwrote a file with nothing and
+// reported `ok.done`. Reproduced on a real target before this test existed.
+//
+// The plan path checks both bounds (parser.go). This one checked only the upper one, which
+// is why the same mistake is refused in a plan and silent in a def — where defs compose and
+// nobody reads the call site.
+func TestCallArity_TooFewIsRefused(t *testing.T) {
+	src := `def callee(a: str, b: str) { check { return ok.done } }
+def caller(p: str) { check { callee(p) return ok.done } }`
+	_, err := evalWithFetch(t, src, "caller", map[string]string{"p": "x"}, nil)
+	if err == nil {
+		t.Fatal("a call missing a required argument must be refused, not bound to empty")
+	}
+	for _, want := range []string{"callee", "2", "1"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the refusal must name the callee and both counts, missing %q: %v", want, err)
+		}
+	}
+}
+
+// The other bound still holds, and its message is unchanged.
+func TestCallArity_TooManyIsStillRefused(t *testing.T) {
+	src := `def callee(a: str) { check { return ok.done } }
+def caller(p: str) { check { callee(p, p) return ok.done } }`
+	if _, err := evalWithFetch(t, src, "caller", map[string]string{"p": "x"}, nil); err == nil {
+		t.Fatal("too many arguments must stay refused")
+	}
+}
+
+// A parameter with a default may be omitted — that is what defaults are for, and four
+// stdlib defs rely on it (`docker.prune`, `dir.copy`, `dir.sync`, `docker.compose-restart`).
+func TestCallArity_ADefaultedParameterMayBeOmitted(t *testing.T) {
+	src := `def callee(a: str, b: str = "fallback") { check { if b == "fallback" { return ok.defaulted } return err.bound } }
+def caller(p: str) { check { c = callee(p) if c { return ok.defaulted } return err.bound } }`
+	res, err := evalWithFetch(t, src, "caller", map[string]string{"p": "x"}, nil)
+	if err != nil {
+		t.Fatalf("omitting a defaulted parameter must stay legal: %v", err)
+	}
+	if got := res.String(); got != "ok.defaulted" {
+		t.Fatalf("got %s, want ok.defaulted — the default must reach the callee", got)
+	}
+}

@@ -702,8 +702,18 @@ func (ev *evaluator) evalCall(c Call) value {
 	if !ok {
 		ev.fail("unknown instruction %q", c.Name)
 	}
-	if len(c.Args) > len(def.Params) {
-		ev.fail("%s takes %d argument(s), got %d", c.Name, len(def.Params), len(c.Args))
+	// Both bounds, as a plan-level call has always been checked (parser.go). Only the
+	// upper one was tested here, so a call missing an argument bound the parameter to the
+	// empty string: `file.write(path)` overwrote a file with nothing and reported
+	// `ok.done` — a file destroyed under a success verdict (#633).
+	//
+	// The lower bound is the count of parameters with no default, since omitting a
+	// defaulted one is what defaults are for.
+	if req := requiredCount(def); len(c.Args) < req || len(c.Args) > len(def.Params) {
+		if req == len(def.Params) {
+			ev.fail("%s takes %d argument(s), got %d", c.Name, req, len(c.Args))
+		}
+		ev.fail("%s takes %d–%d argument(s), got %d", c.Name, req, len(def.Params), len(c.Args))
 	}
 	// Positional arguments, evaluated in THIS def's scope, then handed over as the
 	// callee's own params. Nothing else of this def crosses over.
