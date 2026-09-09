@@ -74,13 +74,23 @@ func Redact(s string, secrets []string) string {
 // statusReport renders the per-host state report: one line per resource, with a
 // `current → desired` diff on each field that has drifted. Pure (returns the
 // text) so it is unit-testable without capturing stdout.
-func Status(reports []orchestrator.BlockReport) string {
+// Status renders the sweep and reports whether it failed, like Text and JSON — the second
+// return is the point of #615: `status` used to decide its exit code from a helper that
+// only inspected block errors, so a sweep where every host was unreachable printed
+// `unreachable` on every line and exited 0. A monitor cannot tell that from a healthy
+// fleet.
+//
+// Drift is deliberately **not** a failure: reporting what differs is what `status` is for,
+// and a caller has to be able to tell "not converged" from "could not be reached".
+func Status(reports []orchestrator.BlockReport) (string, bool) {
 	var b strings.Builder
+	anyErr := false
 	for _, blk := range reports {
 		fmt.Fprintf(&b, "on %s:\n", blk.Target)
 		// Block error and empty block, rendered as in reportText (#451).
 		if blk.Err != nil {
 			fmt.Fprintf(&b, "  ! %v\n", blk.Err)
+			anyErr = true
 			continue
 		}
 		if len(blk.Hosts) == 0 {
@@ -90,6 +100,7 @@ func Status(reports []orchestrator.BlockReport) string {
 		for _, h := range blk.Hosts {
 			if h.Err != nil {
 				fmt.Fprintf(&b, "  %s: unreachable (%v)\n", h.Host, h.Err)
+				anyErr = true
 				continue
 			}
 			fmt.Fprintf(&b, "  %s:\n", h.Host)
@@ -98,7 +109,7 @@ func Status(reports []orchestrator.BlockReport) string {
 			}
 		}
 	}
-	return b.String()
+	return b.String(), anyErr
 }
 
 func statusStep(b *strings.Builder, s proto.StepResult, indent string) {

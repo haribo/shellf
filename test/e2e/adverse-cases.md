@@ -60,7 +60,7 @@ The third is the one `coverage.shellf` can never produce, because it only ever b
 from an empty target. Its cases are built by hand: a `.env` holding the wanted line **and**
 a stale duplicate, an archive's destination emptied with its sentinel left behind, a
 database that exists under the wrong owner, two logins where one is a regex match of the
-other. Each was verified to fail before the fix and pass after — a case of this kind that
+other, an archive member emptied in place. Each was verified to fail before the fix and pass after — a case of this kind that
 was never seen red proves nothing at all, since a weak observe passes it by construction.
 
 An argument case passes a path holding a space, a single quote and a `&`, or a name at a

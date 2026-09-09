@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"shellf/internal/orchestrator"
 	"shellf/internal/project"
 )
 
@@ -285,37 +284,6 @@ func TestCheckParallel(t *testing.T) {
 // anyBlockError is what makes `status` exit non-zero on an unknown target (#451). It had
 // no test of its own — the behaviour was only covered end to end, where a change to it
 // would surface as a puzzling exit code rather than a failing assertion.
-// errFake is a minimal error for table cases. internal/report has its own since #491:
-// a test helper does not cross a package boundary.
-type errFake string
-
-func (e errFake) Error() string { return string(e) }
-
-func TestAnyBlockError(t *testing.T) {
-	none := []orchestrator.BlockReport{
-		{Target: "web", Hosts: []orchestrator.HostOutcome{{Host: "h1"}}},
-		{Target: "db"},
-	}
-	if anyBlockError(none) {
-		t.Fatal("no block failed as a whole")
-	}
-	// A per-host failure is not a block failure: the block ran, the host did not.
-	perHost := []orchestrator.BlockReport{{
-		Target: "web",
-		Hosts:  []orchestrator.HostOutcome{{Host: "h1", Err: errFake("unreachable")}},
-	}}
-	if anyBlockError(perHost) {
-		t.Fatal("a host error is not a block error")
-	}
-	blocked := []orchestrator.BlockReport{
-		{Target: "web", Hosts: []orchestrator.HostOutcome{{Host: "h1"}}},
-		{Target: "wbe", Err: &orchestrator.UnknownTargetError{Target: "wbe"}},
-	}
-	if !anyBlockError(blocked) {
-		t.Fatal("a block that could not run must be reported")
-	}
-}
-
 // `-v` must not undo what the report masks: the tracer is where redaction happens,
 // because the CLI is what knows the run's secrets (#461).
 func TestTracer_RedactsAndStaysOffStdout(t *testing.T) {

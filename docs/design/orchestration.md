@@ -10,8 +10,8 @@ orchestration plan maps `def` calls onto the inventory.
 is a singleton group.
 
 ```
-on db  { postgres-install() }
-on web { nginx-install(); nginx-config() }
+on db  { db.postgres-install() }
+on web { web.nginx-install(); web.nginx-config() }
 ```
 
 The `def` inside stay neutral — `on` composes them, never the reverse.
@@ -22,7 +22,7 @@ The `def` inside stay neutral — `on` composes them, never the reverse.
 |---|---|
 | Between `on` blocks | **Sequential**, file order. `on db` completes on all its hosts before `on web` starts. |
 | Hosts within one block | **Parallel** (fan-out) — conflict-free, each host independent. |
-| `def` within one block, per host | **Sequential**. `nginx-install` then `nginx-config` on that host. |
+| `def` within one block, per host | **Sequential**. `web.nginx-install` then `web.nginx-config` on that host. |
 
 One SSH session per host carries the whole block's sequence (the agent is pushed
 once, not per `def`).
@@ -36,16 +36,16 @@ absence of conflict.
 ```
 on web {
   parallel {
-    nginx-install()
-    fetch-assets()
+    web.nginx-install()
+    web.fetch-assets()
   }
-  nginx-config()          // after both branches complete
+  web.nginx-config()      // after both branches complete
 }
 ```
 
 - **Result**: aggregate — `err` if any branch is `err`. Branches run to
   completion before the aggregate; no short-circuit.
-- **Halting**: an aggregate `err` halts the rest of the block (`nginx-config`
+- **Halting**: an aggregate `err` halts the rest of the block (`web.nginx-config`
   skipped), per the halting rule.
 - **Real speedup only without a shared exclusive resource.** shellf does start
   the branches together, but the system may re-serialize them: two `apt` runs

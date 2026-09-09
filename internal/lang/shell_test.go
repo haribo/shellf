@@ -52,11 +52,12 @@ func TestParseShell_UnterminatedBlock(t *testing.T) {
 // #415: `unless { … }` inside a def parsed and was **silently ignored**. Measured: a def
 // doing `shell { touch "$dst" } unless { true }` created the file — the guard held, the
 // command ran anyway. The clause was stored in `ShellExpr.Unless` and nothing ever read
-// it: `engine.Shell.Unless` is only ever filled from a plan step's argument, and plans
+// it: `engine.Shell.Unless` was only ever filled from a plan step's argument, and plans
 // refuse the keyword outright.
 //
 // So it lived in exactly one place, where it did nothing. Refused now, with the message
-// plans already give.
+// plans already give — and the engine field itself is gone since #619, which leaves this
+// refusal and the plan-side one as the only mentions of the word.
 func TestShell_UnlessInADefIsRefused(t *testing.T) {
 	srcs := map[string]string{
 		"in an apply":    `def t(p: str) { apply { shell { touch "$p" } unless { true } return ok.done } }`,

@@ -350,8 +350,8 @@ So `if dir.exists("/opt/legacy") { … }` still resolves on a host where the dir
 **A `check` phase must not depend on state the plan itself produces.** That is a rule for writing defs, not something the model can enforce: `systemd.unit` shipped validating its content with `systemd-analyze verify`, which refuses a unit whose `ExecStart` is not yet on disk — so a plan delivering a script and the unit calling it could not be previewed. The fix belonged in the def.
 
 ```
-if dir.exists("/opt/app") {   // present → then, absent → else — deterministic even in --dry-run
-  apt.install("nginx")
+if dir.exists("/opt/app") {   // present → then; absent → the branch is previewed as
+  apt.install("nginx")        // undetermined, not taken as else (ADR-0051)
 }
 ```
 

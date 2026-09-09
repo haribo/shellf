@@ -18,6 +18,14 @@ def config(name: str, content: str) as root {
         return state(synced: shell { test -f "$f" && printf '%s\n' "$content" | cmp -s - "$f" }.exit == 0, secured: shell { [ "$(stat -c '%a' "$f" 2>/dev/null)" = "600" ] }.exit == 0)
     }
     check {
+        # The name becomes a file under /etc/ssh/sshd_config.d, so it is held to what sshd
+        # will read back — the same check `sudo.write` runs, which this def described itself
+        # as sharing the shape of and did not have (#617). What is at risk is the path, not
+        # injection: sshd includes `*.conf` from that directory, so a name carrying a `/`
+        # writes into a subdirectory nothing reads, and the drop-in is silently never
+        # applied. `^[A-Za-z0-9_-]+$` still admits the convention — `50-hardening`.
+        if !~text.matches(name, "^[A-Za-z0-9_-]+$") { return err.badName }
+
         r = shell {
             tmp=$(mktemp)
             trap 'rm -f "$tmp"' EXIT

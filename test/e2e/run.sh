@@ -1443,4 +1443,73 @@ docker exec -u deploy "$cname" grep -qx 'the new content' /tmp/dl-dst.bin \
 docker exec -u deploy "$cname" sh -c '[ "$(stat -c "%a" /tmp/dl-dst.bin)" = "700" ]' \
   || fail "a download must keep the destination's mode — a staged rename drops it (#599)"
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out, booleans are booleans, dry-run diffs a change, commands are reported, purged packages reinstalled, defs survive a hostile state, dir.owner sees a missing path, ufw converges while down, a malformed unit is refused, a bad hash leaves the destination alone"
+say "29. a failed member extraction leaves the destination untouched (#613)"
+# `archive.extract-member` redirected `tar xzO` straight at its destination, so a member
+# that is not in the archive emptied the file that was there — and what this def installs is
+# usually an executable. Same defect as #298 (file.write) and #599 (file.download), a third
+# time. Asserted on the machine: the verdict was already correct.
+mkdir -p "$work/mem/plans" "$work/mem/inventories" "$work/mem/assets" "$work/mem/defs"
+cp "$work/inventory.shellf" "$work/mem/inventories/inv.shellf"
+# As `deploy`, like every plan the harness runs (#591).
+docker exec -u deploy "$cname" sh -c '
+  rm -rf /tmp/mem29 && mkdir -p /tmp/mem29/src
+  printf "the member\n" > /tmp/mem29/src/real.txt
+  tar czf /tmp/mem29/a.tar.gz -C /tmp/mem29/src .
+  printf "the previous binary\n" > /tmp/mem29/installed.bin
+  chmod 750 /tmp/mem29/installed.bin'
+cat > "$work/mem/plans/plan.shellf" <<'EOF'
+on target {
+    e = archive.extract-member("/tmp/mem29/a.tar.gz", "/tmp/mem29/installed.bin", "./absent.txt")?
+    if e == err.runtime {
+        shell {
+            grep -qx 'the previous binary' /tmp/mem29/installed.bin || exit 1
+            [ "$(stat -c '%a' /tmp/mem29/installed.bin)" = "750" ] || exit 1
+            ls /tmp/mem29/installed.bin.shellf.* >/dev/null 2>&1 && exit 1
+            exit 0
+        }
+    }
+    archive.extract-member("/tmp/mem29/a.tar.gz", "/tmp/mem29/installed.bin", "./real.txt")
+    shell {
+        grep -qx 'the member' /tmp/mem29/installed.bin || exit 1
+        [ "$(stat -c '%a' /tmp/mem29/installed.bin)" = "750" ] || exit 1
+    }
+}
+EOF
+out="$("$work/shellf" run --inventory "$work/mem/inventories/inv.shellf" --insecure \
+  "$work/mem/plans/plan.shellf" 2>&1)" || fail "the extract-member step failed:\n$out"
+printf '%s\n' "$out"
+docker exec -u deploy "$cname" grep -qx 'the member' /tmp/mem29/installed.bin \
+  || fail "a successful extraction must land"
+docker exec -u deploy "$cname" sh -c '[ "$(stat -c "%a" /tmp/mem29/installed.bin)" = "750" ]' \
+  || fail "extract-member must keep the destination's mode — a staged rename drops it (#613)"
+
+say "30. a quote in a postgres value does not break the server (#618)"
+# `postgres.config` writes `key = \x27value\x27`, so a value carrying a single quote closed
+# the quote early and the cluster refused the file — at **startup**, which means on the next
+# restart rather than on the run that caused it. The restart below is the assertion: a file
+# postgres will not read is a file that stops it coming back.
+mkdir -p "$work/pgq/plans" "$work/pgq/inventories" "$work/pgq/assets" "$work/pgq/defs"
+cp "$work/inventory.shellf" "$work/pgq/inventories/inv.shellf"
+cat > "$work/pgq/plans/plan.shellf" <<'EOF'
+on target {
+    as root {
+        postgres.config("application_name", "it's a test")
+        unsafe shell { pg_ctlcluster $(ls /etc/postgresql) main restart }
+        shell {
+            grep -q "^application_name = 'it''s a test'$" \
+              /etc/postgresql/$(ls /etc/postgresql)/main/postgresql.conf
+        }
+    }
+}
+EOF
+out="$("$work/shellf" run --inventory "$work/pgq/inventories/inv.shellf" --insecure \
+  "$work/pgq/plans/plan.shellf" 2>&1)" || fail "a quoted value must be written and accepted:\n$out"
+printf '%s\n' "$out"
+# And it converges: `pg_conftool -s show` returns the value unescaped, so the observe must
+# compare equal to what the caller passed rather than to the doubled form.
+out="$("$work/shellf" run --inventory "$work/pgq/inventories/inv.shellf" --insecure \
+  "$work/pgq/plans/plan.shellf" 2>&1)" || fail "the second run failed:\n$out"
+printf '%s' "$out" | grep -q 'postgres.config.*already' \
+  || { printf '%s\n' "$out"; fail "a quoted value must converge on a second run (#618)"; }
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out, booleans are booleans, dry-run diffs a change, commands are reported, purged packages reinstalled, defs survive a hostile state, dir.owner sees a missing path, ufw converges while down, a malformed unit is refused, a bad hash leaves the destination alone, a failed member extraction leaves it too, a quoted postgres value is accepted"

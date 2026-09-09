@@ -61,3 +61,31 @@ func TestGuards_SudoWriteRefusesANameItCannotFile(t *testing.T) {
 		})
 	}
 }
+
+// #617. `sshd.config` builds `/etc/ssh/sshd_config.d/<name>.conf` from its argument, at
+// three places, and checked nothing — while the two defs that do the same thing,
+// `sudo.write` and `systemd.unit`, hold their name to a pattern. The def's own comment says
+// twice that it is "the same shape as sudo.write": it copied the content validation and
+// not the name one.
+//
+// What is at risk is the path. sshd reads `*.conf` from that directory, so a name with a
+// `/` writes into a subdirectory nothing reads — a config the operator believes is
+// installed and the server never sees.
+func TestGuards_SshdConfigRefusesANameItCannotFile(t *testing.T) {
+	args := func(name string) map[string]string {
+		return map[string]string{"name": name, "content": "MaxAuthTries 4"}
+	}
+	for _, name := range []string{"", "hard ening", "../../etc/ssh/sshd_config", "sub/dir"} {
+		t.Run(name, func(t *testing.T) {
+			got := eval(t, "sshd.config", args(name), &fakeExec{observe: drift, apply: converged}, engine.Apply).String()
+			if got != "err.badName" {
+				t.Fatalf("name %q: got %s, want err.badName", name, got)
+			}
+		})
+	}
+	// The drop-in convention must keep working: a leading number and a dash are what
+	// `50-hardening.conf` is made of.
+	if got := eval(t, "sshd.config", args("50-hardening"), &fakeExec{observe: converged}, engine.Apply).String(); got == "err.badName" {
+		t.Fatal("a conventional drop-in name must be accepted")
+	}
+}

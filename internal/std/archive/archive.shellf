@@ -1,36 +1,48 @@
 def extract(src: str, dst: str) {
-    # Observed: the archive's sha256, recorded in a sentinel under `dst` at extract
-    # time, equals the current archive's sha256. So a changed archive at `src`
-    # re-extracts, and an unchanged one is skipped (#259). Both hashes are computed
-    # target-side, since `src` is a target path.
-    # The sentinel alone was the whole observe, and it answers the wrong question: it says
-    # "this archive was extracted here once", not "its contents are here". Deleting what the
-    # archive delivered while leaving the marker reported `already` over an empty
-    # destination — #486 in another def (#594, #596).
+    # The sentinel under `dst` holds two things: the archive's sha256 on the first line, and
+    # one `sha256sum` line per member below it.
     #
-    # So both are asked: the sentinel first, because it is one `cat` and it is what makes a
-    # *changed* archive re-extract, then the members. Listing the archive costs a pass over
-    # it on every run; that is the price of an observe that describes the machine rather
-    # than its own bookkeeping. Directories are skipped — `tar` recreates them implicitly,
-    # and an archive need not carry entries for them.
+    # It started as the archive's digest alone, which answers "this archive was extracted
+    # here once" rather than "its contents are here": deleting what it delivered while
+    # leaving the marker reported `already` over an empty destination (#594/#596). Checking
+    # that every member *exists* fixed that much and no more — a member emptied in place
+    # still passed (#614).
+    #
+    # Recording the digests at extract time rather than recomputing them from the archive on
+    # every run is what makes the honest check affordable: an observe now reads the sentinel
+    # and hashes what is on disk, and **never opens the archive**. Listing it with `tar tzf`
+    # decompressed the whole thing on every run.
+    #
+    # The digests come from the archive's member list, not from a walk of `dst`: a file that
+    # was already there and is not in the archive stays out of the sentinel, so removing
+    # something `tar` never promised to manage does not trigger a re-extraction.
     observe {
         return state(extracted: shell {
             test -f "$dst/.shellf-archive-sha256" || exit 1
-            [ "$(cat "$dst/.shellf-archive-sha256" 2>/dev/null)" = "$(sha256sum "$src" | cut -d' ' -f1)" ] || exit 1
-            # No `exit` inside the loop: it runs in a subshell of the pipeline, where an
-            # exit would be lost. The absence is reported as output instead.
-            missing=$(tar tzf "$src" | while IFS= read -r m; do
-                case "$m" in */) continue ;; esac
-                [ -e "$dst/$m" ] || printf 'x'
-            done)
-            [ -z "$missing" ]
+            [ "$(head -n 1 "$dst/.shellf-archive-sha256")" = "$(sha256sum "$src" | cut -d' ' -f1)" ] || exit 1
+            # An archive of directories only has no digest lines, and `sha256sum -c` on empty
+            # input fails with "no properly formatted checksum lines found" — which would
+            # make such an archive never converge. Nothing to verify is verified.
+            digests=$(tail -n +2 "$dst/.shellf-archive-sha256")
+            [ -z "$digests" ] || printf '%s\n' "$digests" | ( cd "$dst" && sha256sum -c --status - )
         }.exit == 0)
     }
     apply {
         r = shell {
             mkdir -p "$dst"
             tar xzf "$src" -C "$dst"
-            sha256sum "$src" | cut -d' ' -f1 > "$dst/.shellf-archive-sha256"
+            # Written in one pass: the archive's digest, then a line per member. Directory
+            # entries are skipped — `tar` recreates them implicitly and an archive need not
+            # carry them — and a member the extraction did not produce is skipped rather
+            # than recorded as missing.
+            {
+                sha256sum "$src" | cut -d' ' -f1
+                tar tzf "$src" | while IFS= read -r m; do
+                    case "$m" in */) continue ;; esac
+                    [ -f "$dst/$m" ] || continue
+                    ( cd "$dst" && sha256sum "$m" )
+                done
+            } > "$dst/.shellf-archive-sha256"
         }
         if !r { return err.runtime(r) }
         return ok.extracted
@@ -53,7 +65,19 @@ def extract-member(src: str, dst: str, member: str) {
     apply {
         r = shell {
             mkdir -p "$(dirname "$dst")"
-            tar xzOf "$src" "$member" > "$dst"
+            # Staged, then renamed — `> "$dst"` truncates before tar writes a byte, so an
+            # archive that is corrupt or a member that is not in it left the destination
+            # empty, and what this def installs is usually an executable (#613). Measured:
+            # a missing member emptied a binary that was working. Same repair as #298 for
+            # `file.write` and #599 for `file.download`.
+            staged="$dst.shellf.$$"
+            trap 'rm -f "$staged"' EXIT
+            tar xzOf "$src" "$member" > "$staged"
+            # A redirection onto an existing file kept its mode; a rename does not. Carried
+            # over explicitly, or a second extraction drops the `+x` a plan set with
+            # `file.mode` — the regression #599 found the first time.
+            if [ -f "$dst" ]; then chmod "$(stat -c '%a' "$dst")" "$staged"; fi
+            mv -f "$staged" "$dst"
         }
         if !r { return err.runtime(r) }
         return ok.extracted

@@ -637,7 +637,7 @@ func (ev *evaluator) evalExpr(e Expr) value {
 		return ev.evalField(x)
 	case Binary:
 		l, r := ev.evalExpr(x.L), ev.evalExpr(x.R)
-		ev.refuseBytesComparison(x.Op, l, r)
+		ev.refuseUncomparable(x.Op, l, r)
 		eq := equal(l, r)
 		if x.Op == "==" {
 			return eq
@@ -1206,25 +1206,40 @@ func truthy(v value) bool {
 // operands (#578).
 func equal(a, b value) bool { return a == b }
 
-// refuseBytesComparison enforces ADR-0034 §4 at the one boundary that never enforced it.
-// Bytes are opaque — they go from a primitive to an instruction and nowhere else — and the
-// record says in as many words that they cannot be compared. `==` did it anyway, in two
-// wrong ways:
+// refuseUncomparable holds `==` and `!=` to the kinds that can answer them: a string, an
+// int, a bool. Everything else is refused by name.
 //
-//   - two Bytes panicked the evaluator, since `a == b` over interfaces holding []byte is a
-//     runtime error rather than an answer (#578);
-//   - Bytes against a string answered **false** for any content, because Go compares the
-//     dynamic types first. Silently false is worse than a panic: it reads as "the contents
-//     differ", which is the shape of #411.
+// A whitelist and not a list of forbidden kinds, deliberately. #578 enumerated `Bytes`,
+// and #616 came back with the two it had left — `engine.ShellResult` and `engine.Result`
+// both carry a map or a slice, so `a == b` over two of either is a **runtime panic**, not
+// an answer. Listing what is refused means the next kind added panics again; listing what
+// is allowed means it is refused.
 //
-// The message names the one comparison that is honest — a digest of the content, which the
-// caller can compute where the content lives.
-func (ev *evaluator) refuseBytesComparison(op string, l, r value) {
-	_, lb := l.(Bytes)
-	_, rb := r.(Bytes)
-	if !lb && !rb {
-		return
+// The refusals say what to write instead, because each wrong form has a right one:
+//
+//   - bytes are opaque (ADR-0034 §4) — compare a digest where the content is;
+//   - a result is tested, not compared (ADR-0010) — `if r`, `if !r`, `r.exit == 0`.
+//
+// That second case used to answer **false**, silently, whatever the result: a def writing
+// `if r == ok` was testing success and getting a condition that never fires. Silence is
+// worse than the panic, since nothing shows it.
+func (ev *evaluator) refuseUncomparable(op string, l, r value) {
+	for _, v := range []value{l, r} {
+		switch t := v.(type) {
+		case string, int, bool:
+			continue
+		case Bytes:
+			ev.fail("%s on bytes: content read by a primitive is opaque and cannot be compared "+
+				"(ADR-0034 §4) — compare a digest computed where the content is, or hand the "+
+				"bytes to an instruction", op)
+		case engine.ShellResult:
+			ev.fail("%s on a shell result: a shell result is tested, not compared (ADR-0010) — "+
+				"write `if r` / `if !r`, or compare a field: `r.exit == 0`", op)
+		case engine.Result:
+			ev.fail("%s on an instruction's outcome: an outcome is tested, not compared "+
+				"(ADR-0010) — write `if r`, or match it in a plan: `r == ok`, `r != err.tag`", op)
+		default:
+			ev.fail("%s on a value of an unsupported kind (%T)", op, t)
+		}
 	}
-	ev.fail("%s on bytes: content read by a primitive is opaque and cannot be compared (ADR-0034 §4) — "+
-		"compare a digest computed where the content is, or hand the bytes to an instruction", op)
 }

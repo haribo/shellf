@@ -6,6 +6,28 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-09
+
+### Changed
+
+- `unless` is gone from the engine. The parser has refused the keyword for a while, but `engine.Shell` still carried the guard and the agent read it from a step's free-form arguments — reachable by a forged request, by nothing a plan can write. A capability with no way to express it is a trap (#619).
+
+### Fixed
+
+- `archive.extract` checks what its members hold, not only that they are there: their digests are recorded at extract time and compared after, so a file emptied in place is no longer reported converged. It also costs less — an observe no longer opens the archive, where listing it decompressed the whole thing every run (#614).
+
+- `postgres.config` doubles a single quote in the value, which is how postgres escapes one. Written raw it closed the quote early and the cluster refused the file — at startup, so the failure surfaced on the next restart rather than on the run that caused it. Verified against a real cluster, including that the value still converges (#618).
+
+- `sshd.config` checks the name it builds a path from, as `sudo.write` and `systemd.unit` already did. A name carrying a `/` wrote into a subdirectory sshd never reads — a drop-in believed installed that the server never sees. The def called itself the same shape as `sudo.write`, having copied its content check and not its name check (#617).
+
+- `==` refuses a value it cannot compare instead of crashing. Two shell results, or two outcomes, panicked the evaluator. The rule is now a whitelist — strings, ints and booleans compare, the rest is refused by name and says what to write instead. `if r == ok`, silently false before, is refused too (#616).
+
+- A dead `SSH_AUTH_SOCK` no longer discards a working inventory key. A socket outliving its agent failed the run over an agent the host never needed, so the same plan worked in one terminal and not in another. The agent is skipped and named in the trace; with no other method the error stands (#612).
+
+- `shellf status` exits non-zero when a host could not be reached. It asked a helper that only inspected block errors, so a sweep printing `unreachable` on every line still exited 0 — the worst answer for the command a monitor runs on a schedule. Drift stays a success: reporting what differs is what `status` is for (#615).
+
+- `archive.extract-member` extracts to a staged file and renames it. It redirected `tar` straight at the destination, so a member missing from the archive emptied the file that was there — usually an executable, since that is what this def installs. The destination's mode is carried over, which a rename would otherwise drop (#613).
+
 ## [0.12.0] - 2026-09-08
 
 ### Added
@@ -361,7 +383,8 @@ agent that evaluates on the host — "raw shell, but idempotent, previewable, fa
   per-user agent/workdir scoping.
 - Commands: `run`, `status`, `clean`, and `version`.
 
-[Unreleased]: https://github.com/haribo/shellf/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/haribo/shellf/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/haribo/shellf/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/haribo/shellf/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/haribo/shellf/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/haribo/shellf/compare/v0.9.1...v0.10.0
