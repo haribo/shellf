@@ -1,0 +1,23 @@
+# `system.timezone` observes both files its apply writes (#636).
+#
+# Right-shaped but wrong (adverse-cases.md): `/etc/localtime` already points at the wanted
+# zone and `/etc/timezone` holds another one. The observe read the link alone, converged, and
+# left the file — which is what `dpkg-reconfigure tzdata` reads, so the next tzdata upgrade
+# undoes the def.
+#
+# Distinct from `adverse-system.timezone.shellf`, which breaks the link as well: there the
+# apply runs whatever the second file holds, so its assertion on `/etc/timezone` passes
+# without ever testing the observe.
+on target {
+    as root {
+        unsafe shell {
+            ln -sf /usr/share/zoneinfo/Europe/Paris /etc/localtime
+            printf 'Europe/Berlin\n' > /etc/timezone
+        }
+        system.timezone("Europe/Paris")
+        shell {
+            grep -qx 'Europe/Paris' /etc/timezone || exit 1
+            [ "$(readlink -f /etc/localtime)" = "/usr/share/zoneinfo/Europe/Paris" ] || exit 1
+        }
+    }
+}

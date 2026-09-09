@@ -24,6 +24,12 @@ def entry(path: str, user: str, password: str) as root {
         u = shell { printf '%s' "$user" | grep -qE '^[A-Za-z0-9_.-]+$' }
         if !u { return err.badUser(u) }
     }
+    # Two fields, because the apply guarantees two things: the credential, and the mode that
+    # keeps it from being world-readable. Observing the hash alone reported `already` over a
+    # correct file at 644 and the `chmod` below never ran (#635) — the shape `sudo.write` and
+    # `sshd.config` already had, and this def did not. The mode is a constant this def chose,
+    # not a parameter, so it is a plain assertion: the awk numeric compare `file.mode` needs
+    # (#543) exists to echo back the *caller's* spelling, and there is no caller here.
     observe {
         return state(valid: shell {
             # The login is matched literally, the way the apply does. `grep "^$user:"` made
@@ -37,7 +43,7 @@ def entry(path: str, user: str, password: str) as root {
             salt=$(printf '%s' "$hash" | cut -d'$' -f3)
             [ -n "$salt" ] || exit 1
             [ "$(printf '%s' "$password" | openssl passwd -apr1 -stdin -salt "$salt")" = "$hash" ]
-        }.exit == 0)
+        }.exit == 0, secured: shell { [ "$(stat -c '%a' "$path" 2>/dev/null)" = "600" ] }.exit == 0)
     }
     apply {
         r = shell {
