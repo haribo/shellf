@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- A def calling another instruction with too few arguments is refused instead of binding the missing one to the empty string. `file.write(path)` inside a def overwrote the file with nothing and reported `ok.done` — a file destroyed under a success verdict. A plan-level call was always checked on both bounds; only the def side was not (#633).
+
 ## [0.13.0] - 2026-09-09
 
 ### Changed
