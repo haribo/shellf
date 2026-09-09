@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- `unless` is gone from the engine. The parser has refused the keyword for a while, but `engine.Shell` still carried the guard and the agent read it from a step's free-form arguments — reachable by a forged request, by nothing a plan can write. A capability with no way to express it is a trap (#619).
+
 ### Fixed
 
 - `archive.extract` checks what its members hold, not only that they are there: their digests are recorded at extract time and compared after, so a file emptied in place is no longer reported converged. It also costs less — an observe no longer opens the archive, where listing it decompressed the whole thing every run (#614).
@@ -36,8 +40,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - ADR-0055: `~text.matches` and `~text.replace`, two primitives over values. The engine is the agent's own RE2, identical on every target, and the replacement is literal — a `$1` or an `&` in it is text, which is the defect #487 was. A def can finally refuse an argument it cannot honour (#575).
 
 ### Changed
-
-- `unless` is gone from the engine. The parser has refused the keyword for a while, but `engine.Shell` still carried the guard and the agent still read it from a step's free-form arguments — reachable by a hand-forged request and by nothing a plan can write. A capability with no way to express it is a trap for the next reader (#619).
 
 - The local checks reproduce CI. They pin the toolchain `go.mod` names — `GOTOOLCHAIN=auto` only ever upgrades, so a machine on a newer Go measured something CI never measured: coverage read 80.9% here and 81.8% there, and `deadcode` panicked outright. `test/lint.sh` runs golangci-lint at the workflow's version, which `go vet` cannot replace (#589).
 
