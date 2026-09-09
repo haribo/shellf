@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-09
+
 ### Changed
 
 - `unless` is gone from the engine. The parser has refused the keyword for a while, but `engine.Shell` still carried the guard and the agent read it from a step's free-form arguments — reachable by a forged request, by nothing a plan can write. A capability with no way to express it is a trap (#619).
@@ -381,7 +383,8 @@ agent that evaluates on the host — "raw shell, but idempotent, previewable, fa
   per-user agent/workdir scoping.
 - Commands: `run`, `status`, `clean`, and `version`.
 
-[Unreleased]: https://github.com/haribo/shellf/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/haribo/shellf/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/haribo/shellf/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/haribo/shellf/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/haribo/shellf/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/haribo/shellf/compare/v0.9.1...v0.10.0
