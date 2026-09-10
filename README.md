@@ -369,8 +369,9 @@ agents and wipes shellf's files from the targets.
 | `--json` | report as JSON on stdout; diagnostics stay on stderr |
 | `-v` | trace the control host's decisions, and every command run on the target |
 
-`run` takes all of them. `status` takes all but `--vars`, `--set`, `--dry-run`, `-v` and
-`--agent-ttl`. `clean` takes `--inventory`, `--insecure` and `--known-hosts`.
+`run` and `status` take the same flags, `--dry-run` excepted — it is a mode, and reading the
+state without acting is what `status` already is. `clean` reads no plan and takes
+`--inventory`, `--insecure` and `--known-hosts`.
 
 ## How it works
 
