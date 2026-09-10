@@ -12,6 +12,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - A def written with the retired `pre-check` phase now gets the message telling it to rename, instead of the generic "expected a phase". The entry was keyed `check` — a valid phase, matched earlier — so it was unreachable, and its test asserted a substring the generic message already contained, so nothing said so (#637).
 
+- `internal/report` no longer calls `os.Exit`. `JSON` returns its marshal error and `Render` passes it up; the two commands decide. The package's own comment said nothing there decides an exit code, twelve lines above the line that did — and a second comment stated the rule as the reason the package exists (#641).
+
 - The README no longer teaches the observe that cost #486: its `def` example asked `dpkg -s`, which exits 0 for a package removed without `--purge`. It now carries `apt.install`'s real question and says why. `--json`, `-v`, `--parallel` and `--limit` are documented, and the secrets note states the limit that is left rather than one ADR-0025 closed (#642).
 
 - `htpasswd.entry` and `system.timezone` observe everything their apply sets. The first left a credentials file world-readable whenever its hash already verified; the second left `/etc/timezone` naming another zone whenever the symlink was right. Both reported `already`. Two adverse cases, each seen red on a real machine first (#635, #636).
