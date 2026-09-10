@@ -37,10 +37,16 @@ func ServeResident(workdir, binPath string, ex engine.Executor, ttl time.Duratio
 	// created still runs every plan that asks nothing of the control host, which is
 	// almost all of them. Failing the agent outright would trade a working majority for
 	// a feature the plan may never use.
+	//
+	// Best-effort is not the same as silent, though, and this dropped `cherr` on the floor:
+	// a job that did ask waited out `attachWait` and failed with `no control host attached`,
+	// naming the symptom. `Unavailable` keeps the majority running and hands the minority
+	// the reason (#638).
 	ch, cherr := Listen(workdir)
-	if cherr == nil {
-		defer func() { _ = ch.Close() }()
+	if cherr != nil {
+		ch = Unavailable(cherr)
 	}
+	defer func() { _ = ch.Close() }()
 
 	last := time.Now()
 	for {
