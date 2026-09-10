@@ -30,12 +30,17 @@ func (l Local) Run(agentBin string, req []byte) ([]byte, error) {
 	// something: a plan that does not keeps today's single-process behaviour.
 	if l.Channel != nil {
 		wd, err := os.MkdirTemp(sockBase(), "shellf-local")
-		if err == nil {
-			defer func() { _ = os.RemoveAll(wd) }()
-			args = append(args, wd)
-			stop := l.bridge(wd)
-			defer stop()
+		if err != nil {
+			// Reported, not skipped. The agent runs in another process and reads its
+			// workdir from argv, so there is no way to hand it the cause the way the
+			// agent's own `Unavailable` does — continuing here guarantees the operator
+			// sees `no control host channel available` and never why (#638).
+			return nil, fmt.Errorf("local agent: control channel workdir: %v", err)
 		}
+		defer func() { _ = os.RemoveAll(wd) }()
+		args = append(args, wd)
+		stop := l.bridge(wd)
+		defer stop()
 	}
 	cmd := exec.Command(agentBin, args...)
 	cmd.Stdin = bytes.NewReader(req)
@@ -49,7 +54,10 @@ func (l Local) Run(agentBin string, req []byte) ([]byte, error) {
 
 // sockBase prefers /dev/shm: a unix socket path is capped at ~108 bytes, and a long
 // TMPDIR would push past it with an error that reads like nonsense.
-func sockBase() string {
+//
+// A var so a test can point it at a path that cannot hold a directory: the failure above
+// is unreachable otherwise, and an unreachable branch is one nobody proves.
+var sockBase = func() string {
 	if fi, err := os.Stat("/dev/shm"); err == nil && fi.IsDir() {
 		return "/dev/shm"
 	}

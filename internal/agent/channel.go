@@ -49,6 +49,12 @@ type Channel struct {
 	// exercises against a container, which is the only place it can be proven.
 	child func(ex engine.Executor, args ...string) (string, error)
 
+	// openErr is set when the agent could not open its listener at all. The job still
+	// runs — a plan may declare a primitive it never reaches, and a `--dry-run` reaches
+	// none — but any ask fails naming this instead of timing out on a bridge that was
+	// never going to attach (#638).
+	openErr error
+
 	mu    sync.Mutex
 	conn  *proto.Conn
 	next  int
@@ -92,6 +98,13 @@ func (c *Channel) accept() {
 			continue
 		}
 		c.mu.Lock()
+		// The bridge being replaced is closed here. `drop()` is the only other closer and
+		// it runs when an *ask* discovers the connection is dead — so a control host that
+		// reconnects without the agent having asked anything in between left the old one
+		// open, one descriptor per reconnection, for as long as the agent lives (#638).
+		if c.conn != nil {
+			_ = c.conn.Close()
+		}
 		c.conn = conn
 		select {
 		case <-c.ready: // already armed by a previous bridge
@@ -104,7 +117,19 @@ func (c *Channel) accept() {
 	}
 }
 
-func (c *Channel) Close() error { return c.ln.Close() }
+func (c *Channel) Close() error {
+	if c.ln == nil { // an unavailable channel never listened
+		return nil
+	}
+	return c.ln.Close()
+}
+
+// Unavailable is the channel an agent gets when it could not listen. Every ask fails with
+// `err`, which beats both alternatives: a nil channel loses the cause, and failing the job
+// up front would break a run that declares a primitive and never reaches it.
+func Unavailable(err error) *Channel {
+	return &Channel{openErr: err, ready: make(chan struct{})}
+}
 
 // AskWith requests a resource from the control host and blocks until it answers.
 //
@@ -137,6 +162,9 @@ func (c *Channel) AskWith(resource string, payload []byte, vars map[string]strin
 // attached returns the live connection, waiting for a bridge if none has arrived yet.
 // Assumes c.mu is held, and releases it around the wait so accept() can install one.
 func (c *Channel) attached(resource string) (*proto.Conn, error) {
+	if c.openErr != nil {
+		return nil, fmt.Errorf("%s: this agent has no control channel: %w", resource, c.openErr)
+	}
 	if c.conn != nil {
 		return c.conn, nil
 	}
