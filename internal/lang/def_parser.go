@@ -15,9 +15,12 @@ var phaseNames = map[string]bool{
 
 // removedPhases turns a name that used to exist into an actionable error rather than
 // "unknown" (ADR-0035). They are not accepted — the plan still fails.
+// The key is the name that was removed, not the one it became: `check` is a **valid**
+// phase, tested by the switch above this map's only reader, so an entry keyed `check` was
+// unreachable and `pre-check` got the generic "expected a phase" (#637).
 var removedPhases = map[string]string{
-	"check": "folded into `check` (ADR-0035); rename the phase",
-	"post":  "removed (ADR-0035); it was never used and had no settled meaning",
+	"pre-check": "folded into `check` (ADR-0035); rename the phase",
+	"post":      "removed (ADR-0035); it was never used and had no settled meaning",
 }
 var categories = map[string]bool{"ok": true, "err": true, "would": true}
 
