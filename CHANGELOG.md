@@ -12,6 +12,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `shellf status` takes the inputs `run` takes: `--vars`, `--set`, `-v` and `--agent-ttl`. The command that answers "what would this plan see?" could not be handed what the plan sees — a plan using `${k}` from `--set` failed to resolve under `status` while applying cleanly under `run`. Both now register one shared flag definition (#640).
 
+- The README's install snippet fetches the latest release instead of pinning `v0.10.0`, three versions behind. It downloads one architecture rather than both, and verifies with `--ignore-missing` — required once the download is narrowed, and checked not to weaken the verification: a binary that never arrived or whose bytes changed still exits non-zero (#647).
+
 - `archive.extract-member` passes the member name to `tar` after `--`. A member named `-rf.txt` was read as options, so the observe saw a mismatch and the apply failed on every run. The name comes from whoever built the archive, not from the plan (#639).
 
 - A def written with the retired `pre-check` phase now gets the message telling it to rename, instead of the generic "expected a phase". The entry was keyed `check` — a valid phase, matched earlier — so it was unreachable, and its test asserted a substring the generic message already contained, so nothing said so (#637).

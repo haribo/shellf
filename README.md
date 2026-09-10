@@ -36,10 +36,16 @@ workdir and its own binary and exits, leaving nothing behind.
 Download a release and **check what you got**:
 
 ```sh
-gh release download v0.10.0 --repo haribo/shellf
-sha256sum -c SHA256SUMS      # shellf-linux-amd64: OK
+gh release download --repo haribo/shellf --pattern 'shellf-linux-amd64' --pattern 'SHA256SUMS'
+sha256sum -c --ignore-missing SHA256SUMS      # shellf-linux-amd64: OK
 chmod +x shellf-linux-amd64
 ```
+
+No tag, so this is the latest release — `gh` requires `--pattern` in that form, which is also
+what keeps the download to the one architecture you want (swap in `shellf-linux-arm64`).
+`--ignore-missing` is needed for the same reason: `SHA256SUMS` lists both binaries, and
+without it the absent one fails the check. It still fails loudly on what matters — a binary
+that did not arrive, or one whose bytes do not match, both exit non-zero.
 
 `SHA256SUMS` covers both `shellf-linux-amd64` and `shellf-linux-arm64`, and is published
 from v0.10.0 onward. The verification is the point rather than a formality: shellf refuses a
