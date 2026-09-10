@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-10
+
 ### Added
 
 - A test asserting every CLI flag appears in `README.md`. Four had been shipping undocumented and nothing said so (#642); this walks the commands' own flag sets, so a flag cannot be added to one and missed. `--check` is exempt by name, with its reason, and a second hidden flag fails the build rather than joining a skip list (#646).
@@ -407,7 +409,8 @@ agent that evaluates on the host — "raw shell, but idempotent, previewable, fa
   per-user agent/workdir scoping.
 - Commands: `run`, `status`, `clean`, and `version`.
 
-[Unreleased]: https://github.com/haribo/shellf/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/haribo/shellf/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/haribo/shellf/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/haribo/shellf/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/haribo/shellf/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/haribo/shellf/compare/v0.10.0...v0.11.0
