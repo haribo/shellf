@@ -193,16 +193,47 @@ func registerPlanInputs(fs *flag.FlagSet, limitWhat string) *planInputs {
 	return in
 }
 
-// runCmd: shellf run <plan.shellf> --inventory <hosts.shellf> [--dry-run] [flags].
-func runCmd(args []string) {
-	fs := flag.NewFlagSet("run", flag.ExitOnError)
-	in := registerPlanInputs(fs, "run")
+// The three commands' flag sets, each built by a function rather than inline, so a test can
+// walk exactly what the command accepts. `TestEveryFlagIsDocumented` asserts every name here
+// appears in `README.md`; inline declarations would have forced that test to restate them,
+// which is the drift it exists to catch (#646).
+
+// runFlags: the plan inputs, plus the two modes only `run` has.
+func runFlags() (fs *flag.FlagSet, in *planInputs, dryRun, oldCheck *bool) {
+	fs = flag.NewFlagSet("run", flag.ExitOnError)
+	in = registerPlanInputs(fs, "run")
 	// Modes, not inputs: these say what `run` does with the plan, which is the one thing
 	// `status` has no equivalent of.
-	dryRun := fs.Bool("dry-run", false, "decide and preview without mutating")
+	dryRun = fs.Bool("dry-run", false, "decide and preview without mutating")
 	// `--check` was the old name (ADR-0035). Accepting it silently would keep two
-	// spellings alive; this only exists to say what to type instead.
-	oldCheck := fs.Bool("check", false, "")
+	// spellings alive; this only exists to say what to type instead. Registered with an
+	// empty usage string so it stays out of `-h` — and out of the README, which the
+	// documentation test knows by name.
+	oldCheck = fs.Bool("check", false, "")
+	return fs, in, dryRun, oldCheck
+}
+
+// statusFlags: the same inputs `run` takes, from the same definition — `status` answers "what
+// would this plan see?", which it cannot do without being handed what the plan sees (#640).
+// It has no mode of its own: reading the state without acting is the whole command.
+func statusFlags() (*flag.FlagSet, *planInputs) {
+	fs := flag.NewFlagSet("status", flag.ExitOnError)
+	return fs, registerPlanInputs(fs, "sweep")
+}
+
+// cleanFlags: `clean` reads no plan, so it takes none of the inputs — only what it needs to
+// reach the hosts.
+func cleanFlags() (fs *flag.FlagSet, invPath *string, insecure *bool, knownHosts *string) {
+	fs = flag.NewFlagSet("clean", flag.ExitOnError)
+	invPath = fs.String("inventory", "", "inventory file (required)")
+	insecure = fs.Bool("insecure", false, "skip host-key verification (dev only)")
+	knownHosts = fs.String("known-hosts", "", "known_hosts path (default ~/.ssh/known_hosts)")
+	return fs, invPath, insecure, knownHosts
+}
+
+// runCmd: shellf run <plan.shellf> --inventory <hosts.shellf> [--dry-run] [flags].
+func runCmd(args []string) {
+	fs, in, dryRun, oldCheck := runFlags()
 	_ = fs.Parse(args) // flag.ExitOnError already exits on a parse error
 
 	// Named after Parse, when the repeatable flags have collected their values.
@@ -456,10 +487,7 @@ func tracer(on bool, secrets []string) func(string, ...any) {
 // cleanCmd: shellf clean --inventory <hosts.shellf> [target...]. Kills resident
 // agents and removes shellf's /tmp files on each target (all hosts if no target).
 func cleanCmd(args []string) {
-	fs := flag.NewFlagSet("clean", flag.ExitOnError)
-	invPath := fs.String("inventory", "", "inventory file (required)")
-	insecure := fs.Bool("insecure", false, "skip host-key verification (dev only)")
-	knownHosts := fs.String("known-hosts", "", "known_hosts path (default ~/.ssh/known_hosts)")
+	fs, invPath, insecure, knownHosts := cleanFlags()
 	_ = fs.Parse(args) // flag.ExitOnError already exits on a parse error
 	if *invPath == "" {
 		fmt.Fprintln(os.Stderr, "usage: shellf clean --inventory <hosts.shellf> [--insecure] [target...]")
@@ -524,11 +552,7 @@ func cleanCmd(args []string) {
 // statusCmd: shellf status --inventory <hosts.shellf> <plan.shellf>. Reports
 // each declared resource's current-vs-desired state, read-only (ADR-0013).
 func statusCmd(args []string) {
-	fs := flag.NewFlagSet("status", flag.ExitOnError)
-	// The same inputs `run` takes, from the same definition: `status` answers "what would
-	// this plan see?", which it cannot do without being handed what the plan sees (#640).
-	// It has no mode of its own — reading the state without acting is the whole command.
-	in := registerPlanInputs(fs, "sweep")
+	fs, in := statusFlags()
 	_ = fs.Parse(args)
 
 	invPath := in.inv
