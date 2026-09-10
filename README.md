@@ -36,10 +36,16 @@ workdir and its own binary and exits, leaving nothing behind.
 Download a release and **check what you got**:
 
 ```sh
-gh release download v0.10.0 --repo haribo/shellf
-sha256sum -c SHA256SUMS      # shellf-linux-amd64: OK
+gh release download --repo haribo/shellf --pattern 'shellf-linux-amd64' --pattern 'SHA256SUMS'
+sha256sum -c --ignore-missing SHA256SUMS      # shellf-linux-amd64: OK
 chmod +x shellf-linux-amd64
 ```
+
+No tag, so this is the latest release — `gh` requires `--pattern` in that form, which is also
+what keeps the download to the one architecture you want (swap in `shellf-linux-arm64`).
+`--ignore-missing` is needed for the same reason: `SHA256SUMS` lists both binaries, and
+without it the absent one fails the check. It still fails loudly on what matters — a binary
+that did not arrive, or one whose bytes do not match, both exit non-zero.
 
 `SHA256SUMS` covers both `shellf-linux-amd64` and `shellf-linux-arm64`, and is published
 from v0.10.0 onward. The verification is the point rather than a formality: shellf refuses a
@@ -155,9 +161,12 @@ shellf run plan.shellf --secret-file rclone_pass=./secret --secret-env db=DB_PW
 ```
 
 A secret is a variable like any other (`${rclone_pass}`), but shellf **redacts
-its value** (`***`) from every report, `--dry-run`, and `status`. Honest limit: the
-secret still reaches the target (in the request file, `0600`, and the process
-env) — root there can read it; at-rest secrecy is not yet solved.
+its value** (`***`) from every report, `--dry-run`, and `status`. At rest it is kept off
+persistent disk: the agent's job files live on tmpfs (`/dev/shm`), so a secret is outside
+backups, snapshots and undelete — falling back to `/tmp`, owner-only and deleted after, on a
+host with no writable `/dev/shm` (ADR-0025). Honest limit: the secret still reaches the target,
+in that job file and in the process environment, and **root there reads both in real time**.
+No on-target scheme changes that, encryption included — the key would have to travel too.
 
 **Control flow.** `if` takes an instruction (or a captured result); the branch is
 taken on its outcome. `dir.exists` is a read-only *question*, so it stays honest
@@ -211,7 +220,10 @@ its success:
 ```
 def install(pkg: str) as root {
   observe {
-    return state(installed: shell { dpkg -s "$pkg" >/dev/null 2>&1 }.exit == 0)
+    # `install ok installed` is the one status meaning the files are on the host
+    return state(installed: shell {
+      dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q '^install ok installed'
+    }.exit == 0)
   }
   apply {
     r = shell { apt-get install -y "$pkg" }
@@ -220,6 +232,12 @@ def install(pkg: str) as root {
   }
 }
 ```
+
+That is `apt.install`'s real observe, and the comment is the whole lesson: **the question an
+`observe` asks has to be the one its `apply` answers**. This def first asked `dpkg -s`, which
+exits 0 for a package removed without `--purge` — its config files survive, its binaries do
+not — so it reported `already` on a host where the package was gone. The wrong answer was
+*stable*, so re-running agreed with itself and only the machine said otherwise (#486).
 
 A field with no same-named argument (like `installed`) must simply hold;
 fields that match a parameter (`service.ensure` → `running`, `git.clone` → `url`) are
@@ -352,6 +370,14 @@ agents and wipes shellf's files from the targets.
 | `--known-hosts <file>` | host-key file (default `~/.ssh/known_hosts`) |
 | `--insecure` | skip host-key verification (dev only) |
 | `--agent-ttl <dur>` | resident agent inactivity TTL before it self-erases (default 2h) |
+| `--parallel <n>` | hosts dialled at once (default 16); `1` serialises the fan-out |
+| `--limit <host\|group>` | restrict the run to a host or group (repeatable); narrows the plan, never extends it |
+| `--json` | report as JSON on stdout; diagnostics stay on stderr |
+| `-v` | trace the control host's decisions, and every command run on the target |
+
+`run` and `status` take the same flags, `--dry-run` excepted — it is a mode, and reading the
+state without acting is what `status` already is. `clean` reads no plan and takes
+`--inventory`, `--insecure` and `--known-hosts`.
 
 ## How it works
 

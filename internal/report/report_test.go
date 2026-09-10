@@ -217,7 +217,10 @@ func TestReportJSON_CarriesTheSameVerdictsAsTheText(t *testing.T) {
 		},
 	}}
 
-	out, anyErr := JSON(reports)
+	out, anyErr, err := JSON(reports)
+	if err != nil {
+		t.Fatal(err)
+	}
 	_, textErr := Text(reports)
 	if anyErr != textErr {
 		t.Fatalf("the two renderers must agree on failure: json=%v text=%v", anyErr, textErr)
@@ -252,7 +255,10 @@ func TestReportJSON_CarriesBlockErrors(t *testing.T) {
 		Target: "wbe",
 		Err:    &orchestrator.UnknownTargetError{Target: "wbe"},
 	}}
-	out, anyErr := JSON(reports)
+	out, anyErr, err := JSON(reports)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !anyErr {
 		t.Fatal("an unknown target must fail the run in JSON mode too")
 	}
@@ -281,7 +287,7 @@ func TestReportJSON_RedactsSecretsIncludingEscapedForms(t *testing.T) {
 				}},
 			}}},
 		}}
-		out, _ := JSON(reports)
+		out, _, _ := JSON(reports)
 		masked := RedactJSON(out, []string{secret})
 		if strings.Contains(masked, secret) {
 			t.Fatalf("the raw secret survived: %q in %s", secret, masked)
@@ -308,7 +314,7 @@ func TestReportJSON_CaughtErrorIsNotAFailure(t *testing.T) {
 			Results: []proto.StepResult{{Label: "s", Category: "err", Tag: "runtime", Caught: true}},
 		}}},
 	}}
-	if _, anyErr := JSON(caught); anyErr {
+	if _, anyErr, _ := JSON(caught); anyErr {
 		t.Fatal("an error the plan handled is not a failed run")
 	}
 	uncaught := []orchestrator.BlockReport{{
@@ -317,7 +323,7 @@ func TestReportJSON_CaughtErrorIsNotAFailure(t *testing.T) {
 			Results: []proto.StepResult{{Label: "s", Category: "err", Tag: "runtime"}},
 		}}},
 	}}
-	if _, anyErr := JSON(uncaught); !anyErr {
+	if _, anyErr, _ := JSON(uncaught); !anyErr {
 		t.Fatal("an uncaught error must fail the run")
 	}
 }
@@ -325,7 +331,10 @@ func TestReportJSON_CaughtErrorIsNotAFailure(t *testing.T) {
 // An empty run still produces a valid document — a consumer parses it unconditionally, so
 // "no blocks" must not mean "no JSON".
 func TestReportJSON_EmptyRunStaysValid(t *testing.T) {
-	out, anyErr := JSON(nil)
+	out, anyErr, err := JSON(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if anyErr {
 		t.Fatal("an empty run did not fail")
 	}
@@ -396,7 +405,10 @@ func TestRender_TextAndJSONBothRedact(t *testing.T) {
 		}},
 	}}
 	for _, asJSON := range []bool{false, true} {
-		out, anyErr := Render(reports, []string{"hunter2"}, asJSON)
+		out, anyErr, err := Render(reports, []string{"hunter2"}, asJSON)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if anyErr {
 			t.Fatalf("asJSON=%v: a run of ok results has not failed", asJSON)
 		}
@@ -418,7 +430,7 @@ func TestRender_ReportsAFailingRun(t *testing.T) {
 		}},
 	}}
 	for _, asJSON := range []bool{false, true} {
-		if _, anyErr := Render(reports, nil, asJSON); !anyErr {
+		if _, anyErr, _ := Render(reports, nil, asJSON); !anyErr {
 			t.Fatalf("asJSON=%v: an err result is a failed run", asJSON)
 		}
 	}

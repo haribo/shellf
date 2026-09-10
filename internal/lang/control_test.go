@@ -440,9 +440,13 @@ func TestControl_UnknownPrimitiveAtEval(t *testing.T) {
 // The phase table is the contract; a def declaring a removed phase must fail at parse
 // with what to do, not with "unknown".
 func TestPhases_RemovedNamesRefused(t *testing.T) {
+	// The wanted substring must appear **only** in the actionable message. `want: "check"`
+	// for input `pre-check` was satisfied by the generic `expected a phase, got "pre-check"`
+	// — the input echoed back — so this test passed with no `removedPhases` entry at all,
+	// which is the state it was in (#637).
 	for name, want := range map[string]string{
-		"pre-check": "check",
-		"post":      "removed",
+		"pre-check": "rename the phase",
+		"post":      "removed (ADR-0035)",
 	} {
 		_, err := ParseDefs(`def t() { ` + name + ` { return ok.x } }`)
 		if err == nil {

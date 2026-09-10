@@ -63,6 +63,15 @@ database that exists under the wrong owner, two logins where one is a regex matc
 other, an archive member emptied in place. Each was verified to fail before the fix and pass after — a case of this kind that
 was never seen red proves nothing at all, since a weak observe passes it by construction.
 
+**And the `apply` must not run for any other reason.** A case of this kind tests the
+`observe`, so the state it builds has to be one the def under test would call converged —
+break anything else as well and the apply runs regardless, taking the assertion with it.
+Both cases in #634 were already asserted by an existing plan and both assertions passed:
+`adverse-htpasswd.entry.shellf:38` asserts mode 600 after a call that changes the password,
+`adverse-system.timezone.shellf:13` asserts `/etc/timezone` after breaking the symlink too.
+Neither could fail, and the defect each was written beside survived underneath it
+from the day the def shipped until #634.
+
 An argument case passes a path holding a space, a single quote and a `&`, or a name at a
 boundary (empty, very long, starting with a dash). It asserts the machine like any other
 case: the directory that exists is the one that was asked for, *whole*, and no sibling was
@@ -73,10 +82,11 @@ ordinary names, which is the point.
 
 ## Coverage, and the gate that is not here yet
 
-8 cases against 38 defs today. A CI gate requiring an adverse case per def would be 30
-named exemptions, which is not a gate — it is a file nobody re-reads, and it turns the
-exemption from a signal into the norm. `def-coverage.sh` works because it is at 38/38.
+28 cases over 22 defs, against 49 defs today. A CI gate requiring an adverse case per def
+would be 27 named exemptions, which is not a gate — it is a file nobody re-reads, and it
+turns the exemption from a signal into the norm. `def-coverage.sh` works because it is at
+48/49, with its single exemption named and argued.
 
-The gate lands when this directory covers the defs that declare an `observe` (~20) — those
+The gate lands when this directory covers the defs that declare an `observe` (34) — those
 are the ones for which "hostile starting state" means anything; an action-shaped def
 (ADR-0029) has no state to get wrong. Until then the protection is #489 staying open.

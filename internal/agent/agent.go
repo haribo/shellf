@@ -33,10 +33,15 @@ func ServeOn(in io.Reader, out io.Writer, ex engine.Executor, sockDir string) er
 	var ch *Channel
 	if sockDir != "" {
 		c, err := Listen(sockDir)
-		if err == nil {
-			ch = c
-			defer func() { _ = ch.Close() }()
+		if err != nil {
+			// Not fatal, and not silent either: the run may declare a primitive it never
+			// reaches, so the job goes on — but with a channel that says why nobody will
+			// answer. Dropping the error left `no control host attached` after a 30s wait,
+			// naming the symptom and never the cause (#638).
+			c = Unavailable(err)
 		}
+		ch = c
+		defer func() { _ = ch.Close() }()
 	}
 	return write(out, runRequest(req, ex, ch))
 }

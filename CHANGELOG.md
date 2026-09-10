@@ -6,6 +6,32 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-10
+
+### Added
+
+- A test asserting every CLI flag appears in `README.md`. Four had been shipping undocumented and nothing said so (#642); this walks the commands' own flag sets, so a flag cannot be added to one and missed. `--check` is exempt by name, with its reason, and a second hidden flag fails the build rather than joining a skip list (#646).
+
+### Fixed
+
+- Three dropped failures. A reconnecting control host no longer leaks the connection it replaces — one descriptor per run, for the agent's whole life. An agent that cannot open its channel says so at the first ask instead of timing out on `no control host attached`. A local workdir that cannot be created fails the run, naming itself (#638).
+
+- `shellf status` takes the inputs `run` takes: `--vars`, `--set`, `-v` and `--agent-ttl`. The command that answers "what would this plan see?" could not be handed what the plan sees — a plan using `${k}` from `--set` failed to resolve under `status` while applying cleanly under `run`. Both now register one shared flag definition (#640).
+
+- The README's install snippet fetches the latest release instead of pinning `v0.10.0`, three versions behind. It downloads one architecture rather than both, and verifies with `--ignore-missing` — required once the download is narrowed, and checked not to weaken the verification: a binary that never arrived or whose bytes changed still exits non-zero (#647).
+
+- `archive.extract-member` passes the member name to `tar` after `--`. A member named `-rf.txt` was read as options, so the observe saw a mismatch and the apply failed on every run. The name comes from whoever built the archive, not from the plan (#639).
+
+- A def written with the retired `pre-check` phase now gets the message telling it to rename, instead of the generic "expected a phase". The entry was keyed `check` — a valid phase, matched earlier — so it was unreachable, and its test asserted a substring the generic message already contained, so nothing said so (#637).
+
+- `internal/report` no longer calls `os.Exit`. `JSON` returns its marshal error and `Render` passes it up; the two commands decide. The package's own comment said nothing there decides an exit code, twelve lines above the line that did — and a second comment stated the rule as the reason the package exists (#641).
+
+- The README no longer teaches the observe that cost #486: its `def` example asked `dpkg -s`, which exits 0 for a package removed without `--purge`. It now carries `apt.install`'s real question and says why. `--json`, `-v`, `--parallel` and `--limit` are documented, and the secrets note states the limit that is left rather than one ADR-0025 closed (#642).
+
+- `htpasswd.entry` and `system.timezone` observe everything their apply sets. The first left a credentials file world-readable whenever its hash already verified; the second left `/etc/timezone` naming another zone whenever the symlink was right. Both reported `already`. Two adverse cases, each seen red on a real machine first (#635, #636).
+
+- A def calling another instruction with too few arguments is refused instead of binding the missing one to the empty string. `file.write(path)` inside a def overwrote the file with nothing and reported `ok.done` — a file destroyed under a success verdict. A plan-level call was always checked on both bounds; only the def side was not (#633).
+
 ## [0.13.0] - 2026-09-09
 
 ### Changed
@@ -383,7 +409,8 @@ agent that evaluates on the host — "raw shell, but idempotent, previewable, fa
   per-user agent/workdir scoping.
 - Commands: `run`, `status`, `clean`, and `version`.
 
-[Unreleased]: https://github.com/haribo/shellf/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/haribo/shellf/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/haribo/shellf/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/haribo/shellf/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/haribo/shellf/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/haribo/shellf/compare/v0.10.0...v0.11.0

@@ -18,10 +18,23 @@ def timezone(zone: str) as root {
         z = shell { test -f "/usr/share/zoneinfo/$zone" }
         if !z { return err.unknownZone(z) }
     }
+    # Both files, because the apply writes both. Reading the link alone reported `already` on
+    # a host whose `/etc/localtime` was right and whose `/etc/timezone` named another zone —
+    # the exact disagreement the comment above says this def exists to prevent (#636).
+    #
+    # `recorded` is a comparison, not the file's contents: a field with no same-named
+    # parameter only has to be truthy, so returning `Europe/Berlin` would converge as happily
+    # as the right answer. `zone` is compared to the argument because a parameter carries
+    # that name; `recorded` cannot be, so it answers yes or no itself.
+    #
+    # On a host that ships no `/etc/timezone` the file simply is not there, the comparison
+    # fails, the apply creates it, and the next run converges — the def does not need to know
+    # whether the distribution is Debian.
     observe {
         # The link's target, not `date +%Z`: an abbreviation like CEST is seasonal and
         # shared by several zones, so comparing it would converge on the wrong continent.
-        return state(zone: shell { readlink -f /etc/localtime | sed 's#^/usr/share/zoneinfo/##' }.stdout)
+        return state(zone: shell { readlink -f /etc/localtime | sed 's#^/usr/share/zoneinfo/##' }.stdout,
+                     recorded: shell { [ "$(cat /etc/timezone 2>/dev/null)" = "$zone" ] }.exit == 0)
     }
     apply {
         r = shell {

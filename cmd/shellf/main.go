@@ -151,28 +151,96 @@ func (m *multiFlag) Set(v string) error {
 	return nil
 }
 
+// planInputs are the flags that describe **what a plan sees**, plus the connection knobs
+// for reaching the hosts it names. `run` and `status` both read a plan, so both register
+// exactly these; what differs between the two commands is modes (`--dry-run`), never
+// inputs.
+//
+// One definition rather than two, because two drifted: `status` shipped without `--vars`,
+// `--set`, `-v` and `--agent-ttl`, so the command whose whole job is answering "what would
+// this plan see?" could not be handed what the plan sees (#640). `clean` does not read a
+// plan and keeps its own three flags.
+type planInputs struct {
+	inv        *string
+	vars       *string
+	sets       kvFlags
+	secretFile kvFlags
+	secretEnv  kvFlags
+	insecure   *bool
+	knownHosts *string
+	agentTTL   *time.Duration
+	parallel   *int
+	limits     multiFlag
+	verbose    *bool
+	asJSON     *bool
+}
+
+// registerPlanInputs declares them on fs. The pointers are read after fs.Parse.
+func registerPlanInputs(fs *flag.FlagSet, limitWhat string) *planInputs {
+	in := &planInputs{}
+	in.inv = fs.String("inventory", "", "inventory file (required)")
+	in.vars = fs.String("vars", "", "vars file: global `name = value` bindings")
+	fs.Var(&in.sets, "set", "override a variable, k=v (repeatable); wins over --vars and plan bindings")
+	fs.Var(&in.secretFile, "secret-file", "secret from a file, name=path (repeatable); redacted in output")
+	fs.Var(&in.secretEnv, "secret-env", "secret from an env var, name=VAR (repeatable); redacted in output")
+	in.insecure = fs.Bool("insecure", false, "skip host-key verification (dev only)")
+	in.knownHosts = fs.String("known-hosts", "", "known_hosts path (default ~/.ssh/known_hosts)")
+	in.agentTTL = fs.Duration("agent-ttl", 0, "resident agent inactivity TTL before it self-erases (0 = 2h)")
+	in.parallel = fs.Int("parallel", 0, "hosts dialled at once (0 = 16); 1 serialises the fan-out")
+	fs.Var(&in.limits, "limit", "restrict the "+limitWhat+" to a host or group (repeatable); narrows the plan, never extends it")
+	in.verbose = fs.Bool("v", false, "trace the control host's decisions on stderr, and report every command run on the target")
+	in.asJSON = fs.Bool("json", false, "report as JSON on stdout (diagnostics stay on stderr)")
+	return in
+}
+
+// The three commands' flag sets, each built by a function rather than inline, so a test can
+// walk exactly what the command accepts. `TestEveryFlagIsDocumented` asserts every name here
+// appears in `README.md`; inline declarations would have forced that test to restate them,
+// which is the drift it exists to catch (#646).
+
+// runFlags: the plan inputs, plus the two modes only `run` has.
+func runFlags() (fs *flag.FlagSet, in *planInputs, dryRun, oldCheck *bool) {
+	fs = flag.NewFlagSet("run", flag.ExitOnError)
+	in = registerPlanInputs(fs, "run")
+	// Modes, not inputs: these say what `run` does with the plan, which is the one thing
+	// `status` has no equivalent of.
+	dryRun = fs.Bool("dry-run", false, "decide and preview without mutating")
+	// `--check` was the old name (ADR-0035). Accepting it silently would keep two
+	// spellings alive; this only exists to say what to type instead. Registered with an
+	// empty usage string so it stays out of `-h` — and out of the README, which the
+	// documentation test knows by name.
+	oldCheck = fs.Bool("check", false, "")
+	return fs, in, dryRun, oldCheck
+}
+
+// statusFlags: the same inputs `run` takes, from the same definition — `status` answers "what
+// would this plan see?", which it cannot do without being handed what the plan sees (#640).
+// It has no mode of its own: reading the state without acting is the whole command.
+func statusFlags() (*flag.FlagSet, *planInputs) {
+	fs := flag.NewFlagSet("status", flag.ExitOnError)
+	return fs, registerPlanInputs(fs, "sweep")
+}
+
+// cleanFlags: `clean` reads no plan, so it takes none of the inputs — only what it needs to
+// reach the hosts.
+func cleanFlags() (fs *flag.FlagSet, invPath *string, insecure *bool, knownHosts *string) {
+	fs = flag.NewFlagSet("clean", flag.ExitOnError)
+	invPath = fs.String("inventory", "", "inventory file (required)")
+	insecure = fs.Bool("insecure", false, "skip host-key verification (dev only)")
+	knownHosts = fs.String("known-hosts", "", "known_hosts path (default ~/.ssh/known_hosts)")
+	return fs, invPath, insecure, knownHosts
+}
+
 // runCmd: shellf run <plan.shellf> --inventory <hosts.shellf> [--dry-run] [flags].
 func runCmd(args []string) {
-	fs := flag.NewFlagSet("run", flag.ExitOnError)
-	invPath := fs.String("inventory", "", "inventory file (required)")
-	varsPath := fs.String("vars", "", "vars file: global `name = value` bindings")
-	var sets, secretFiles, secretEnvs kvFlags
-	fs.Var(&sets, "set", "override a variable, k=v (repeatable); wins over --vars and plan bindings")
-	fs.Var(&secretFiles, "secret-file", "secret from a file, name=path (repeatable); redacted in output")
-	fs.Var(&secretEnvs, "secret-env", "secret from an env var, name=VAR (repeatable); redacted in output")
-	dryRun := fs.Bool("dry-run", false, "decide and preview without mutating")
-	asJSON := fs.Bool("json", false, "report as JSON on stdout (diagnostics stay on stderr)")
-	verbose := fs.Bool("v", false, "trace the control host's decisions on stderr, and report every command run on the target")
-	// `--check` was the old name (ADR-0035). Accepting it silently would keep two
-	// spellings alive; this only exists to say what to type instead.
-	oldCheck := fs.Bool("check", false, "")
-	insecure := fs.Bool("insecure", false, "skip host-key verification (dev only)")
-	knownHosts := fs.String("known-hosts", "", "known_hosts path (default ~/.ssh/known_hosts)")
-	agentTTL := fs.Duration("agent-ttl", 0, "resident agent inactivity TTL before it self-erases (0 = 2h)")
-	parallel := fs.Int("parallel", 0, "hosts dialled at once (0 = 16); 1 serialises the fan-out")
-	var limits multiFlag
-	fs.Var(&limits, "limit", "restrict the run to a host or group (repeatable); narrows the plan, never extends it")
+	fs, in, dryRun, oldCheck := runFlags()
 	_ = fs.Parse(args) // flag.ExitOnError already exits on a parse error
+
+	// Named after Parse, when the repeatable flags have collected their values.
+	invPath, varsPath := in.inv, in.vars
+	sets, secretFiles, secretEnvs := in.sets, in.secretFile, in.secretEnv
+	insecure, knownHosts, agentTTL := in.insecure, in.knownHosts, in.agentTTL
+	parallel, verbose, asJSON, limits := in.parallel, in.verbose, in.asJSON, in.limits
 
 	// Before anything is read: a wrong flag must be the error the operator sees, not a
 	// missing file that happens to be reported first.
@@ -419,10 +487,7 @@ func tracer(on bool, secrets []string) func(string, ...any) {
 // cleanCmd: shellf clean --inventory <hosts.shellf> [target...]. Kills resident
 // agents and removes shellf's /tmp files on each target (all hosts if no target).
 func cleanCmd(args []string) {
-	fs := flag.NewFlagSet("clean", flag.ExitOnError)
-	invPath := fs.String("inventory", "", "inventory file (required)")
-	insecure := fs.Bool("insecure", false, "skip host-key verification (dev only)")
-	knownHosts := fs.String("known-hosts", "", "known_hosts path (default ~/.ssh/known_hosts)")
+	fs, invPath, insecure, knownHosts := cleanFlags()
 	_ = fs.Parse(args) // flag.ExitOnError already exits on a parse error
 	if *invPath == "" {
 		fmt.Fprintln(os.Stderr, "usage: shellf clean --inventory <hosts.shellf> [--insecure] [target...]")
@@ -487,32 +552,35 @@ func cleanCmd(args []string) {
 // statusCmd: shellf status --inventory <hosts.shellf> <plan.shellf>. Reports
 // each declared resource's current-vs-desired state, read-only (ADR-0013).
 func statusCmd(args []string) {
-	fs := flag.NewFlagSet("status", flag.ExitOnError)
-	invPath := fs.String("inventory", "", "inventory file (required)")
-	insecure := fs.Bool("insecure", false, "skip host-key verification (dev only)")
-	knownHosts := fs.String("known-hosts", "", "known_hosts path (default ~/.ssh/known_hosts)")
-	// `status` sweeps the fleet exactly like `run` does, so it takes the same knobs.
-	parallel := fs.Int("parallel", 0, "hosts dialled at once (0 = 16); 1 serialises the fan-out")
-	var limits multiFlag
-	fs.Var(&limits, "limit", "restrict the sweep to a host or group (repeatable)")
-	asJSON := fs.Bool("json", false, "report as JSON on stdout (diagnostics stay on stderr)")
-	var secretFiles, secretEnvs kvFlags
-	fs.Var(&secretFiles, "secret-file", "secret from a file, name=path (repeatable); redacted in output")
-	fs.Var(&secretEnvs, "secret-env", "secret from an env var, name=VAR (repeatable); redacted in output")
+	fs, in := statusFlags()
 	_ = fs.Parse(args)
+
+	invPath := in.inv
+	insecure, knownHosts := in.insecure, in.knownHosts
+	parallel, verbose, asJSON, limits := in.parallel, in.verbose, in.asJSON, in.limits
 	checkParallel(fs, *parallel)
 
 	if fs.NArg() < 1 || *invPath == "" {
-		fmt.Fprintln(os.Stderr, "usage: shellf status --inventory <hosts.shellf> [--insecure] <plan.shellf>")
+		fmt.Fprintln(os.Stderr, "usage: shellf status --inventory <hosts.shellf> [--vars <f>] [--set k=v] [--insecure] <plan.shellf>")
 		os.Exit(2)
 	}
-	secrets, secretValues, err := loadSecrets(secretFiles, secretEnvs)
+	secrets, secretValues, err := loadSecrets(in.secretFile, in.secretEnv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	base := map[string]string{}
-	plan, defsSrc, validate, err := project.Load(fs.Arg(0), *invPath, base, secrets)
+	// Exactly `run`'s layering (ADR-0018): globals from --vars, then --set on top, then
+	// secrets, which win. Passing an empty base here is what made a plan using `${k}` fail
+	// to resolve under `status` while applying cleanly under `run`.
+	base, setVars, err := loadGlobals(*in.vars, in.sets)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	for k, v := range secrets {
+		setVars[k] = v
+	}
+	plan, defsSrc, validate, err := project.Load(fs.Arg(0), *invPath, base, setVars)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -528,10 +596,10 @@ func statusCmd(args []string) {
 		os.Exit(1)
 	}
 	// `status` needs the channel too: an `observe` may call a primitive (#334).
-	// `secrets` sits in the --set layer here, exactly as `run` merges it (ADR-0018):
+	// The secrets sit in the --set layer, exactly as `run` merges them (ADR-0018):
 	// a template naming a secret must render in `status` too, or `status` reports an
 	// error on a plan that applies cleanly.
-	channelFor := controlChannel(fs.Arg(0), plan, inv, base, secrets)
+	channelFor := controlChannel(fs.Arg(0), plan, inv, base, setVars)
 
 	dial := func(alias string) transport.Transport {
 		h, _ := inv.Resolve(alias)
@@ -540,18 +608,23 @@ func statusCmd(args []string) {
 		}
 		return transport.SSH{
 			User: h.User, Host: h.Address, Port: h.Port, Key: h.Key,
-			KnownHosts: *knownHosts, Insecure: *insecure,
+			KnownHosts: *knownHosts, Insecure: *insecure, AgentTTL: *in.agentTTL,
+			Trace:   tracer(*verbose, secretValues),
 			Channel: channelFor(alias),
 		}
 	}
 	// `status` refuses an unknown target like `run` does. The render stays pure — the
 	// exit code is the caller's call, so a report string keeps one job (#451).
-	reports := orchestrator.Run(plan, inv, self, "status", dial, base, secrets, defsSrc, orchestrator.Options{Parallel: *parallel, Limit: limits, ValidateArgs: validate})
+	reports := orchestrator.Run(plan, inv, self, "status", dial, base, setVars, defsSrc, orchestrator.Options{Parallel: *parallel, Limit: limits, Verbose: *verbose, ValidateArgs: validate})
 	// The verdict comes from the renderer that produced the report, as it does for `run`:
 	// asking a second function is how `status` came to exit 0 over a fleet where every host
 	// was unreachable (#615).
 	if *asJSON {
-		out, anyErr := report.JSON(reports)
+		out, anyErr, err := report.JSON(reports)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 		fmt.Print(report.RedactJSON(out, secretValues))
 		exitFor(anyErr)
 		return
@@ -568,7 +641,14 @@ func statusCmd(args []string) {
 // internal/report (#491); what stays here is the part a package cannot own — stdout and
 // the process.
 func printReports(reports []orchestrator.BlockReport, secrets []string, asJSON bool) {
-	out, anyErr := report.Render(reports, secrets, asJSON)
+	out, anyErr, err := report.Render(reports, secrets, asJSON)
+	if err != nil {
+		// The report is what the operator came for, so a render that cannot finish is
+		// fatal — but the decision is here, where the process lives, not in the package
+		// that builds the string (#641).
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	fmt.Print(out)
 	exitFor(anyErr)
 }

@@ -1,0 +1,35 @@
+# `archive.extract-member` with a member whose name starts with a dash (#639).
+#
+# A hostile *argument*, and the argument comes from the archive rather than from the plan:
+# the member name is chosen by whoever built the tarball. Passed to `tar` with no `--`, a
+# name like `-rf.txt` is read as options — `tar: You may not specify more than one
+# '-Acdtrux' …` — so the observe reads a mismatch and the apply fails, for ever.
+#
+# Its own file rather than an extension of `adverse-archive.extract-member.shellf`: one plan
+# per case (adverse-cases.md), and that plan already carries the space/quote/`&` case.
+#
+# The fixture needs no `--transform`: `tar czf … -C src -- -rf.txt` stores the bare name,
+# which `tar czf … .` never produces — that is exactly why this is reachable and rare.
+on target {
+    as root {
+        unsafe shell {
+            rm -rf /tmp/adv-archive-dash
+            mkdir -p /tmp/adv-archive-dash/src
+            printf 'dashed\n' > "/tmp/adv-archive-dash/src/-rf.txt"
+            printf 'other\n' > /tmp/adv-archive-dash/src/plain.txt
+            tar czf /tmp/adv-archive-dash/a.tar.gz -C /tmp/adv-archive-dash/src -- "-rf.txt" plain.txt
+            # The name really is bare in the archive; a `./` prefix would defuse the case
+            # and it would pass for the wrong reason.
+            tar tzf /tmp/adv-archive-dash/a.tar.gz | grep -qx -- '-rf.txt' || exit 1
+        }
+
+        archive.extract-member("/tmp/adv-archive-dash/a.tar.gz",
+                               "/tmp/adv-archive-dash/out.txt",
+                               "-rf.txt")
+        shell {
+            grep -qxF 'dashed' /tmp/adv-archive-dash/out.txt || exit 1
+            grep -qxF 'other' /tmp/adv-archive-dash/out.txt && exit 1
+            exit 0
+        }
+    }
+}
