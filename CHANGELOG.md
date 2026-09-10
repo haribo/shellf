@@ -8,6 +8,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `htpasswd.entry` and `system.timezone` observe everything their apply sets. The first left a credentials file world-readable whenever its hash already verified; the second left `/etc/timezone` naming another zone whenever the symlink was right. Both reported `already`. Two adverse cases, each seen red on a real machine first (#635, #636).
+
 - A def calling another instruction with too few arguments is refused instead of binding the missing one to the empty string. `file.write(path)` inside a def overwrote the file with nothing and reported `ok.done` — a file destroyed under a success verdict. A plan-level call was always checked on both bounds; only the def side was not (#633).
 
 ## [0.13.0] - 2026-09-09
