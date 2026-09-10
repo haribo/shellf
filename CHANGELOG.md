@@ -10,6 +10,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Three dropped failures. A reconnecting control host no longer leaks the connection it replaces — one descriptor per run, for the agent's whole life. An agent that cannot open its channel says so at the first ask instead of timing out on `no control host attached`. A local workdir that cannot be created fails the run, naming itself (#638).
 
+- `shellf status` takes the inputs `run` takes: `--vars`, `--set`, `-v` and `--agent-ttl`. The command that answers "what would this plan see?" could not be handed what the plan sees — a plan using `${k}` from `--set` failed to resolve under `status` while applying cleanly under `run`. Both now register one shared flag definition (#640).
+
 - `archive.extract-member` passes the member name to `tar` after `--`. A member named `-rf.txt` was read as options, so the observe saw a mismatch and the apply failed on every run. The name comes from whoever built the archive, not from the plan (#639).
 
 - A def written with the retired `pre-check` phase now gets the message telling it to rename, instead of the generic "expected a phase". The entry was keyed `check` — a valid phase, matched earlier — so it was unreachable, and its test asserted a substring the generic message already contained, so nothing said so (#637).
