@@ -551,7 +551,11 @@ func statusCmd(args []string) {
 	// asking a second function is how `status` came to exit 0 over a fleet where every host
 	// was unreachable (#615).
 	if *asJSON {
-		out, anyErr := report.JSON(reports)
+		out, anyErr, err := report.JSON(reports)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 		fmt.Print(report.RedactJSON(out, secretValues))
 		exitFor(anyErr)
 		return
@@ -568,7 +572,14 @@ func statusCmd(args []string) {
 // internal/report (#491); what stays here is the part a package cannot own — stdout and
 // the process.
 func printReports(reports []orchestrator.BlockReport, secrets []string, asJSON bool) {
-	out, anyErr := report.Render(reports, secrets, asJSON)
+	out, anyErr, err := report.Render(reports, secrets, asJSON)
+	if err != nil {
+		// The report is what the operator came for, so a render that cannot finish is
+		// fatal — but the decision is here, where the process lives, not in the package
+		// that builds the string (#641).
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	fmt.Print(out)
 	exitFor(anyErr)
 }

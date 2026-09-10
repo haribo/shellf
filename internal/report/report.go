@@ -15,8 +15,6 @@ import (
 	"sort"
 	"strings"
 
-	"os"
-
 	"shellf/internal/engine"
 	"shellf/internal/orchestrator"
 	"shellf/internal/proto"
@@ -49,15 +47,18 @@ const jsonVersion = 1
 // Render is what `printReports` needs: the finished, redacted output and whether the run
 // failed. Printing it and exiting stay with the caller — a package that calls os.Exit
 // cannot be tested, which is the entanglement this split undoes.
-func Render(reports []orchestrator.BlockReport, secrets []string, asJSON bool) (string, bool) {
+func Render(reports []orchestrator.BlockReport, secrets []string, asJSON bool) (string, bool, error) {
 	if asJSON {
 		// stdout carries the report and nothing else, or it is not parseable. Anything
 		// diagnostic belongs on stderr.
-		out, anyErr := JSON(reports)
-		return RedactJSON(out, secrets), anyErr
+		out, anyErr, err := JSON(reports)
+		if err != nil {
+			return "", true, err
+		}
+		return RedactJSON(out, secrets), anyErr, nil
 	}
 	text, anyErr := Text(reports)
-	return Redact(text, secrets), anyErr
+	return Redact(text, secrets), anyErr, nil
 }
 
 // redact masks every non-empty secret value with `***` (by value, so it catches
@@ -153,7 +154,7 @@ func orDash(s string) string {
 // reportJSON renders the same run reportText does, as JSON, and reports whether any host
 // errored. The two must agree on that boolean: a consumer branching on the exit code and
 // a human reading the prose have to see the same run.
-func JSON(reports []orchestrator.BlockReport) (string, bool) {
+func JSON(reports []orchestrator.BlockReport) (string, bool, error) {
 	out := jsonReport{Version: jsonVersion, Blocks: make([]jsonBlock, 0, len(reports))}
 	anyErr := false
 
@@ -186,12 +187,13 @@ func JSON(reports []orchestrator.BlockReport) (string, bool) {
 
 	b, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
-		// Nothing here can fail to marshal — every field is a plain Go value — but a
-		// silent empty report would be worse than a loud one.
-		fmt.Fprintf(os.Stderr, "rendering the JSON report: %v\n", err)
-		os.Exit(1)
+		// Nothing here can fail to marshal — every field is a plain Go value — so this
+		// is returned rather than handled: the caller decides, which is the whole point
+		// of the package. It used to print and `os.Exit(1)` here, twelve lines under a
+		// comment saying a package that exits cannot be tested (#641).
+		return "", true, fmt.Errorf("rendering the JSON report: %w", err)
 	}
-	return string(b) + "\n", anyErr
+	return string(b) + "\n", anyErr, nil
 }
 
 // redactJSON masks secrets in encoded JSON.
