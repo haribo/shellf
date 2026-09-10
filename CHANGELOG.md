@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- A test asserting every CLI flag appears in `README.md`. Four had been shipping undocumented and nothing said so (#642); this walks the commands' own flag sets, so a flag cannot be added to one and missed. `--check` is exempt by name, with its reason, and a second hidden flag fails the build rather than joining a skip list (#646).
+
 ### Fixed
 
 - Three dropped failures. A reconnecting control host no longer leaks the connection it replaces — one descriptor per run, for the agent's whole life. An agent that cannot open its channel says so at the first ask instead of timing out on `no control host attached`. A local workdir that cannot be created fails the run, naming itself (#638).
