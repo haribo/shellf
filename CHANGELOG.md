@@ -12,6 +12,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - ADR-0057: policy goes in `shellf.conf` at the project root, written in the shellf language; modes and inputs stay flags, and a flag outranks the file. The plan sits above both, as `as root` already does. No user or system config — on a fleet tool, a per-operator default outside the repository is drift nobody can review (#663).
 
+### Fixed
+
+- `sysctl.set` observes the drop-in it writes as well as the running kernel. A host whose kernel already held the value and whose `/etc/sysctl.d` file was gone reported `already`, and the setting was lost at the next reboot. The def's own comment argued against reading the file, correctly, then concluded "the kernel only" — a false dilemma (#658).
+
+- `user.group` matches a group name literally. `grep -qx` read it as a regular expression, and Debian allows `.` in a group name — so a request for `a.b` was satisfied by membership of `axb`, and the def reported `already` over a user it never added. The same class as #598, which fixed it in `htpasswd.entry` (#660).
+
 ## [0.14.0] - 2026-09-10
 
 ### Added
@@ -19,8 +25,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A test asserting every CLI flag appears in `README.md`. Four had been shipping undocumented and nothing said so (#642); this walks the commands' own flag sets, so a flag cannot be added to one and missed. `--check` is exempt by name, with its reason, and a second hidden flag fails the build rather than joining a skip list (#646).
 
 ### Fixed
-
-- `sysctl.set` observes the drop-in it writes as well as the running kernel. A host whose kernel already held the value and whose `/etc/sysctl.d` file was gone reported `already`, and the setting was lost at the next reboot. The def's own comment argued against reading the file, correctly, then concluded "the kernel only" — a false dilemma (#658).
 
 - Three dropped failures. A reconnecting control host no longer leaks the connection it replaces — one descriptor per run, for the agent's whole life. An agent that cannot open its channel says so at the first ask instead of timing out on `no control host attached`. A local workdir that cannot be created fails the run, naming itself (#638).
 

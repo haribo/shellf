@@ -1,0 +1,32 @@
+# `user.group` matches the group name literally (#660).
+#
+# Right-shaped but wrong (adverse-cases.md): the user is in a group whose name the requested one
+# **matches as a regex**. `grep -qx "$group"` read `advg.b` as a pattern, the `.` matched the `x`
+# of `advgxb`, and the def reported `already` over a user who was never added to the group asked
+# for.
+#
+# The same class as #598, which fixed it in `htpasswd.entry` where `a.b` read another account's
+# hash. The shape survived here.
+#
+# Debian allows `.` in a group name, so nothing exotic is required — which is the point.
+on target {
+    as root {
+        unsafe shell {
+            getent group advgxb >/dev/null || groupadd advgxb
+            getent group advg.b >/dev/null || groupadd advg.b
+            id advgrpuser >/dev/null 2>&1 || useradd -M -s /bin/false advgrpuser
+            # In the look-alike group only: the state the observe must not accept.
+            usermod -G advgxb advgrpuser
+            # -F here too. Written without it, this guard reproduces the very bug under test —
+            # `advg.b` matches `advgxb` — and fails the setup instead of the def. Measured.
+            id -nG advgrpuser | tr ' ' '\n' | grep -qxF -- 'advg.b' && exit 1
+            exit 0
+        }
+        user.group("advgrpuser", "advg.b")
+        shell {
+            id -nG advgrpuser | tr ' ' '\n' | grep -qxF -- 'advg.b' || exit 1
+            # And the group it was already in is still there: `usermod -aG` appends.
+            id -nG advgrpuser | tr ' ' '\n' | grep -qxF -- 'advgxb' || exit 1
+        }
+    }
+}
