@@ -8,6 +8,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `test/changelog-frozen.sh` fails when a released changelog section no longer matches its tag. An entry filed into a published section was not invalid, it was invisible — it had happened three times, the oldest sitting in the file since August unnoticed. A deliberate edit is named in the script with its reason (#669).
+
 - `shellf.conf` at the project root sets `parallel`, `agent-ttl` and `known-hosts` for everyone who runs the project, in the same `name = "value"` form a `--vars` file uses. A flag still wins, and `-v` prints which layer each value came from. An unknown setting stops the run naming it (#664).
 
 - ADR-0057: policy goes in `shellf.conf` at the project root, written in the shellf language; modes and inputs stay flags, and a flag outranks the file. The plan sits above both, as `as root` already does. No user or system config — on a fleet tool, a per-operator default outside the repository is drift nobody can review (#663).
