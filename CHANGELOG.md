@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- ADR-0057: policy goes in `shellf.conf` at the project root, written in the shellf language; modes and inputs stay flags, and a flag outranks the file. The plan sits above both, as `as root` already does. No user or system config — on a fleet tool, a per-operator default outside the repository is drift nobody can review (#663).
+
 ## [0.14.0] - 2026-09-10
 
 ### Added
