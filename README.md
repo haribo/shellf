@@ -379,6 +379,36 @@ agents and wipes shellf's files from the targets.
 state without acting is what `status` already is. `clean` reads no plan and takes
 `--inventory`, `--insecure` and `--known-hosts`.
 
+### Project policy — `shellf.conf`
+
+Three of those flags are not choices about *this* run, they are how the project is run:
+`--parallel`, `--agent-ttl` and `--known-hosts`. Write them once at the project root, commit
+them, and everyone gets the same ones (ADR-0057):
+
+```
+parallel = "8"
+agent-ttl = "4h"
+known-hosts = "keys/known_hosts"
+```
+
+The same format as a `--vars` file, and the keys are spelled like the flags without the dashes.
+A flag still wins, so CI can override without editing a committed file. `-v` prints which layer
+each value came from:
+
+```
+· policy: parallel 3 (flag), agent-ttl 4h (shellf.conf), known-hosts ~/.ssh/known_hosts (default)
+```
+
+A relative path is resolved from the **project root**, not the working directory — the file is
+shared, so it means the same thing wherever you run from. An unknown setting stops the run
+naming it rather than being skipped: a file is read once, so a line that quietly does nothing is
+a setting its author believes is in force. `--insecure` is refused in the file on purpose —
+committed, it would disable host-key verification for everyone who clones the repository.
+
+There is no user-level or system-level config, and no `--config <path>`: on a fleet tool, a
+default living outside the repository means the same plan behaves differently depending on who
+ran it.
+
 ## How it works
 
 ![Isometric view: a control terminal pushes one static binary over SSH arcs to three servers, where it runs as an agent executing the plan locally; the finished agent dissolves into pixels, leaving the machine untouched.](docs/assets/how-it-works.png)
