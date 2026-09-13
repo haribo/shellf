@@ -1,9 +1,14 @@
 # Set a kernel parameter, live and across reboots.
 #
-# Observed on the **running** kernel, not on the file: a value persisted to
-# /etc/sysctl.d and never applied is a value that does not take effect until the next
-# reboot, and a def reporting `already` over it would be describing a file rather than a
-# machine. The apply therefore does both, and the observe reads the only thing that matters.
+# Both are observed, because the apply guarantees both. Reading the **file** alone would report
+# `already` over a kernel that disagrees, and the setting would silently not apply until
+# somebody reboots. Reading the **kernel** alone reported `already` on a host where the drop-in
+# was gone — somebody ran `sysctl -w` by hand, or the file was cleaned up — and the value was
+# then lost at the next reboot, which is the one thing this def exists to prevent (#658).
+#
+# That second half is worth naming as a mistake rather than quietly fixing: this def's comment
+# used to argue *against* reading the file, correctly, and then concluded "the kernel only" — a
+# false dilemma, and the fourth instance of the class #634 closed.
 #
 # The first dogfood wrote this by hand — a `printf` into /etc/sysctl.d plus `sysctl
 # --system`, with no observe at all, acting on every run (#500).
@@ -11,7 +16,20 @@ def set(key: str, value: str) as root {
     check {
         if key == "" { return err.keyMustNotBeEmpty }
     }
-    observe { return state(value: shell { sysctl -n "$key" 2>/dev/null }.stdout) }
+    observe {
+        return state(value: shell { sysctl -n "$key" 2>/dev/null }.stdout,
+                     persisted: shell {
+                         # The same derivation as the apply below, and there is no way to share
+                         # it: a def's phases are separate shells with no binding between them.
+                         # Changed in one place only, this def reports converged over a file it
+                         # never wrote.
+                         f="/etc/sysctl.d/90-shellf-$(printf '%s' "$key" | tr '/.' '--').conf"
+                         # -F and --: a key carries dots, which are regex metacharacters, and
+                         # the same literal-match rule `htpasswd.entry` and `user.group` follow
+                         # (#598).
+                         [ -f "$f" ] && grep -qxF -- "$key=$value" "$f"
+                     }.exit == 0)
+    }
     apply {
         r = shell {
             # The file name carries the key, so two parameters never overwrite each other.
