@@ -8,6 +8,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- ADR-0058: a shell that outruns its bound reports `err.timeout`, catchable like any other error. Two mechanisms, not one — a stall has a progress signal only for transfers, and output silence is not progress for anything else. The cap is policy in `shellf.conf` and defaults to no limit (#657).
+
 - `test/changelog-frozen.sh` fails when a released changelog section no longer matches its tag. An entry filed into a published section was not invalid, it was invisible — it had happened three times, the oldest sitting in the file since August unnoticed. A deliberate edit is named in the script with its reason (#669).
 
 - `shellf.conf` at the project root sets `parallel`, `agent-ttl` and `known-hosts` for everyone who runs the project, in the same `name = "value"` form a `--vars` file uses. A flag still wins, and `-v` prints which layer each value came from. An unknown setting stops the run naming it (#664).
