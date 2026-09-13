@@ -53,7 +53,12 @@ def ensure(name: str, shell: str, system: bool = false) as root {
 # the next step either, and the second contradicts the resident model that makes a second run
 # cost no round trip (#510).
 def group(user: str, group: str) as root {
-    observe { return state(member: shell { id -nG "$user" | tr ' ' '\n' | grep -qx "$group" }.exit == 0) }
+    # -F and --: a group name is matched literally. `grep -qx "$group"` read it as a regular
+    # expression, and Debian allows `.` in a group name — so a request for `a.b` was satisfied by
+    # membership of `axb`, and this def reported `already` over a user it never added (#660). The
+    # same class as #598, which fixed it in `htpasswd.entry`; the shape survived here. `--` for
+    # the reason #639 needed it: a name starting with a dash is otherwise read as options.
+    observe { return state(member: shell { id -nG "$user" | tr ' ' '\n' | grep -qxF -- "$group" }.exit == 0) }
     apply {
         r = shell { usermod -aG "$group" "$user" }
         if !r { return err.runtime(r) }
