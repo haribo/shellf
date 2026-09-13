@@ -76,7 +76,8 @@ group web = [web1, web2]
 
 Authentication uses your **ssh-agent** (`SSH_AUTH_SOCK`) by default, so an encrypted
 key never leaves the agent. To pin a specific key instead, add `key: "~/.ssh/id_…"`
-to `defaults` or a host (it is an optional override).
+to `defaults` or a host — it must be **unencrypted**, since shellf parses the file itself and
+has no passphrase prompt (ADR-0026). An encrypted key is what the agent path is for.
 
 Describe what to do in a **plan** file (`plan.shellf`):
 
@@ -111,9 +112,10 @@ instruction that finds the state it wants reports `ok.already` and does nothing.
 | Host | `host <alias> = { address: "…", user: "…", port: "…" }` |
 | Group | `group <name> = [<alias>, <alias>]` |
 
-Omitted host fields fall back to `defaults`, then to `22` for the port. Only
-`address` is required. A host may belong to several groups. `key: "…"` is an
-optional field (a pinned ssh key); without it, authentication uses the ssh-agent.
+Omitted host fields fall back to `defaults`, then to `22` for the port. `address` is
+required unless the host is `local` (below). A host may belong to several groups. `key: "…"`
+is an optional field — a pinned ssh key, which must be **unencrypted**; without it,
+authentication uses the ssh-agent. Any other field is a per-host variable.
 
 A host with `local: "true"` is provisioned on the **control host itself**, with no
 SSH — `host self = { local: "true" }` (no `address` needed). Same agent, plan, and

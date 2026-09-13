@@ -16,6 +16,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Six documentation claims the code had outgrown: a spec header short by four chapters, a `when` keyword that never existed, an inventory table missing `local` and `interpreter`, a package comment contradicting its own fields, a def file arguing against a def it contains — and a pinned ssh key now documented as having to be unencrypted (#661, #662).
+
 - `sysctl.set` observes the drop-in it writes as well as the running kernel. A host whose kernel already held the value and whose `/etc/sysctl.d` file was gone reported `already`, and the setting was lost at the next reboot. The def's own comment argued against reading the file, correctly, then concluded "the kernel only" — a false dilemma (#658).
 
 - `user.group` matches a group name literally. `grep -qx` read it as a regular expression, and Debian allows `.` in a group name — so a request for `a.b` was satisfied by membership of `axb`, and the def reported `already` over a user it never added. The same class as #598, which fixed it in `htpasswd.entry` (#660).
