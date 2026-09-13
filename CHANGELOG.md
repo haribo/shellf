@@ -20,6 +20,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `sysctl.set` observes the drop-in it writes as well as the running kernel. A host whose kernel already held the value and whose `/etc/sysctl.d` file was gone reported `already`, and the setting was lost at the next reboot. The def's own comment argued against reading the file, correctly, then concluded "the kernel only" — a false dilemma (#658).
+
 - Three dropped failures. A reconnecting control host no longer leaks the connection it replaces — one descriptor per run, for the agent's whole life. An agent that cannot open its channel says so at the first ask instead of timing out on `no control host attached`. A local workdir that cannot be created fails the run, naming itself (#638).
 
 - `shellf status` takes the inputs `run` takes: `--vars`, `--set`, `-v` and `--agent-ttl`. The command that answers "what would this plan see?" could not be handed what the plan sees — a plan using `${k}` from `--set` failed to resolve under `status` while applying cleanly under `run`. Both now register one shared flag definition (#640).

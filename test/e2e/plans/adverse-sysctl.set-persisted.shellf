@@ -1,0 +1,31 @@
+# `sysctl.set` observes the file it writes as well as the running kernel (#658).
+#
+# Right-shaped but wrong (adverse-cases.md): the live kernel already holds the value, and the
+# drop-in under /etc/sysctl.d is **gone** — a host where somebody ran `sysctl -w` by hand, or
+# where the file was cleaned up. The observe read the kernel alone, said `already`, and the
+# setting was lost at the next reboot, which is the one thing this def exists to prevent.
+#
+# The mirror of `adverse-sysctl.set.shellf`, which breaks the kernel and leaves the file: there
+# the apply runs, so its assertion on the file passes without testing the observe.
+#
+# A `net.` key, never a `vm.` one: sysctl keys outside the network namespace are shared with the
+# host, so a privileged container writing `vm.swappiness` changes the developer's own machine.
+# A different key from the other case, so the two cannot interact whatever order they run in.
+on target {
+    as root {
+        unsafe shell {
+            rm -f /etc/sysctl.d/90-shellf-net-ipv4-tcp_fin_timeout.conf
+            sysctl -w net.ipv4.tcp_fin_timeout=45 >/dev/null
+            # The state really is the converged-looking one, or the case would pass for the
+            # wrong reason.
+            [ "$(sysctl -n net.ipv4.tcp_fin_timeout)" = "45" ] || exit 1
+            [ ! -f /etc/sysctl.d/90-shellf-net-ipv4-tcp_fin_timeout.conf ] || exit 1
+        }
+        sysctl.set("net.ipv4.tcp_fin_timeout", "45")
+        shell {
+            grep -qxF 'net.ipv4.tcp_fin_timeout=45' \
+                /etc/sysctl.d/90-shellf-net-ipv4-tcp_fin_timeout.conf || exit 1
+            [ "$(sysctl -n net.ipv4.tcp_fin_timeout)" = "45" ] || exit 1
+        }
+    }
+}
