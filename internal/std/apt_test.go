@@ -37,3 +37,36 @@ func TestAptInstall_ObservesTheInstallStatusNotTheRecord(t *testing.T) {
 		t.Fatalf("the observe must require the `install ok installed` status:\n%s", observe)
 	}
 }
+
+// #659: the variable lived in the test images and not in the def, so every e2e run exercised a
+// target where it was already set and a real host was the first place it was not.
+//
+// Not a fix for a hang — there is none. Every shell the agent runs gets /dev/null on stdin, so a
+// question is answered by end-of-file: measured on Debian, a debconf question installs with its
+// defaults (exit 0) and a dpkg conffile prompt dies at once (exit 100). What the variable changes
+// is *which* defaults are taken. What this test pins is that the def no longer depends on the
+// image around it.
+func TestApt_RunsNonInteractiveWithoutHelpFromTheImage(t *testing.T) {
+	for _, tc := range []struct {
+		def  string
+		args map[string]string
+	}{
+		{"apt.install", map[string]string{"pkg": "nano"}},
+		{"apt.update", map[string]string{}},
+	} {
+		f := &fakeExec{observe: drift, applyMatch: "apt-get"}
+		eval(t, tc.def, tc.args, f, engine.Apply)
+		var apply string
+		for _, c := range f.calls {
+			if strings.Contains(c, "apt-get") {
+				apply = c
+			}
+		}
+		if apply == "" {
+			t.Fatalf("%s issued no apt-get", tc.def)
+		}
+		if !strings.Contains(apply, "DEBIAN_FRONTEND=noninteractive") {
+			t.Errorf("%s must carry the variable itself, not inherit it from the image:\n%s", tc.def, apply)
+		}
+	}
+}
