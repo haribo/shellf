@@ -18,6 +18,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `git.clone` says what it promises: a clone of the url exists at the destination, not that its files are still there — that is `git.sync`'s question, and it cannot honestly ask more, since `git clone` refuses a non-empty destination. A new e2e step covers the one claim its comment made and nothing tested (#679).
+
 - `git.sync` observes the working tree, not only where HEAD points. A deploy directory emptied of everything but `.git` kept the right HEAD and reported `already`, so the deployment ran over nothing. It asks about deleted tracked files, not modified ones — the def must not act because somebody edited a file (#680).
 
 - `sudo.write` observes who owns the drop-in, and sets it. sudo silently ignores a file root does not own, so a rule with the right content and mode owned by somebody else was reported `already` while it did nothing. Observing alone would have drifted for ever: `file.write` preserves an existing owner (#676).

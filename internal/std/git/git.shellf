@@ -1,3 +1,15 @@
+# **What this def promises: a clone of `url` exists at `dst`.** Not that its files are still
+# there — that is `git.sync`'s job, and `git.sync` is what a deployment should call.
+#
+# The distinction is not a technicality. A destination whose `.git` is intact and whose working
+# tree was emptied reports `already` here, because the question this def asks is about the
+# *remote*. It cannot honestly ask more: `git clone` refuses a non-empty destination, so an
+# observe that noticed a missing file would report a drift this apply cannot repair, and act on
+# every run for ever. `git.sync` can, and since #680 it does — its apply already runs
+# `checkout --force`.
+#
+# Decided in #679 rather than widened: making `clone` restore a tree would make it a def that
+# overwrites local changes, which is a different promise and belongs to a different name.
 def clone(url: str, dst: str) {
     # Observed: the current origin remote (empty if not a repo). The `url` field
     # matches the `url` argument, so a missing clone or a wrong remote both read
