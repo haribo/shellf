@@ -1,0 +1,35 @@
+# `sudo.write` observes who owns the drop-in, not only its content and mode (#676).
+#
+# Right-shaped but wrong (adverse-cases.md): the file holds exactly the rule the plan asked for,
+# it is 440, and it belongs to somebody else. sudo then **ignores it** — `sudo: is owned by uid
+# N, should be 0` — while the def reported `already`. A rule that looks installed and does
+# nothing, which is the outcome this def's own header calls worse than a failure.
+#
+# Measured before the fix, on a real target:
+#   visudo -c        → /etc/sudoers.d/zz-adv: wrong owner (uid, gid) should be (0, 0)
+#   sudo -n true     → sudo: a password is required
+#
+# The fifth instance of the class #634 closed, and the first in a def written to keep an
+# operator from being locked out.
+on target {
+    as root {
+        unsafe shell {
+            id advsudo >/dev/null 2>&1 || useradd -M -s /bin/false advsudo
+            # The content is exactly what the def will ask for, so only the owner is wrong: the
+            # observe has to be the thing that decides, or the apply runs for another reason.
+            printf 'advsudo ALL=(ALL) NOPASSWD: /bin/true\n' > /etc/sudoers.d/zz-adv
+            chmod 440 /etc/sudoers.d/zz-adv
+            chown advsudo:advsudo /etc/sudoers.d/zz-adv
+            # And sudo really is refusing it, or the case proves nothing.
+            visudo -c 2>&1 | grep -q 'zz-adv: wrong owner' || exit 1
+        }
+        sudo.write("zz-adv", "advsudo ALL=(ALL) NOPASSWD: /bin/true")
+        shell {
+            [ "$(stat -c '%U:%G' /etc/sudoers.d/zz-adv)" = "root:root" ] || exit 1
+            [ "$(stat -c '%a' /etc/sudoers.d/zz-adv)" = "440" ] || exit 1
+            # The whole point: sudo accepts it now.
+            visudo -c 2>&1 | grep -q 'zz-adv: wrong owner' && exit 1
+            exit 0
+        }
+    }
+}

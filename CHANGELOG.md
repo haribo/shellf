@@ -18,6 +18,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `sudo.write` observes who owns the drop-in, and sets it. sudo silently ignores a file root does not own, so a rule with the right content and mode owned by somebody else was reported `already` while it did nothing. Observing alone would have drifted for ever: `file.write` preserves an existing owner (#676).
+
 - `apt.install` and `apt.update` set `DEBIAN_FRONTEND=noninteractive` themselves. It was set in the three test images and never in the defs, so every e2e run exercised a target where it was already there. Not a hang: a shell's stdin is `/dev/null`, so a question is answered by end-of-file (#659).
 
 - Six documentation claims the code had outgrown: a spec header short by four chapters, a `when` keyword that never existed, an inventory table missing `local` and `interpreter`, a package comment contradicting its own fields, a def file arguing against a def it contains — and a pinned ssh key now documented as having to be unencrypted (#661, #662).
