@@ -13,7 +13,24 @@ def install(pkg: str) as root {
     # half-configured state — reads as not installed, which is what it is.
     observe { return state(installed: shell { dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q '^install ok installed' }.exit == 0) }
     apply {
-        r = shell { apt-get install -y "$pkg" }
+        # `DEBIAN_FRONTEND=noninteractive` in the def, not in the image around it. It was set
+        # in `test/e2e/Dockerfile`, `test/bench/Dockerfile`, `test/e2e/cross/Dockerfile` and
+        # inline in `run.sh`, and nowhere here — so every e2e run exercised a target where it
+        # was already set, and a real host was the first place it was not (#659).
+        #
+        # Not a fix for a hang: there is none. Every shell the agent runs gets /dev/null on
+        # stdin (`internal/engine/exec_shell.go`), so a question is answered by end-of-file.
+        # Measured on Debian: a debconf question takes its defaults and installs (exit 0), and
+        # a dpkg conffile prompt dies at once with `end of file on stdin at conffile prompt`
+        # (exit 100), which surfaces here as `err.runtime`. What this changes is *which*
+        # defaults are taken — the documented non-interactive ones rather than whatever
+        # frontend debconf finds.
+        #
+        # It does **not** decide a conffile question. That is dpkg's prompt, not debconf's;
+        # the same forced prompt exits 100 with this variable set and without it. Whose config
+        # wins on an upgrade is a separate decision, and it waits for a deployment that meets
+        # it (#659).
+        r = shell { DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg" }
         if !r { return err.runtime(r) }
         return ok.installed
     }
