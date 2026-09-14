@@ -18,6 +18,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `git.sync` observes the working tree, not only where HEAD points. A deploy directory emptied of everything but `.git` kept the right HEAD and reported `already`, so the deployment ran over nothing. It asks about deleted tracked files, not modified ones — the def must not act because somebody edited a file (#680).
+
 - `sudo.write` observes who owns the drop-in, and sets it. sudo silently ignores a file root does not own, so a rule with the right content and mode owned by somebody else was reported `already` while it did nothing. Observing alone would have drifted for ever: `file.write` preserves an existing owner (#676).
 
 - `apt.install` and `apt.update` set `DEBIAN_FRONTEND=noninteractive` themselves. It was set in the three test images and never in the defs, so every e2e run exercised a target where it was already there. Not a hang: a shell's stdin is `/dev/null`, so a question is answered by end-of-file (#659).

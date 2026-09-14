@@ -30,12 +30,27 @@ def sync(url: str, dst: str, ref: str) {
     # to the query makes the remote answer both lines, and the peeled one wins where there
     # is one. A `ref` that is a raw SHA has no remote ref at all and is compared as it
     # stands.
+    #
+    # Two fields, because the apply guarantees two things: where HEAD points **and** a tree with
+    # the tracked files in it. Comparing HEAD alone reported `already` over a deploy directory
+    # emptied of everything but `.git` — a cleanup gone wrong, a failed build step — and the
+    # deployment then ran over nothing (#680). `git.clone` promises only that a clone exists
+    # (#679), so this def is where the question belongs.
+    #
+    # **Deletions, not modifications.** `git diff --quiet HEAD` would also fire on a tracked file
+    # a deployment edited on purpose, and this def would act on every run for ever. What its
+    # apply repairs is a missing file — `checkout --force` restores those — so that is what it
+    # asks about. Verified on a real checkout, detached like the one this def leaves behind: a
+    # pristine tree and a modified tree both answer nothing, a deleted file answers its name.
     observe {
         return state(atRef: shell {
             test -d "$dst/.git" || exit 1
             want=$(git ls-remote "$url" "$ref" "$ref^{}" 2>/dev/null | awk '$2 ~ /\^\{\}$/ { p = $1 } NR == 1 { f = $1 } END { print (p != "" ? p : f) }')
             [ -n "$want" ] || want="$ref"
             test "$(git -C "$dst" rev-parse HEAD 2>/dev/null)" = "$want"
+        }.exit == 0, whole: shell {
+            test -d "$dst/.git" || exit 1
+            [ -z "$(git -C "$dst" diff --name-only --diff-filter=D HEAD -- 2>/dev/null)" ]
         }.exit == 0)
     }
     apply {
