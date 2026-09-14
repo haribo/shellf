@@ -1,0 +1,41 @@
+# `git.sync` observes the working tree, not only where HEAD points (#680).
+#
+# Right-shaped but wrong (adverse-cases.md): the checkout is at exactly the ref asked for, and its
+# tracked files are gone. The observe resolved the ref on the remote and compared it to
+# `git rev-parse HEAD` — HEAD, not the tree — so an emptied deploy directory reported `already`
+# and the deployment ran over nothing.
+#
+# Found while documenting #679: `git.clone` promises only that a clone exists here, which made
+# this def responsible for the case, and it was not carrying it either.
+#
+# The second half of the case is the boundary this fix can get wrong: a tracked file **modified**
+# on purpose must still converge, or the def acts on every run for ever.
+on target {
+    as root {
+        unsafe shell {
+            rm -rf /tmp/adv-git-sync
+            mkdir -p /tmp/adv-git-sync/seed && cd /tmp/adv-git-sync/seed
+            git init -q -b main . && git config user.email e@x && git config user.name e
+            echo tracked > tracked.txt && echo other > other.txt
+            git add -A && git commit -qm seed
+            git clone -q --bare /tmp/adv-git-sync/seed /tmp/adv-git-sync/repo.git
+            git clone -q /tmp/adv-git-sync/repo.git /tmp/adv-git-sync/dst
+            cd /tmp/adv-git-sync/dst && git checkout -q --detach HEAD
+            find /tmp/adv-git-sync/dst -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+            # The state really is the converged-looking one: right HEAD, no files.
+            [ ! -e /tmp/adv-git-sync/dst/tracked.txt ] || exit 1
+        }
+        git.sync("/tmp/adv-git-sync/repo.git", "/tmp/adv-git-sync/dst", "main")
+        shell {
+            grep -qx tracked /tmp/adv-git-sync/dst/tracked.txt || exit 1
+            grep -qx other /tmp/adv-git-sync/dst/other.txt || exit 1
+        }
+
+        # And the boundary: a modification is not a deletion. This def already overwrites local
+        # changes when it acts (`checkout --force`, #388) — what must not happen is it deciding
+        # to act because somebody edited a file.
+        unsafe shell { echo "locally edited" >> /tmp/adv-git-sync/dst/other.txt }
+        r = git.sync("/tmp/adv-git-sync/repo.git", "/tmp/adv-git-sync/dst", "main")
+        if r.changed { shell { echo "git.sync acted on a modified file — the observe is too wide" >&2; exit 1 } }
+    }
+}
