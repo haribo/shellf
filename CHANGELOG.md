@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-15
+
 ### Added
 
 - `test/e2e/adverse-coverage.sh` counts the defs that declare an `observe` and have no hostile-state case. A ratchet, failing both ways: an uncovered def not named in it turns the build red, and so does a named def that now has a case. `adverse-cases.md` claimed the protection was an issue that had been closed (#674).
@@ -441,7 +443,8 @@ agent that evaluates on the host — "raw shell, but idempotent, previewable, fa
   per-user agent/workdir scoping.
 - Commands: `run`, `status`, `clean`, and `version`.
 
-[Unreleased]: https://github.com/haribo/shellf/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/haribo/shellf/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/haribo/shellf/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/haribo/shellf/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/haribo/shellf/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/haribo/shellf/compare/v0.11.0...v0.12.0
