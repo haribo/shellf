@@ -198,6 +198,88 @@ func registerPlanInputs(fs *flag.FlagSet, limitWhat string) *planInputs {
 // appears in `README.md`; inline declarations would have forced that test to restate them,
 // which is the drift it exists to catch (#646).
 
+// applyConf folds the project's policy file in under the flags (ADR-0057 §1): a flag that was
+// given wins, a flag that was not takes the file's value, and a setting the file does not
+// carry keeps its built-in default.
+//
+// It returns the effective policy as one line. That line is the point as much as the merge is:
+// `-v` traced the connection, the workdir and the push and never the policy, so "the flag
+// overrides the file" had nothing to assert on, and an operator had no way to see which agent
+// TTL a run actually used (#664).
+func (in *planInputs) applyConf(fs *flag.FlagSet, planPath string) (string, error) {
+	given := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
+
+	// Not inside a project: say nothing. `project.Load` reports that a few lines later, with
+	// the message written for it (`project.Root`), and two errors for one cause is worse.
+	root, err := project.Root(planPath)
+	if err != nil {
+		return "", nil
+	}
+	conf, err := project.LoadConf(root)
+	if err != nil {
+		return "", err
+	}
+
+	from := func(name string, inFile bool) string {
+		switch {
+		case given[name]:
+			return "flag"
+		case inFile:
+			return project.ConfName
+		}
+		return "default"
+	}
+	pSrc := from("parallel", conf.Parallel != 0)
+	tSrc := from("agent-ttl", conf.AgentTTL != 0)
+	kSrc := from("known-hosts", conf.KnownHosts != "")
+
+	if !given["parallel"] && conf.Parallel != 0 {
+		*in.parallel = conf.Parallel
+	}
+	if !given["agent-ttl"] && conf.AgentTTL != 0 {
+		*in.agentTTL = conf.AgentTTL
+	}
+	if !given["known-hosts"] && conf.KnownHosts != "" {
+		*in.knownHosts = conf.KnownHosts
+	}
+
+	// The effective values, with the defaults spelled out rather than shown as 0 — a trace
+	// line saying `parallel 0` would describe the variable, not the run.
+	par := "16"
+	if *in.parallel != 0 {
+		par = strconv.Itoa(*in.parallel)
+	}
+	ttl := shortDur(2 * time.Hour)
+	if *in.agentTTL != 0 {
+		ttl = shortDur(*in.agentTTL)
+	}
+	kh := "~/.ssh/known_hosts"
+	if *in.knownHosts != "" {
+		kh = *in.knownHosts
+	}
+	return fmt.Sprintf("policy: parallel %s (%s), agent-ttl %s (%s), known-hosts %s (%s)",
+		par, pSrc, ttl, tSrc, kh, kSrc), nil
+}
+
+// shortDur renders a duration the way somebody writes one. `time.Duration.String()` answers
+// `4h0m0s`, and a policy line that also spells the default `2h` would render the same value two
+// ways in one sentence, inviting the reader to wonder which was understood.
+//
+// Arithmetic, not string trimming. The first version trimmed the `0s` then the `0m` suffix and
+// turned `1h30m0s` into `1h3`, because `1h30m` ends in `0m` — it passed its test only because
+// the test used `4h` (#664).
+func shortDur(d time.Duration) string {
+	switch {
+	case d >= time.Hour && d%time.Hour == 0:
+		return strconv.FormatInt(int64(d/time.Hour), 10) + "h"
+	case d >= time.Minute && d%time.Minute == 0:
+		return strconv.FormatInt(int64(d/time.Minute), 10) + "m"
+	default:
+		return d.String()
+	}
+}
+
 // runFlags: the plan inputs, plus the two modes only `run` has.
 func runFlags() (fs *flag.FlagSet, in *planInputs, dryRun, oldCheck *bool) {
 	fs = flag.NewFlagSet("run", flag.ExitOnError)
@@ -254,6 +336,15 @@ func runCmd(args []string) {
 	if fs.NArg() < 1 || *invPath == "" {
 		fmt.Fprintln(os.Stderr, "usage: shellf run --inventory <hosts.shellf> [--vars <f>] [--set k=v] [--secret-file n=path] [--dry-run] [--insecure] <plan.shellf>")
 		os.Exit(2)
+	}
+
+	policy, err := in.applyConf(fs, fs.Arg(0))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if *verbose {
+		fmt.Fprintln(os.Stderr, "· "+policy)
 	}
 
 	baseVars, setVars, err := loadGlobals(*varsPath, sets)
@@ -563,6 +654,15 @@ func statusCmd(args []string) {
 	if fs.NArg() < 1 || *invPath == "" {
 		fmt.Fprintln(os.Stderr, "usage: shellf status --inventory <hosts.shellf> [--vars <f>] [--set k=v] [--insecure] <plan.shellf>")
 		os.Exit(2)
+	}
+
+	policy, err := in.applyConf(fs, fs.Arg(0))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if *verbose {
+		fmt.Fprintln(os.Stderr, "· "+policy)
 	}
 	secrets, secretValues, err := loadSecrets(in.secretFile, in.secretEnv)
 	if err != nil {

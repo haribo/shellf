@@ -146,7 +146,12 @@ def download(url: str, dst: str, sha256: str) {
             # trusted; verifying after the write spends that guarantee.
             staged="$dst.shellf.$$"
             trap 'rm -f "$staged"' EXIT
-            curl -fsSLo "$staged" "$url"
+            # Stalled, not slow. A total cap would kill a 2 GB download over a bad line, which
+            # is an ordinary thing to ask of this def; what must die is a transfer making no
+            # progress. `--speed-time 60 --speed-limit 1` is exactly that question — under one
+            # byte per second for a minute — and it is the mechanism ADR-0058 §2 separates from
+            # the wall-clock cap. `--connect-timeout` bounds the half before any byte exists.
+            curl -fsSL --connect-timeout 15 --speed-time 60 --speed-limit 1 -o "$staged" "$url"
             echo "$sha256  $staged" | sha256sum -c --status
             # `curl -o` onto an existing file kept that file's mode; a rename does not, so
             # a second download of a binary would have dropped the `+x` a plan set with

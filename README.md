@@ -76,7 +76,8 @@ group web = [web1, web2]
 
 Authentication uses your **ssh-agent** (`SSH_AUTH_SOCK`) by default, so an encrypted
 key never leaves the agent. To pin a specific key instead, add `key: "~/.ssh/id_…"`
-to `defaults` or a host (it is an optional override).
+to `defaults` or a host — it must be **unencrypted**, since shellf parses the file itself and
+has no passphrase prompt (ADR-0026). An encrypted key is what the agent path is for.
 
 Describe what to do in a **plan** file (`plan.shellf`):
 
@@ -111,9 +112,10 @@ instruction that finds the state it wants reports `ok.already` and does nothing.
 | Host | `host <alias> = { address: "…", user: "…", port: "…" }` |
 | Group | `group <name> = [<alias>, <alias>]` |
 
-Omitted host fields fall back to `defaults`, then to `22` for the port. Only
-`address` is required. A host may belong to several groups. `key: "…"` is an
-optional field (a pinned ssh key); without it, authentication uses the ssh-agent.
+Omitted host fields fall back to `defaults`, then to `22` for the port. `address` is
+required unless the host is `local` (below). A host may belong to several groups. `key: "…"`
+is an optional field — a pinned ssh key, which must be **unencrypted**; without it,
+authentication uses the ssh-agent. Any other field is a per-host variable.
 
 A host with `local: "true"` is provisioned on the **control host itself**, with no
 SSH — `host self = { local: "true" }` (no `address` needed). Same agent, plan, and
@@ -378,6 +380,36 @@ agents and wipes shellf's files from the targets.
 `run` and `status` take the same flags, `--dry-run` excepted — it is a mode, and reading the
 state without acting is what `status` already is. `clean` reads no plan and takes
 `--inventory`, `--insecure` and `--known-hosts`.
+
+### Project policy — `shellf.conf`
+
+Three of those flags are not choices about *this* run, they are how the project is run:
+`--parallel`, `--agent-ttl` and `--known-hosts`. Write them once at the project root, commit
+them, and everyone gets the same ones (ADR-0057):
+
+```
+parallel = "8"
+agent-ttl = "4h"
+known-hosts = "keys/known_hosts"
+```
+
+The same format as a `--vars` file, and the keys are spelled like the flags without the dashes.
+A flag still wins, so CI can override without editing a committed file. `-v` prints which layer
+each value came from:
+
+```
+· policy: parallel 3 (flag), agent-ttl 4h (shellf.conf), known-hosts ~/.ssh/known_hosts (default)
+```
+
+A relative path is resolved from the **project root**, not the working directory — the file is
+shared, so it means the same thing wherever you run from. An unknown setting stops the run
+naming it rather than being skipped: a file is read once, so a line that quietly does nothing is
+a setting its author believes is in force. `--insecure` is refused in the file on purpose —
+committed, it would disable host-key verification for everyone who clones the repository.
+
+There is no user-level or system-level config, and no `--config <path>`: on a fleet tool, a
+default living outside the repository means the same plan behaves differently depending on who
+ran it.
 
 ## How it works
 

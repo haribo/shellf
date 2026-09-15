@@ -1512,4 +1512,80 @@ out="$("$work/shellf" run --inventory "$work/pgq/inventories/inv.shellf" --insec
 printf '%s' "$out" | grep -q 'postgres.config.*already' \
   || { printf '%s\n' "$out"; fail "a quoted value must converge on a second run (#618)"; }
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out, booleans are booleans, dry-run diffs a change, commands are reported, purged packages reinstalled, defs survive a hostile state, dir.owner sees a missing path, ufw converges while down, a malformed unit is refused, a bad hash leaves the destination alone, a failed member extraction leaves it too, a quoted postgres value is accepted"
+say "31. git.clone refuses a destination holding another repository (#679)"
+# The one claim `git.clone`'s comment makes that nothing tested: a wrong-remote destination
+# "fails the clone (destination exists) -> err.runtime, rather than silently accepting it".
+# Its own step, because an `err` halts a plan — what matters is that the destination is
+# **untouched**, which cannot be asserted from inside the plan that was halted.
+#
+# Not an adverse plan for the same reason: that harness counts any `err.` as red, so a case
+# whose whole point is a refusal cannot live there.
+#
+# The emptied-tree case is deliberately elsewhere: `git.clone` promises that a clone exists, not
+# that its files do, and that question belongs to `git.sync` (#680).
+mkdir -p "$work/gitremote/plans" "$work/gitremote/inventories"
+cp "$work/inventory.shellf" "$work/gitremote/inventories/inv.shellf"
+docker exec "$cname" bash -c '
+  set -e
+  rm -rf /tmp/step31
+  mkdir -p /tmp/step31/wanted /tmp/step31/other
+  for r in wanted other; do
+    cd "/tmp/step31/$r"
+    git init -q -b main . && git config user.email e@x && git config user.name e
+    echo "$r" > which.txt && git add -A && git commit -qm "$r"
+    git clone -q --bare "/tmp/step31/$r" "/tmp/step31/$r.git"
+  done
+  git clone -q /tmp/step31/other.git /tmp/step31/dst'
+cat > "$work/gitremote/plans/plan.shellf" <<'EOF'
+on target {
+    as root { git.clone("/tmp/step31/wanted.git", "/tmp/step31/dst") }
+}
+EOF
+rc=0
+out="$("$work/shellf" run --inventory "$work/gitremote/inventories/inv.shellf" --insecure \
+  "$work/gitremote/plans/plan.shellf" 2>&1)" || rc=$?
+printf '%s\n' "$out"
+[ "$rc" -ne 0 ] || fail "git.clone must refuse a destination holding another repository (#679)"
+printf '%s' "$out" | grep -q 'err.runtime' \
+  || fail "the refusal must surface as err.runtime (#679)"
+docker exec "$cname" sh -c '[ "$(git -C /tmp/step31/dst remote get-url origin)" = /tmp/step31/other.git ]' \
+  || fail "a refused clone must leave the destination untouched (#679)"
+docker exec "$cname" grep -qx other /tmp/step31/dst/which.txt \
+  || fail "a refused clone must leave the destination's files untouched (#679)"
+
+say "32. http.wait-for honours its timeout against a peer that never answers (#657)"
+# The bound this def promises its caller, and it did not hold: the loop condition was only
+# re-read **between** two curls, and the curl carried no limit of its own. One attempt against
+# an address that never completes a handshake ran past the deadline without end, so `timeout`
+# was a floor and never a ceiling (ADR-0058 §5).
+#
+# Its own step, not an adverse plan: a failing question is an `err`, and that harness reads any
+# `err.` as red. What is asserted here is the **clock**, which no plan can assert about itself.
+#
+# `10.255.255.1` is non-routable from the container, so the connect never completes — measured:
+# an unbounded curl to it was still waiting when a 25s cap cut it, and `--connect-timeout 5`
+# ended it in 5. No listener and no extra package needed.
+mkdir -p "$work/waitfor/plans" "$work/waitfor/inventories"
+cp "$work/inventory.shellf" "$work/waitfor/inventories/inv.shellf"
+cat > "$work/waitfor/plans/plan.shellf" <<'EOF'
+on target {
+    http.wait-for("http://10.255.255.1:9999/", "5")
+}
+EOF
+started=$(date +%s)
+rc=0
+out="$("$work/shellf" run --inventory "$work/waitfor/inventories/inv.shellf" --insecure \
+  "$work/waitfor/plans/plan.shellf" 2>&1)" || rc=$?
+elapsed=$(( $(date +%s) - started ))
+printf '%s\n' "$out"
+printf 'elapsed: %ss (the plan asked for 5)\n' "$elapsed"
+[ "$rc" -ne 0 ] || fail "a peer that never answers must fail the wait (#657)"
+printf '%s' "$out" | grep -q 'err.timeout' \
+  || fail "the failure must be err.timeout, not something else (#657)"
+# Generous on purpose: what is being caught is "ran until curl gave up", which was 300s of
+# connect timeout before the fix and is bounded by the argument after it. A slow runner must
+# not make this flap.
+[ "$elapsed" -lt 60 ] \
+  || fail "http.wait-for(…, 5) took ${elapsed}s — its timeout is a floor again (#657)"
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out, booleans are booleans, dry-run diffs a change, commands are reported, purged packages reinstalled, defs survive a hostile state, dir.owner sees a missing path, ufw converges while down, a malformed unit is refused, a bad hash leaves the destination alone, a failed member extraction leaves it too, a quoted postgres value is accepted, a wrong-remote clone is refused, a wait-for honours its timeout"

@@ -13,10 +13,17 @@ from the network address.
 
 | Field | Required | Meaning |
 |---|---|---|
-| `address` | yes | network endpoint (IP or DNS) |
+| `address` | unless `local` | network endpoint (IP or DNS) |
 | `user` | no | ssh user; falls back to `defaults.user` |
 | `port` | no | ssh port; falls back to `defaults.port`, then `22` |
-| `key` | no | ssh identity file; falls back to `defaults.key` |
+| `key` | no | ssh identity file, **unencrypted**; falls back to `defaults.key` |
+| `local` | no | `"true"` reaches the control host itself, with no SSH (ADR-0027) — no `address` |
+| `interpreter` | no | shell for unannotated `shell` blocks: `sh`/`bash`/`dash`/`nu`/`raw` (ADR-0012) |
+| any other | no | a free-form per-host variable, read as `${inventory.<name>}` (ADR-0052) |
+
+`key` must not be passphrase-protected: shellf parses it with `ssh.ParsePrivateKey`, which
+fails on an encrypted file. An encrypted key is what the ssh-agent path is for, and that is
+the default — ADR-0026 §3 records the passphrase form as deliberately not built.
 
 ```
 host web1 = { address: "10.0.0.1" }

@@ -19,7 +19,10 @@
 # thing that knows whether it is wanted.
 def update() as root {
     apply {
-        r = shell { apt-get update }
+        # `apt-get update` refreshes lists and cannot prompt, so this carries the variable it
+        # does not need — on purpose. The rule a reader should take from this package is "apt
+        # runs non-interactive here", not "one def remembered and its neighbour did not" (#659).
+        r = shell { DEBIAN_FRONTEND=noninteractive apt-get update }
         if !r { return err.runtime(r) }
         return ok.updated
     }

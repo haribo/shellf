@@ -21,7 +21,17 @@ def write(name: str, content: str) as root {
     # the content, and the mode sudo insists on.
     observe {
         f = "/etc/sudoers.d/${name}"
-        return state(synced: shell { test -f "$f" && printf '%s\n' "$content" | cmp -s - "$f" }.exit == 0, secured: shell { [ "$(stat -c '%a' "$f" 2>/dev/null)" = "440" ] }.exit == 0)
+        return state(synced: shell { test -f "$f" && printf '%s\n' "$content" | cmp -s - "$f" }.exit == 0,
+                     secured: shell { [ "$(stat -c '%a' "$f" 2>/dev/null)" = "440" ] }.exit == 0,
+                     # Three questions, because the apply guarantees three things. sudo refuses a
+                     # drop-in it does not find owned by root — `sudo: is owned by uid N, should
+                     # be 0` — and says so to the operator, not to the run. Observing the content
+                     # and the mode alone reported `already` over a rule sudo was ignoring (#676).
+                     #
+                     # A comparison and not the owner's name: a field with no same-named parameter
+                     # only has to be truthy, so returning `probe:probe` would converge as happily
+                     # as the right answer.
+                     owned: shell { [ "$(stat -c '%U:%G' "$f" 2>/dev/null)" = "root:root" ] }.exit == 0)
     }
     check {
         # The name becomes a file under /etc/sudoers.d, so it is held to what sudo will
@@ -48,6 +58,13 @@ def write(name: str, content: str) as root {
         # prints no leading zero — "0440" would never converge and would re-chmod on
         # every run, making `.changed` always true.
         file.mode("/etc/sudoers.d/${name}", "440")
+        # After the content, never before: `file.write` stages a copy with `cp -p`
+        # (`file.shellf:213`), which **preserves** the existing owner — so a file somebody else
+        # owns stays theirs through a rewrite, and the observe above would report a drift this
+        # apply could not repair. Ordered after the write for the other half of the reason too:
+        # making root the owner of content this def has not yet imposed would promote somebody
+        # else's text to sudo policy.
+        file.owner("/etc/sudoers.d/${name}", "root:root")
         return ok.written
     }
 }

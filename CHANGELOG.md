@@ -6,6 +6,40 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-15
+
+### Added
+
+- `test/e2e/adverse-coverage.sh` counts the defs that declare an `observe` and have no hostile-state case. A ratchet, failing both ways: an uncovered def not named in it turns the build red, and so does a named def that now has a case. `adverse-cases.md` claimed the protection was an issue that had been closed (#674).
+
+- ADR-0058: a shell that outruns its bound reports `err.timeout`, catchable like any other error. Two mechanisms, not one — a stall has a progress signal only for transfers, and output silence is not progress for anything else. The cap is policy in `shellf.conf` and defaults to no limit (#657).
+
+- `test/changelog-frozen.sh` fails when a released changelog section no longer matches its tag. An entry filed into a published section was not invalid, it was invisible — it had happened three times, the oldest sitting in the file since August unnoticed. A deliberate edit is named in the script with its reason (#669).
+
+- `shellf.conf` at the project root sets `parallel`, `agent-ttl` and `known-hosts` for everyone who runs the project, in the same `name = "value"` form a `--vars` file uses. A flag still wins, and `-v` prints which layer each value came from. An unknown setting stops the run naming it (#664).
+
+- ADR-0057: policy goes in `shellf.conf` at the project root, written in the shellf language; modes and inputs stay flags, and a flag outranks the file. The plan sits above both, as `as root` already does. No user or system config — on a fleet tool, a per-operator default outside the repository is drift nobody can review (#663).
+
+### Fixed
+
+- `http.wait-for` honours the timeout it is given. Its loop re-read the clock only between two curls, and the curl had no limit, so one attempt against a silent peer ran past the deadline without end — 90 seconds measured for a 5-second request. Each attempt is capped by the time left (#657).
+
+- `file.download` gives up on a transfer that has **stalled**, not one that is slow: under a byte per second for a minute. A total cap would kill a large download over a bad line, which is an ordinary thing to ask of it. `http.check` is bounded too, at thirty seconds (#657, ADR-0058).
+
+- `git.clone` says what it promises: a clone of the url exists at the destination, not that its files are still there — that is `git.sync`'s question, and it cannot honestly ask more, since `git clone` refuses a non-empty destination. A new e2e step covers the one claim its comment made and nothing tested (#679).
+
+- `git.sync` observes the working tree, not only where HEAD points. A deploy directory emptied of everything but `.git` kept the right HEAD and reported `already`, so the deployment ran over nothing. It asks about deleted tracked files, not modified ones — the def must not act because somebody edited a file (#680).
+
+- `sudo.write` observes who owns the drop-in, and sets it. sudo silently ignores a file root does not own, so a rule with the right content and mode owned by somebody else was reported `already` while it did nothing. Observing alone would have drifted for ever: `file.write` preserves an existing owner (#676).
+
+- `apt.install` and `apt.update` set `DEBIAN_FRONTEND=noninteractive` themselves. It was set in the three test images and never in the defs, so every e2e run exercised a target where it was already there. Not a hang: a shell's stdin is `/dev/null`, so a question is answered by end-of-file (#659).
+
+- Six documentation claims the code had outgrown: a spec header short by four chapters, a `when` keyword that never existed, an inventory table missing `local` and `interpreter`, a package comment contradicting its own fields, a def file arguing against a def it contains — and a pinned ssh key now documented as having to be unencrypted (#661, #662).
+
+- `sysctl.set` observes the drop-in it writes as well as the running kernel. A host whose kernel already held the value and whose `/etc/sysctl.d` file was gone reported `already`, and the setting was lost at the next reboot. The def's own comment argued against reading the file, correctly, then concluded "the kernel only" — a false dilemma (#658).
+
+- `user.group` matches a group name literally. `grep -qx` read it as a regular expression, and Debian allows `.` in a group name — so a request for `a.b` was satisfied by membership of `axb`, and the def reported `already` over a user it never added. The same class as #598, which fixed it in `htpasswd.entry` (#660).
+
 ## [0.14.0] - 2026-09-10
 
 ### Added
@@ -409,7 +443,8 @@ agent that evaluates on the host — "raw shell, but idempotent, previewable, fa
   per-user agent/workdir scoping.
 - Commands: `run`, `status`, `clean`, and `version`.
 
-[Unreleased]: https://github.com/haribo/shellf/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/haribo/shellf/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/haribo/shellf/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/haribo/shellf/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/haribo/shellf/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/haribo/shellf/compare/v0.11.0...v0.12.0

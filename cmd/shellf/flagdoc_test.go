@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"shellf/internal/project"
 )
 
 // Every flag the CLI accepts is documented in `README.md` (#646).
@@ -52,6 +54,25 @@ func TestEveryFlagIsDocumented(t *testing.T) {
 			}
 			t.Errorf("shellf %s accepts -%s and README.md does not mention it", c.cmd, f.Name)
 		})
+	}
+}
+
+// Every setting `shellf.conf` accepts is documented too (#646, ADR-0057).
+//
+// The flag gate above would not have caught a config key: it walks flag sets, and a key lives
+// nowhere near one. That is the gap ADR-0057 named — a key could ship undocumented exactly the
+// way four flags did (#642) — so it is closed here rather than left as a follow-up.
+func TestEveryConfKeyIsDocumented(t *testing.T) {
+	readme, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range project.ConfKeys() {
+		// Written bare in the file's own syntax (`parallel = "8"`), which is how the README
+		// shows them — the flag is `--parallel`, the key is not.
+		if !strings.Contains(string(readme), k+" = ") {
+			t.Errorf("shellf.conf accepts %q and README.md does not show it", k)
+		}
 	}
 }
 

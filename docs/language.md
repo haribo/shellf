@@ -1,8 +1,16 @@
 # shellf — language spec
 
 > Living doc, and incomplete on purpose: what is written here is current, what is missing
-> is missing. One shipped construct has no chapter yet — `as <user>` escalation
-> ([ADR-0011](adr/0011-privilege-escalation.md)).
+> is missing. Shipped constructs with no chapter yet, named so the gap is not mistaken for
+> completeness (#662):
+>
+> - `as <user>` escalation ([ADR-0011](adr/0011-privilege-escalation.md));
+> - `on <group-or-host> { … }` and `parallel { … }` — the plan's own structure, described in
+>   [design/orchestration.md](design/orchestration.md);
+> - `override def` ([ADR-0014](adr/0014-user-defs-directory-package.md));
+> - the inventory's syntax, described in [design/inventory.md](design/inventory.md).
+>
+> The header used to name `as <user>` alone, which understated it by four.
 
 ## `Result` — an instruction's outcome
 
@@ -25,7 +33,7 @@ Result = ok.<tag>(payload?) | err.<tag>(payload?) | would.<tag>(payload?)
 | Shape | `{ exit, stdout, stderr, ok }` | `ok`/`err`/`would` + tag + optional payload |
 | Produced by | a `shell { }` block | a `def` instruction |
 
-An instruction **reads** the `ShellResult` and **translates** it into a `Result` (via `when`/tags). A `Result` may *carry* a `ShellResult` in its payload; it is not one. Flattening `Result` to exit/stdout/stderr = branching on exit codes = plain bash — the exact regression shellf exists to avoid.
+An instruction **reads** the `ShellResult` and **translates** it into a `Result` (it tests the shell and returns a tagged outcome). A `Result` may *carry* a `ShellResult` in its payload; it is not one. Flattening `Result` to exit/stdout/stderr = branching on exit codes = plain bash — the exact regression shellf exists to avoid.
 
 ## Phases and modes
 
