@@ -1553,4 +1553,39 @@ docker exec "$cname" sh -c '[ "$(git -C /tmp/step31/dst remote get-url origin)" 
 docker exec "$cname" grep -qx other /tmp/step31/dst/which.txt \
   || fail "a refused clone must leave the destination's files untouched (#679)"
 
-say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out, booleans are booleans, dry-run diffs a change, commands are reported, purged packages reinstalled, defs survive a hostile state, dir.owner sees a missing path, ufw converges while down, a malformed unit is refused, a bad hash leaves the destination alone, a failed member extraction leaves it too, a quoted postgres value is accepted, a wrong-remote clone is refused"
+say "32. http.wait-for honours its timeout against a peer that never answers (#657)"
+# The bound this def promises its caller, and it did not hold: the loop condition was only
+# re-read **between** two curls, and the curl carried no limit of its own. One attempt against
+# an address that never completes a handshake ran past the deadline without end, so `timeout`
+# was a floor and never a ceiling (ADR-0058 §5).
+#
+# Its own step, not an adverse plan: a failing question is an `err`, and that harness reads any
+# `err.` as red. What is asserted here is the **clock**, which no plan can assert about itself.
+#
+# `10.255.255.1` is non-routable from the container, so the connect never completes — measured:
+# an unbounded curl to it was still waiting when a 25s cap cut it, and `--connect-timeout 5`
+# ended it in 5. No listener and no extra package needed.
+mkdir -p "$work/waitfor/plans" "$work/waitfor/inventories"
+cp "$work/inventory.shellf" "$work/waitfor/inventories/inv.shellf"
+cat > "$work/waitfor/plans/plan.shellf" <<'EOF'
+on target {
+    http.wait-for("http://10.255.255.1:9999/", "5")
+}
+EOF
+started=$(date +%s)
+rc=0
+out="$("$work/shellf" run --inventory "$work/waitfor/inventories/inv.shellf" --insecure \
+  "$work/waitfor/plans/plan.shellf" 2>&1)" || rc=$?
+elapsed=$(( $(date +%s) - started ))
+printf '%s\n' "$out"
+printf 'elapsed: %ss (the plan asked for 5)\n' "$elapsed"
+[ "$rc" -ne 0 ] || fail "a peer that never answers must fail the wait (#657)"
+printf '%s' "$out" | grep -q 'err.timeout' \
+  || fail "the failure must be err.timeout, not something else (#657)"
+# Generous on purpose: what is being caught is "ran until curl gave up", which was 300s of
+# connect timeout before the fix and is bounded by the argument after it. A slow runner must
+# not make this flap.
+[ "$elapsed" -lt 60 ] \
+  || fail "http.wait-for(…, 5) took ${elapsed}s — its timeout is a floor again (#657)"
+
+say "PASS — check inert, apply provisioned, re-apply idempotent, status converged, allow-list held, defs declare nothing, bridge relaunched, every def exercised, examples run, remote module used, changed source re-delivered, shell rules enforced, converged previews honest, delete-only reported, foreign agent refused, weak observes fixed, delivery atomic, asset links contained, escalated transfer honoured, links never carry a write out, booleans are booleans, dry-run diffs a change, commands are reported, purged packages reinstalled, defs survive a hostile state, dir.owner sees a missing path, ufw converges while down, a malformed unit is refused, a bad hash leaves the destination alone, a failed member extraction leaves it too, a quoted postgres value is accepted, a wrong-remote clone is refused, a wait-for honours its timeout"
