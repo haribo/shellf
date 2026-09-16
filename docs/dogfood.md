@@ -117,6 +117,11 @@ Recorded as #547. Not decided here: ADR-0052 listed real questions this raises (
 order between hosts, hosts outside the `on` block), and a measured cost does not by itself
 answer them.
 
+> **Since answered.** [ADR-0054](adr/0054-cross-host-inventory-reads.md) shipped
+> `${inventory.<host>.<field>}`. The finding above stays as written — this file is a dated
+> report of what a deployment could not express, and history is allowed to describe a world the
+> code has left (ADR-0001).
+
 ### What deliberately stays raw
 
 - **`su - postgres -c …`** as the way to reach the database as its owner. Any `postgres.*`

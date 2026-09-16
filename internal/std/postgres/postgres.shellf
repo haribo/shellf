@@ -1,10 +1,17 @@
-# PostgreSQL roles and databases.
+# PostgreSQL roles, databases, and the two config files.
 #
-# Only these two. The two-host dogfood (#542) needed exactly this and nothing else —
-# `pg_hba` and `postgresql.conf` were handled by `file.line` and `file.replace`, which
-# converged. A `postgres.config` would also inherit the versioned-path problem (#546),
-# unresolved; these two go through `psql` and never name a config path, so they dodge it.
-# More postgres defs arrive when a deployment shows it needs them, not before.
+# Four defs: `role` and `database` go through `psql`; `hba` and `config` write the cluster's
+# files. The first two arrived from the two-host dogfood (#542), which needed nothing else —
+# `pg_hba` and `postgresql.conf` were handled by `file.line` and `file.replace` and converged.
+#
+# This header used to read "only these two", and argued that a `postgres.config` *would*
+# inherit the versioned-path problem of #546 — unresolved — a hundred lines above the
+# `postgres.config` that resolves it by asking `pg_lsclusters` and `pg_conftool` where the
+# cluster keeps its files. The prediction was right at the time and the code overtook it
+# (#546, #567, #662).
+#
+# The rule it stated still holds: a postgres def arrives when a deployment shows it is needed,
+# not before.
 
 # `postgres.role` verifies the password by connecting with it, the way `htpasswd.entry`
 # verifies against its stored hash rather than trusting that a line exists. PostgreSQL keeps

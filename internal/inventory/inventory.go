@@ -1,6 +1,11 @@
-// Package inventory holds the hosts and groups (the orchestration plane's
-// targets). Connection coordinates only — no business variables. Built in Go
-// for now; a parsed shellf-language inventory comes later.
+// Package inventory holds the hosts and groups (the orchestration plane's targets): the
+// connection coordinates, and the free-form per-host variables a plan reads as
+// `${inventory.<name>}` (ADR-0052).
+//
+// The types are Go; the file an operator writes is **shellf**, parsed by
+// `internal/lang` (`ParseInventory`). This comment said the opposite of both halves — "no
+// business variables", beside the `Vars` field, and "a parsed shellf-language inventory comes
+// later", which had already shipped (#662).
 package inventory
 
 import (

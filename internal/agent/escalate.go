@@ -4,11 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
-	"syscall"
 
 	"shellf/internal/engine"
+	"shellf/internal/pathguard"
 )
 
 // Running part of a transfer as the user `as <user>` named (ADR-0044).
@@ -71,34 +70,6 @@ func childVerbAt(self string, ex engine.Executor, args ...string) (string, error
 }
 
 // ownedAndUnwritable reports why path is not safe to execute under an escalation, or nil.
-//
-// Two questions: is it ours, and can anyone else rewrite it. "Ours" is the process's own
-// uid or root — an agent binary owned by root is the ordinary case on a target where the
-// deployment user is not the one that installed it. Group- or world-writable fails,
-// **and so does a writable directory on the way to it**: replacing the file is not the
-// only way to change what a path resolves to.
-func ownedAndUnwritable(path string) error {
-	for p := path; ; p = filepath.Dir(p) {
-		fi, err := os.Lstat(p)
-		if err != nil {
-			return fmt.Errorf("cannot stat %s: %v", p, err)
-		}
-		st, ok := fi.Sys().(*syscall.Stat_t)
-		if !ok {
-			return fmt.Errorf("cannot read ownership of %s", p)
-		}
-		uid := uint32(os.Getuid())
-		if st.Uid != uid && st.Uid != 0 {
-			return fmt.Errorf("%s is owned by uid %d, neither ours (%d) nor root", p, st.Uid, uid)
-		}
-		// The sticky bit is what makes /tmp usable by everyone without letting anyone
-		// replace someone else's entry, so a world-writable directory carrying it is not
-		// the hazard this is looking for.
-		if fi.Mode().Perm()&0o022 != 0 && (!fi.IsDir() || fi.Mode()&os.ModeSticky == 0) {
-			return fmt.Errorf("%s is writable by another user (%s)", p, fi.Mode().Perm())
-		}
-		if p == filepath.Dir(p) { // reached the root
-			return nil
-		}
-	}
-}
+// The check itself lives in `internal/pathguard`: `shellf.conf` needs the identical answer
+// (ADR-0057 §5), and two copies of it would not stay identical.
+func ownedAndUnwritable(path string) error { return pathguard.OwnedAndUnwritable(path) }

@@ -3,7 +3,15 @@
 # if it does not match (a failing question is an err).
 def check(url: str, status: str) {
     check {
-        r = shell { test "$(curl -so /dev/null -w '%{http_code}' "$url")" = "$status" }
+        # Bounded, because an unbounded question is not a question. `curl` has no total limit of
+        # its own, so a peer that accepts the connection and then goes quiet holds this step for
+        # as long as it likes — and the agent with it, for its whole TTL (ADR-0058, #657).
+        #
+        # 30 seconds is chosen, not inherited: this def gates a deploy on an answer, and an
+        # endpoint that has not answered in thirty seconds has answered. Far beyond any healthy
+        # response, far below a hang. `--connect-timeout` is the shorter half — a host that does
+        # not complete a handshake in ten is not going to.
+        r = shell { test "$(curl -so /dev/null --connect-timeout 10 --max-time 30 -w '%{http_code}' "$url")" = "$status" }
         if r { return ok.match }
         return err.mismatch
     }
@@ -15,9 +23,19 @@ def check(url: str, status: str) {
 def wait-for(url: str, timeout: str) {
     check {
         r = shell {
+            # The bound this def promises its caller, and it used not to hold: the loop condition
+            # is only re-read **between** two curls, and the curl carried no limit of its own. One
+            # call against a host that accepts the connection and never answers ran past the
+            # deadline without end, so `timeout` was a floor and never a ceiling (#657).
+            #
+            # Each attempt is capped at the time that is actually left, so no single call can
+            # overshoot. Never zero — `--max-time 0` means *no limit* in curl — which the
+            # `-gt 0` guard above it guarantees.
             end=$(( $(date +%s) + timeout ))
-            while [ "$(date +%s)" -lt "$end" ]; do
-                curl -sfo /dev/null "$url" && exit 0
+            while :; do
+                left=$(( end - $(date +%s) ))
+                [ "$left" -gt 0 ] || break
+                curl -sfo /dev/null --connect-timeout "$left" --max-time "$left" "$url" && exit 0
                 sleep 1
             done
             exit 1

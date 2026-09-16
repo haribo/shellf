@@ -80,13 +80,31 @@ created by an argument that split.
 Nothing exotic is required to find these — "Application Support" and "Bob's data" are
 ordinary names, which is the point.
 
-## Coverage, and the gate that is not here yet
+## Coverage, and the ratchet that counts it
 
-28 cases over 22 defs, against 49 defs today. A CI gate requiring an adverse case per def
-would be 27 named exemptions, which is not a gate — it is a file nobody re-reads, and it
-turns the exemption from a signal into the norm. `def-coverage.sh` works because it is at
-48/49, with its single exemption named and argued.
+33 cases covering **22 of the 34 defs that declare an `observe`** — those are the ones for which
+"hostile starting state" means anything; an action-shaped def (ADR-0029) has no state to get
+wrong.
 
-The gate lands when this directory covers the defs that declare an `observe` (34) — those
-are the ones for which "hostile starting state" means anything; an action-shaped def
-(ADR-0029) has no state to get wrong. Until then the protection is #489 staying open.
+`test/e2e/adverse-coverage.sh` is what keeps that number honest. Not a gate: a gate demanding a
+case per def would be twelve exemptions on day one, which is a file nobody re-reads. A **ratchet**
+instead, failing in both directions —
+
+- a def with no adverse plan and no line in the script turns the build red;
+- a def named in the script that *has* a plan turns it red too, so the list shrinks or the
+  shrinking is visibly not happening.
+
+The twelve are named there with a reason each: seven are covered by a bespoke step in `run.sh`
+(a refusal halts a plan, and this harness reads any `err.` as red, so such a case cannot live
+here), one is `docker.install`, which no e2e run exercises at all, and four are debt with no
+hostile-state test anywhere.
+
+The script counts **calls in adverse plans only**, never mentions in `run.sh`. Whether a step
+there is a hostile-state test is not decidable by grep, and matching a def name against a shell
+script is the exact mistake `def-coverage.sh` records making. A def covered by a step is therefore
+named by hand, with the step — the judgement stays where a reader can check it.
+
+This paragraph used to end *"until then the protection is #489 staying open"*. #489 was closed,
+and for a while the protection was nobody. That is how `sysctl.set`, `sudo.write` and `git.sync`
+each shipped an `observe` weaker than its `apply` (#658, #676, #680) — three defs audited on 14
+September, three defects.
